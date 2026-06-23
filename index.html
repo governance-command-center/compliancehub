@@ -375,7 +375,6 @@ textarea.finput{resize:vertical;min-height:64px;margin-bottom:0}
 .ast-resolved{color:var(--green);font-weight:600}
 .ast-explained{color:var(--blue);font-weight:600}
 .ast-no-action{color:var(--text3);font-weight:600}
-.ast-no-issue{color:var(--text3)}
 .audit-filter-sel,.audit-date-input,.audit-search-input{padding:4px 7px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;background:var(--surface);color:var(--text);height:28px}
 .audit-filter-sel:focus,.audit-date-input:focus,.audit-search-input:focus{outline:none;border-color:var(--blue)}
 .audit-section-divider{background:#f0f4f8;font-weight:700;color:var(--text2);padding:5px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border)}
@@ -875,6 +874,15 @@ const ds=function(d){
 const fmtD=d=>d.toLocaleDateString('en-PH',{weekday:'short',year:'numeric',month:'short',day:'numeric'});
 const fmtM=d=>d.toLocaleDateString('en-PH',{month:'long',year:'numeric'});
 const now=()=>new Date();
+// Full audit-style stamp: "Jun 23, 2:54 PM · Vhino" — always includes the date so a stale
+// entry from a previous day is never mistaken for a same-day update.
+function ltStamp(){
+  const n=now();
+  const datePart=n.toLocaleDateString('en-PH',{month:'short',day:'numeric'});
+  const timePart=n.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'});
+  const firstName=(CU&&CU.name?CU.name.split(' ')[0]:'')||'';
+  return datePart+', '+timePart+(firstName?' · '+firstName:'');
+}
 function fmtHours(ms){if(!ms||ms<=0)return'0h 0m';var t=Math.floor(ms/60000);var h=Math.floor(t/60);var m=t%60;return h+'h '+m+'m';}
 
 function isSched(t,d){
@@ -6367,6 +6375,7 @@ async function aoMassResetToZero(trackerKey,sheetKey){
     if(dp){
       const colDateStr=dp[3]+'-'+dp[1].padStart(2,'0')+'-'+dp[2].padStart(2,'0');
       if(!weekDates.includes(colDateStr))continue;
+      if(colDateStr<todayStr&&!CU.isAdmin)continue; // past dates: admin-only
       const dow=new Date(colDateStr+'T00:00:00').getDay();
       if(dow===0||dow===6)continue;
     } else continue;
@@ -6374,7 +6383,7 @@ async function aoMassResetToZero(trackerKey,sheetKey){
   }
   if(!editableCols.length){toast('No editable columns found for this week.');return;}
   const firstName=(CU.name||'').split(' ')[0]||'';
-  const ts=now().toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'})+(firstName?' · '+firstName:'');
+  const ts=ltStamp();
   const path='trackers/'+trackerKey+'/sheets/'+sheetKey;
   const updates={};
   if(!D.trackers[trackerKey].sheets[sheetKey].timestamps)D.trackers[trackerKey].sheets[sheetKey].timestamps={};
@@ -6449,6 +6458,7 @@ async function aoSetSelectedToZero(trackerKey,sheetKey){
     if(dp){
       const colDateStr=dp[3]+'-'+dp[1].padStart(2,'0')+'-'+dp[2].padStart(2,'0');
       if(!weekDates.includes(colDateStr))continue;
+      if(colDateStr<todayStr&&!CU.isAdmin)continue; // past dates: admin-only
       const dow=new Date(colDateStr+'T00:00:00').getDay();
       if(dow===0||dow===6)continue;
       editableCols.push(ci,ci+1);
@@ -6466,7 +6476,7 @@ async function aoSetSelectedToZero(trackerKey,sheetKey){
   }
   if(!editableCols.length){toast('No editable columns found for this week.');return;}
   const firstName=(CU.name||'').split(' ')[0]||'';
-  const ts=now().toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'})+(firstName?' · '+firstName:'');
+  const ts=ltStamp();
   const path='trackers/'+trackerKey+'/sheets/'+sheetKey;
   const updates={};
   if(!D.trackers[trackerKey].sheets[sheetKey].timestamps)D.trackers[trackerKey].sheets[sheetKey].timestamps={};
@@ -6492,6 +6502,7 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   if(!sheet)return'<div class="empty-state" style="padding:32px">Empty sheet.</div>';
   const{row0,row1,rows}=sheet;
   if(!row0||!row0.length)return'<div class="empty-state" style="padding:32px">No data. Upload your Excel file.</div>';
+  const isAdmin=CU.isAdmin;
 
   const nowT=now(),todayStr=ds(nowT);
 
@@ -6689,17 +6700,27 @@ function buildAOTable(trackerKey,sheetKey,sheet){
           const isOFF=vS.toUpperCase()==='OFF';
           // 0 is a valid filled value — only null/undefined/'' means truly empty
           const filled=v!==null&&v!==undefined&&vS!==''&&!isOFF;
-          // Only future dates are locked — past and today are always editable so figures can be recorded
-          const locked=dc.isFuture;
+          // Only future dates are always locked. Past dates are locked for non-admins —
+          // only admins may edit/correct historical entries; today is always editable.
+          const isPastLockedForUser=dc.isPast&&!dc.isToday&&!isAdmin;
+          const locked=dc.isFuture||isPastLockedForUser;
           const cellBg=isOFF?'#f1f5f9':filled?'var(--green-light)':dc.isToday?'#fffde7':'transparent';
           const cellCol=isOFF?'var(--text4)':filled?'var(--green)':'var(--text)';
           const localTs=localSheetData&&localSheetData.timestamps?localSheetData.timestamps[ri+'_'+c]:'';
           const ts=localTs||((sheet.timestamps||{})[ri+'_'+c])||'';
           if(locked){
-            // Future: read-only placeholder
-            cells+='<td style="padding:3px 4px;border:1px solid var(--border);'+bl+'text-align:center;background:#fafafa">'
-              +'<div style="width:54px;padding:3px 4px;font-size:11px;text-align:center;color:#ccc;margin:0 auto">—</div>'
-            +'</td>';
+            if(isPastLockedForUser){
+              // Past entry, non-admin: show the actual value read-only with its audit stamp
+              cells+='<td style="padding:3px 4px;border:1px solid var(--border);'+bl+'text-align:center;background:#fafafa" title="Past dates can only be edited by an admin">'
+                +'<div style="width:54px;padding:3px 4px;font-size:11px;text-align:center;color:'+cellCol+';margin:0 auto">'+escHtml(vS)+'</div>'
+                +(ts?'<div class="ao-ts" style="font-size:9px;color:var(--text4);line-height:1.2">'+escHtml(ts)+'</div>':'')
+              +'</td>';
+            } else {
+              // Future: read-only placeholder
+              cells+='<td style="padding:3px 4px;border:1px solid var(--border);'+bl+'text-align:center;background:#fafafa">'
+                +'<div style="width:54px;padding:3px 4px;font-size:11px;text-align:center;color:#ccc;margin:0 auto">—</div>'
+              +'</td>';
+            }
           } else {
             // Today and past: editable so figures can always be recorded/corrected
             const pastStyle=dc.isPast&&!dc.isToday?'opacity:.85;':'';
@@ -6750,7 +6771,7 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   const legend='<div style="display:flex;gap:12px;padding:8px 12px;border-bottom:1px solid var(--border);background:#fafafa;font-size:11px;color:var(--text3);flex-wrap:wrap">'
     +'<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:var(--green-light);border-radius:2px;display:inline-block"></span>Filled</span>'
     +'<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#fffde7;border-radius:2px;display:inline-block"></span>Today — editable</span>'
-    +'<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#fafafa;border:1px solid #ddd;border-radius:2px;display:inline-block"></span>Past — editable</span>'
+    +'<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#fafafa;border:1px solid #ddd;border-radius:2px;display:inline-block"></span>Past — admin-only edit</span>'
     +'<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#fafafa;border:1px solid #ddd;border-radius:2px;display:inline-block"></span>Future — locked</span>'
     +'<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#f1f5f9;border-radius:2px;display:inline-block"></span>OFF</span>'
     +'<span style="margin-left:auto;font-weight:600;color:var(--blue)">★ = Today</span>'
@@ -6785,7 +6806,7 @@ function ltCellInput(inp,trackerKey,sheetKey,ri,ci){
 
 async function ltUpdateCell(trackerKey,sheetKey,ri,ci,val){
   const _firstName=(CU.name||'').split(' ')[0]||'';
-  const ts=now().toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'})+(_firstName?' · '+_firstName:'');
+  const ts=ltStamp();
   const path='trackers/'+trackerKey+'/sheets/'+sheetKey;
   // '' → null (clear), 'OFF' → 'OFF', numeric string (including '0') → number, else keep as string
   const trimmed=String(val).trim();
@@ -8092,20 +8113,25 @@ function buildFRTable(trackerKey,sheetKey,sheet){
       }
     }
 
-    // Date cols — status inputs editable across ALL columns for authorised users; read-only for TOD
+    // Date cols — past columns are admin-only to edit/correct; active & future remain editable
+    // for authorised users; everything is read-only for TOD.
     dateColGroups.forEach(function(dc){
       const v=row[dc.ci];
       const vS=(v===null||v===undefined)?'':String(v);
       const isDone=frIsDone(v);
-      if(!canEdit){
-        // TOD: read-only for every column
+      const pastLockedForUser=dc.isPast&&!isAdmin;
+      if(!canEdit||pastLockedForUser){
+        // TOD, or non-admin viewing a past column: read-only
         const bg=isDone?'#e8f5e9':dc.isPast?'#fafafa':dc.isActive?'#fffde7':'#f5f7ff';
         const col=isDone?'#388e3c':dc.isPast?'#9ca3af':dc.isActive?'var(--text3)':'#c7d2fe';
-        cells+='<td style="padding:5px 8px;border:1px solid var(--border);text-align:center;background:'+bg+'">'
+        const frTs=((sheet.frTimestamps||{})[rowIdx+'_'+dc.ci])||'';
+        const lockTitle=pastLockedForUser?' title="Past dates can only be edited by an admin"':'';
+        cells+='<td style="padding:5px 8px;border:1px solid var(--border);text-align:center;background:'+bg+'"'+lockTitle+'>'
           +'<span style="font-size:11px;color:'+col+';font-weight:'+(isDone?'700':'400')+'">'+escHtml(vS)+'</span>'
+          +(frTs?'<div style="font-size:9px;color:var(--text4);line-height:1.2;text-align:center">'+escHtml(frTs)+'</div>':'')
         +'</td>';
       } else {
-        // Editable input for all columns (past, active, future)
+        // Editable input for active & future columns (and past, for admins)
         const bg=isDone?'var(--green-light)':dc.isActive?'#fffde7':dc.isPast?'#fafafa':'#f5f7ff';
         const col=isDone?'var(--green)':dc.isActive?'var(--text)':dc.isPast?'#6b7280':'#6366f1';
         const placeholderTxt=dc.isActive?'e.g. Done, No Data\u2026':'Done / No Data\u2026';
@@ -8151,6 +8177,7 @@ function buildFRTable(trackerKey,sheetKey,sheet){
           +'<li>Check the <b>☑ checkbox</b> next to each brand row you want to update — or use the <b>top checkbox</b> to select all.</li>'
           +'<li>Selected rows will be highlighted in <span style="background:#dbeafe;padding:0 4px;border-radius:3px;color:var(--blue);font-weight:600">blue</span>.</li>'
           +'<li>Click the <b style="color:var(--green)">✓ Set Selected to Done</b> button that appears to apply <b>Done</b> to the <u>current week\'s column</u> for all selected brands.</li>'
+          +(isAdmin?'':'<li>Past-date columns are locked once the day has passed — only an admin can edit or correct historical entries.</li>')
         +'</ol>'
       +'</div>'
     +'</div>'
@@ -8425,7 +8452,7 @@ async function frApplySelToDone(trackerKey,sheetKey){
   if(activeIdx===-1){toast('Could not determine active column.');return;}
   const activeColIdx=dateColGroups[activeIdx].ci;
   const firstName=(CU.name||'').split(' ')[0]||'';
-  const ts=now().toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'})+(firstName?' · '+firstName:'');
+  const ts=ltStamp();
   const path='trackers/'+trackerKey+'/sheets/'+sheetKey;
   const updates={};
   sel.forEach(function(rowIdx){
@@ -8470,7 +8497,7 @@ async function frMassResetToDone(trackerKey,sheetKey,brandFilter){
   if(activeIdx===-1){toast('Could not determine active column.');return;}
   const activeColIdx=dateColGroups[activeIdx].ci;
   const firstName=(CU.name||'').split(' ')[0]||'';
-  const ts=now().toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'})+(firstName?' · '+firstName:'');
+  const ts=ltStamp();
   const path='trackers/'+trackerKey+'/sheets/'+sheetKey;
   const updates={};
   const dataRows=rows.filter(function(r){return r&&r[0]!=null&&String(r[0]).trim()!=='';});
@@ -8496,7 +8523,7 @@ async function frUpdateCell(trackerKey,sheetKey,rowIdx,colIdx,val){
   const path='trackers/'+trackerKey+'/sheets/'+sheetKey;
   const parsed=val===''?null:val;
   const firstName=(CU.name||'').split(' ')[0]||'';
-  const ts=now().toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'})+(firstName?' · '+firstName:'');
+  const ts=ltStamp();
   // ── FIX 3: Save FR table scroll position before any re-render ──
   const frTblId='fr-tbl-'+trackerKey+'-'+sheetKey;
   const frWrap=document.getElementById(frTblId);
