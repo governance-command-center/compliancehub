@@ -202,6 +202,37 @@ function aoFindDateCols(row0, date, row1){
   return[maxCol+wi*2, maxCol+wi*2+1];
 }
 
+// ── AO Row Ownership (CDM / Team Lead access control) ──
+// A row "belongs" to whoever is named in its CDM (col 2) or Team Lead (col 3) cell.
+// Admin always has full access. Everyone else gets view-only on rows that aren't theirs.
+function aoIsRowOwner(row){
+  if(CU&&CU.isAdmin)return true;
+  if(!row)return false;
+  const nm=(CU&&CU.name||'').trim().toLowerCase();
+  if(!nm)return false;
+  const cdm=row[2]!=null?String(row[2]).trim().toLowerCase():'';
+  const tl=row[3]!=null?String(row[3]).trim().toLowerCase():'';
+  return(cdm&&cdm===nm)||(tl&&tl===nm);
+}
+// Admin-only: assign/reassign the CDM (colIdx=2) or Team Lead (colIdx=3) for a row,
+// picked from registered members so it always matches a real login name exactly.
+async function ltSetRowAssignee(trackerKey,sheetKey,ri,colIdx,value){
+  if(!CU.isAdmin){toast('Admin only.');return;}
+  if(!D.trackers[trackerKey])D.trackers[trackerKey]={};
+  if(!D.trackers[trackerKey].sheets)D.trackers[trackerKey].sheets={};
+  if(!D.trackers[trackerKey].sheets[sheetKey])D.trackers[trackerKey].sheets[sheetKey]={rows:[],timestamps:{}};
+  const localSheet=D.trackers[trackerKey].sheets[sheetKey];
+  if(!localSheet.rows)localSheet.rows=[];
+  if(!localSheet.rows[ri])localSheet.rows[ri]=[];
+  localSheet.rows[ri][colIdx]=value||'';
+  const path='trackers/'+trackerKey+'/sheets/'+sheetKey;
+  const updates={};
+  updates['rows/'+ri+'/'+colIdx]=value||'';
+  await fbUpd(path,updates);
+  toast((colIdx===2?'CDM':'Team Lead')+' updated.');
+  renderLiveTrackers();
+}
+
 function getAOStatusForDate(date){
   // Future dates have no data by definition — always Pending
   if(date>ds(now())) return 'Pending';
@@ -5892,6 +5923,20 @@ function buildAOTable(trackerKey,sheetKey,sheet){
       cells+='<td style="position:sticky;left:0;z-index:2;padding:3px 6px;border:1px solid var(--border);background:#f8fafc;min-width:'+CB_W+'px;width:'+CB_W+'px"></td>';
     }
     // Fixed sticky cols (individual left offsets)
+    // CDM (i===2) and Team Lead (i===3) are admin-editable dropdowns sourced from registered
+    // members, so the assignment always matches a real login name exactly (no more free-typed
+    // names that don't match anyone, and no more access decided by what's in an Excel cell).
+    const aoMemberOpts=(i2v)=>{
+      const cur=(i2v||'').trim();
+      let opts='<option value="">— Unassigned —</option>';
+      const seen={};
+      (D.members||[]).filter(function(m){return m.approved&&m.active!==false;}).forEach(function(m){
+        seen[m.name]=1;
+        opts+='<option value="'+escHtml(m.name)+'"'+(m.name===cur?' selected':'')+'>'+escHtml(m.name)+' ('+escHtml(m.role||'Member')+')</option>';
+      });
+      if(cur&&!seen[cur])opts+='<option value="'+escHtml(cur)+'" selected>'+escHtml(cur)+' (unmatched — pick a member)</option>';
+      return opts;
+    };
     fixedW.forEach(function(_,i){
       const v=row[i];
       const vS=(v===null||v===undefined)?'':String(v);
@@ -5899,7 +5944,16 @@ function buildAOTable(trackerKey,sheetKey,sheet){
       const sl=aoFixedLefts[i];
       const isLast=i===lastFixedIdx;
       const shadowStyle=isLast?'box-shadow:2px 0 4px rgba(0,0,0,0.06);':'';
-      cells+='<td style="position:sticky;left:'+sl+'px;z-index:1;'+shadowStyle+'padding:5px 8px;border:1px solid var(--border);font-weight:'+(isT?700:'normal')+';font-size:12px;text-align:left;background:'+fixBg+';white-space:nowrap">'+vS+'</td>';
+      const isAssigneeCol=!isT&&(i===2||i===3);
+      let cellInner;
+      if(isAssigneeCol&&isAdmin){
+        cellInner='<select onchange="ltSetRowAssignee(\''+trackerKey+'\',\''+sheetKey+'\','+ri+','+i+',this.value)" style="width:100%;max-width:'+(fixedW[i]-10)+'px;padding:2px 3px;font-size:11px;border:1px solid var(--border);border-radius:3px;background:#fff">'+aoMemberOpts(vS)+'</select>';
+      } else if(isAssigneeCol&&!vS){
+        cellInner='<span style="color:var(--text4)">— Unassigned —</span>';
+      } else {
+        cellInner=escHtml(vS);
+      }
+      cells+='<td style="position:sticky;left:'+sl+'px;z-index:1;'+shadowStyle+'padding:5px 8px;border:1px solid var(--border);font-weight:'+(isT?700:'normal')+';font-size:12px;text-align:left;background:'+fixBg+';white-space:nowrap">'+cellInner+'</td>';
     });
     // Date cols
     dateCols.forEach(function(dc){
@@ -5917,10 +5971,12 @@ function buildAOTable(trackerKey,sheetKey,sheet){
           const isOFF=vS.toUpperCase()==='OFF';
           // 0 is a valid filled value — only null/undefined/'' means truly empty
           const filled=v!==null&&v!==undefined&&vS!==''&&!isOFF;
-          // Only future dates are always locked. Past dates are locked for non-admins —
-          // only admins may edit/correct historical entries; today is always editable.
+          // Lock for: future dates (always), past dates for non-admins, AND now also for any
+          // user who isn't the row's assigned CDM/Team Lead (or admin) — view-only otherwise.
           const isPastLockedForUser=dc.isPast&&!dc.isToday&&!isAdmin;
-          const locked=dc.isFuture||isPastLockedForUser;
+          const owner=aoIsRowOwner(row);
+          const isNotOwnerLocked=!owner&&!isPastLockedForUser&&!dc.isFuture;
+          const locked=dc.isFuture||isPastLockedForUser||isNotOwnerLocked;
           const cellBg=isOFF?'#f1f5f9':filled?'var(--green-light)':dc.isToday?'#fffde7':'transparent';
           const cellCol=isOFF?'var(--text4)':filled?'var(--green)':'var(--text)';
           const localTs=localSheetData&&localSheetData.timestamps?localSheetData.timestamps[ri+'_'+c]:'';
@@ -5930,6 +5986,12 @@ function buildAOTable(trackerKey,sheetKey,sheet){
               // Past entry, non-admin: show the actual value read-only with its audit stamp
               cells+='<td style="padding:3px 4px;border:1px solid var(--border);'+bl+'text-align:center;background:#fafafa" title="Past dates can only be edited by an admin">'
                 +'<div style="width:54px;padding:3px 4px;font-size:11px;text-align:center;color:'+cellCol+';margin:0 auto">'+escHtml(vS)+'</div>'
+                +(ts?'<div class="ao-ts" style="font-size:9px;color:var(--text4);line-height:1.2">'+escHtml(ts)+'</div>':'')
+              +'</td>';
+            } else if(isNotOwnerLocked){
+              // Not this user's CDM/Team Lead row: view-only — show the value but no input
+              cells+='<td style="padding:3px 4px;border:1px solid var(--border);'+bl+'text-align:center;background:'+cellBg+'" title="View only — assigned to '+escHtml(row[2]||row[3]||'another member')+'">'
+                +'<div style="width:54px;padding:3px 4px;font-size:11px;text-align:center;color:'+cellCol+';margin:0 auto">'+(vS?escHtml(vS):'—')+'</div>'
                 +(ts?'<div class="ao-ts" style="font-size:9px;color:var(--text4);line-height:1.2">'+escHtml(ts)+'</div>':'')
               +'</td>';
             } else {
@@ -6022,6 +6084,13 @@ function ltCellInput(inp,trackerKey,sheetKey,ri,ci){
 }
 
 async function ltUpdateCell(trackerKey,sheetKey,ri,ci,val){
+  // Guard: for AO-linked trackers, only admin or the CDM/Team Lead assigned to this row
+  // may write to it. Other tracker types (e.g. Finance Report) are unaffected.
+  const _tkr=D.trackers[trackerKey];
+  if(_tkr&&_tkr.aoLinked){
+    const _existingRow=(_tkr.sheets&&_tkr.sheets[sheetKey]&&_tkr.sheets[sheetKey].rows)?_tkr.sheets[sheetKey].rows[ri]:null;
+    if(!aoIsRowOwner(_existingRow)){toast('View only — this row is assigned to another member.');renderLiveTrackers();return;}
+  }
   const _firstName=(CU.name||'').split(' ')[0]||'';
   const ts=ltStamp();
   const path='trackers/'+trackerKey+'/sheets/'+sheetKey;
