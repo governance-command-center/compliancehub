@@ -5604,57 +5604,6 @@ let _frFilter={region:'',brand:'',exec:'',tl:''};
 
 function frSetFilter(field,val){_frFilter[field]=val;renderLiveTrackers();}
 
-async function aoMassResetToZero(trackerKey,sheetKey){
-  const t=D.trackers[trackerKey];if(!t)return;
-  const sheet=(t.sheets||{})[sheetKey];if(!sheet||!sheet.rows)return;
-  const rows=sheet.rows;
-  const nowT=now(),todayStr=ds(nowT);
-  const weekDates=[];
-  const mon=new Date(nowT);
-  mon.setDate(nowT.getDate()-(nowT.getDay()===0?6:nowT.getDay()-1));mon.setHours(0,0,0,0);
-  for(let i=0;i<5;i++){const d=new Date(mon);d.setDate(mon.getDate()+i);weekDates.push(ds(d));}
-  // Collect editable cols (current week non-weekend cols ci≥4)
-  const row0=sheet.row0||[];
-  const maxCol=row0.length;
-  const editableCols=[];
-  for(let ci=4;ci<maxCol;ci+=2){
-    const h0=row0[ci]!=null?String(row0[ci]):'';
-    const dp=h0.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-    if(dp){
-      const colDateStr=dp[3]+'-'+dp[1].padStart(2,'0')+'-'+dp[2].padStart(2,'0');
-      if(!weekDates.includes(colDateStr))continue;
-      if(colDateStr<todayStr&&!CU.isAdmin)continue; // past dates: admin-only
-      const dow=new Date(colDateStr+'T00:00:00').getDay();
-      if(dow===0||dow===6)continue;
-    } else continue;
-    editableCols.push(ci,ci+1);
-  }
-  if(!editableCols.length){toast('No editable columns found for this week.');return;}
-  const firstName=(CU.name||'').split(' ')[0]||'';
-  const ts=ltStamp();
-  const path='trackers/'+trackerKey+'/sheets/'+sheetKey;
-  const updates={};
-  if(!D.trackers[trackerKey].sheets[sheetKey].timestamps)D.trackers[trackerKey].sheets[sheetKey].timestamps={};
-  const brandCol=0;
-  rows.forEach(function(row,ri){
-    if(!row)return;
-    if(String(row[3]||'').toUpperCase()==='TOTAL')return;// skip total
-    // Apply brand filter if active
-    if(_aoFilter.brand){const bv=String(row[brandCol]||'').toLowerCase();if(!bv.includes(_aoFilter.brand.toLowerCase()))return;}
-    editableCols.forEach(function(c){
-      if(!D.trackers[trackerKey].sheets[sheetKey].rows)D.trackers[trackerKey].sheets[sheetKey].rows=[];
-      if(!D.trackers[trackerKey].sheets[sheetKey].rows[ri])D.trackers[trackerKey].sheets[sheetKey].rows[ri]=[];
-      D.trackers[trackerKey].sheets[sheetKey].rows[ri][c]=0;
-      D.trackers[trackerKey].sheets[sheetKey].timestamps[ri+'_'+c]=ts;
-      updates['rows/'+ri+'/'+c]=0;
-      updates['timestamps/'+ri+'_'+c]=ts;
-    });
-  });
-  await fbUpd(path,updates);
-  toast('Mass reset to 0 applied!');
-  renderLiveTrackers();
-}
-
 // ── AO Row Selection ──
 function aoToggleRowSel(trackerKey,sheetKey,ri){
   const k='_aoSel_'+trackerKey+'_'+sheetKey;
@@ -5730,38 +5679,29 @@ async function aoSetSelectedToZero(trackerKey,sheetKey){
   const sheet=(t.sheets||{})[sheetKey];if(!sheet||!sheet.rows)return;
   const rows=sheet.rows;
   const nowT=now(),todayStr=ds(nowT);
-  const weekDates=[];
-  const mon=new Date(nowT);
-  mon.setDate(nowT.getDate()-(nowT.getDay()===0?6:nowT.getDay()-1));mon.setHours(0,0,0,0);
-  for(let i=0;i<5;i++){const d=new Date(mon);d.setDate(mon.getDate()+i);weekDates.push(ds(d));}
+  const dowToday=nowT.getDay();
+  if(dowToday===0||dowToday===6){toast('No editable column today (weekend).');return;}
   const row0=sheet.row0||[];
   const maxCol=row0.length;
-  const editableCols=[];
-  // Match date columns from Excel headers first
+  // Only target TODAY's Order/Product column pair — never the rest of the week.
+  // (Previously this wiped Mon-Fri in one click, which silently overwrote other days'
+  // real entries and made them look like a single bulk/auto update.)
+  let editableCols=[];
   for(let ci=4;ci<maxCol;ci+=2){
     const h0=row0[ci]!=null?String(row0[ci]):'';
     const dp=h0.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
     if(dp){
       const colDateStr=dp[3]+'-'+dp[1].padStart(2,'0')+'-'+dp[2].padStart(2,'0');
-      if(!weekDates.includes(colDateStr))continue;
-      if(colDateStr<todayStr&&!CU.isAdmin)continue; // past dates: admin-only
-      const dow=new Date(colDateStr+'T00:00:00').getDay();
-      if(dow===0||dow===6)continue;
-      editableCols.push(ci,ci+1);
+      if(colDateStr===todayStr){editableCols=[ci,ci+1];break;}
     }
   }
   // Virtual-column fallback: same index logic as buildAOTable / ltUpdateCell
   if(!editableCols.length){
     const vBase=Math.max(maxCol,4);
-    weekDates.forEach(function(wDate){
-      const dow=new Date(wDate+'T12:00:00').getDay();
-      if(dow===0||dow===6)return;
-      const offsets={1:0,2:2,3:4,4:6,5:8};
-      if(offsets[dow]!==undefined){editableCols.push(vBase+offsets[dow],vBase+offsets[dow]+1);}
-    });
+    const offsets={1:0,2:2,3:4,4:6,5:8};
+    if(offsets[dowToday]!==undefined){editableCols=[vBase+offsets[dowToday],vBase+offsets[dowToday]+1];}
   }
-  if(!editableCols.length){toast('No editable columns found for this week.');return;}
-  const firstName=(CU.name||'').split(' ')[0]||'';
+  if(!editableCols.length){toast('No editable column found for today.');return;}
   const ts=ltStamp();
   const path='trackers/'+trackerKey+'/sheets/'+sheetKey;
   const updates={};
@@ -5780,7 +5720,64 @@ async function aoSetSelectedToZero(trackerKey,sheetKey){
   await fbUpd(path,updates);
   const resetCount=sel.size;
   sel.clear();
-  toast('Set '+resetCount+' brand'+(resetCount>1?'s':'')+' to 0 for this week.');
+  toast('Set '+resetCount+' brand'+(resetCount>1?'s':'')+" to 0 for today only.");
+  renderLiveTrackers();
+}
+
+
+
+// ── Admin: add a new brand row to a live AO tracker sheet ──
+function ltOpenAddRow(trackerKey,sheetKey){
+  if(!CU.isAdmin){toast('Admin only.');return;}
+  let memOpts='<option value="">— Unassigned —</option>';
+  (D.members||[]).filter(function(m){return m.approved&&m.active!==false;}).forEach(function(m){
+    memOpts+='<option value="'+escHtml(m.name)+'">'+escHtml(m.name)+' ('+escHtml(m.role||'Member')+')</option>';
+  });
+  document.getElementById('mltar-body').innerHTML=
+    '<div class="fg"><label class="flabel">Brand Name</label><input class="finput nb" id="ltar-brand" placeholder="e.g. NewBrand Co"/></div>'+
+    '<div class="fg"><label class="flabel">Platform</label><input class="finput nb" id="ltar-platform" placeholder="e.g. Lazada, Shopee"/></div>'+
+    '<div class="fg fg2">'+
+      '<div><label class="flabel">CDM</label><select class="finput nb" id="ltar-cdm">'+memOpts+'</select></div>'+
+      '<div><label class="flabel">Team Lead</label><select class="finput nb" id="ltar-tl">'+memOpts+'</select></div>'+
+    '</div>'+
+    '<div class="form-actions">'+
+      '<button class="btn primary" onclick="ltSaveNewRow(\''+trackerKey+'\',\''+sheetKey+'\')">Add Brand</button>'+
+      '<button class="btn" onclick="closeModal(\'modal-lt-addrow\')">Cancel</button>'+
+    '</div>';
+  openModal('modal-lt-addrow');
+}
+async function ltSaveNewRow(trackerKey,sheetKey){
+  if(!CU.isAdmin){toast('Admin only.');return;}
+  const brand=(document.getElementById('ltar-brand')?.value||'').trim();
+  if(!brand){toast('Brand name is required.');return;}
+  const platform=(document.getElementById('ltar-platform')?.value||'').trim();
+  const cdm=document.getElementById('ltar-cdm')?.value||'';
+  const tl=document.getElementById('ltar-tl')?.value||'';
+  const t=D.trackers[trackerKey];if(!t){toast('Tracker not found.');return;}
+  const sheet=(t.sheets||{})[sheetKey];if(!sheet){toast('Sheet not found.');return;}
+  const rows=(sheet.rows||[]).slice();
+  const isTR=r=>r&&String(r[3]||'').toUpperCase()==='TOTAL';
+  const newRow=[brand,platform,cdm,tl];
+  // Insert above the TOTAL row if one exists, otherwise append at the end.
+  let insertAt=rows.length;
+  for(let i=0;i<rows.length;i++){if(isTR(rows[i])){insertAt=i;break;}}
+  rows.splice(insertAt,0,newRow);
+  // Remap timestamps: any row at/after insertAt shifts down by one index, so its
+  // timestamp keys (ri_ci) must shift too or they'll attach to the wrong row.
+  const oldTimestamps=sheet.timestamps||{};
+  const newTimestamps={};
+  Object.keys(oldTimestamps).forEach(function(tk){
+    const us=tk.indexOf('_');
+    const oldRi=parseInt(tk.slice(0,us),10);
+    const rest=tk.slice(us);
+    const newRi=oldRi>=insertAt?oldRi+1:oldRi;
+    newTimestamps[newRi+rest]=oldTimestamps[tk];
+  });
+  D.trackers[trackerKey].sheets[sheetKey].rows=rows;
+  D.trackers[trackerKey].sheets[sheetKey].timestamps=newTimestamps;
+  await fbUpd('trackers/'+trackerKey+'/sheets/'+sheetKey,{rows:rows,timestamps:newTimestamps});
+  closeModal('modal-lt-addrow');
+  toast('Brand "'+brand+'" added to tracker.');
   renderLiveTrackers();
 }
 
@@ -6071,7 +6068,7 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   // ── Instruction banner ──
   const instrBanner='<div style="display:flex;align-items:center;gap:10px;padding:8px 14px;background:linear-gradient(135deg,#fffbeb,#fefce8);border-bottom:1px solid var(--yellow-mid);font-size:11px;color:#92400e;flex-wrap:wrap">'
     +'<span style="font-size:14px">☑️</span>'
-    +'<span><b>Select brands</b> using the checkboxes, then click <b style="color:var(--red)">Set Selected to 0</b> to zero-out current week values for those brands.'
+    +'<span><b>Select brands</b> using the checkboxes, then click <b style="color:var(--red)">Set Selected to 0</b> to zero-out <b>today\'s</b> values for those brands (other days are never touched).'
       +(CU.isAdmin?' Admins can also click <b style="color:var(--red)">🗑 Delete Selected</b> to permanently remove inactive brands from the tracker.':'')
       +' Or use the top checkbox to select all.</span>'
   +'</div>';
@@ -6079,6 +6076,7 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   // ── Action bar (always visible; button disabled when nothing selected) ──
   const selCount=aoSelRows.size;
   const actionBar='<div id="ao-action-bar-'+trackerKey+'-'+sheetKey+'" style="display:flex;align-items:center;gap:10px;padding:7px 14px;background:'+(selCount?'#fff7ed':'#fafafa')+';border-bottom:1px solid '+(selCount?'var(--yellow-mid)':'var(--border)')+';transition:background .2s">'
+    +(CU.isAdmin?'<button onclick="ltOpenAddRow(\''+trackerKey+'\',\''+sheetKey+'\')" style="padding:5px 12px;border:1px solid var(--green-mid);border-radius:var(--radius);font-size:11px;font-weight:700;background:var(--green-light);color:var(--green);cursor:pointer">+ Add Brand</button>':'')
     +'<span style="font-size:12px;font-weight:600;color:'+(selCount?'var(--orange)':'var(--text4)')+'">'
       +(selCount?selCount+' brand'+(selCount>1?'s':'')+' selected':'No brands selected')
     +'</span>'
