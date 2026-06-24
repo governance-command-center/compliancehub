@@ -5684,6 +5684,44 @@ function aoClearSelection(trackerKey,sheetKey){
   if(window[k])window[k].clear();
   renderLiveTrackers();
 }
+async function aoDeleteSelectedRows(trackerKey,sheetKey){
+  if(!CU.isAdmin){toast('Only admin can delete brands.');return;}
+  const k='_aoSel_'+trackerKey+'_'+sheetKey;
+  const sel=window[k];
+  if(!sel||!sel.size){toast('No brands selected.');return;}
+  const t=D.trackers[trackerKey];if(!t)return;
+  const sheet=(t.sheets||{})[sheetKey];if(!sheet||!sheet.rows)return;
+  const rows=sheet.rows;
+  const namesPreview=Array.from(sel).slice(0,5).map(function(ri){const r=rows[ri];return r&&r[3]?String(r[3]):'(row '+ri+')';}).join(', ');
+  const more=sel.size>5?' and '+(sel.size-5)+' more':'';
+  if(!confirm('Delete '+sel.size+' brand'+(sel.size>1?'s':'')+' from this sheet?\n\n'+namesPreview+more+'\n\nThis cannot be undone.'))return;
+  // Build the new rows array with selected indices removed, preserving order of the rest.
+  const newRows=rows.filter(function(r,ri){return !sel.has(ri);});
+  // Rebuild timestamps, remapping old row indices -> new row indices (rows that survive keep their cell timestamps).
+  const oldTimestamps=sheet.timestamps||{};
+  const oldToNew={};
+  let newIdx=0;
+  rows.forEach(function(r,ri){
+    if(sel.has(ri))return;
+    oldToNew[ri]=newIdx;
+    newIdx++;
+  });
+  const newTimestamps={};
+  Object.keys(oldTimestamps).forEach(function(tk){
+    const parts=tk.split('_');
+    const oldRi=parseInt(parts[0],10);
+    if(oldToNew[oldRi]===undefined)return; // belonged to a deleted row
+    newTimestamps[oldToNew[oldRi]+'_'+parts[1]]=oldTimestamps[tk];
+  });
+  const path='trackers/'+trackerKey+'/sheets/'+sheetKey;
+  D.trackers[trackerKey].sheets[sheetKey].rows=newRows;
+  D.trackers[trackerKey].sheets[sheetKey].timestamps=newTimestamps;
+  await fbUpd(path,{rows:newRows,timestamps:newTimestamps});
+  const delCount=sel.size;
+  sel.clear();
+  toast('Deleted '+delCount+' brand'+(delCount>1?'s':'')+' from tracker.');
+  renderLiveTrackers();
+}
 async function aoSetSelectedToZero(trackerKey,sheetKey){
   const k='_aoSel_'+trackerKey+'_'+sheetKey;
   const sel=window[k];
@@ -6033,7 +6071,9 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   // ── Instruction banner ──
   const instrBanner='<div style="display:flex;align-items:center;gap:10px;padding:8px 14px;background:linear-gradient(135deg,#fffbeb,#fefce8);border-bottom:1px solid var(--yellow-mid);font-size:11px;color:#92400e;flex-wrap:wrap">'
     +'<span style="font-size:14px">☑️</span>'
-    +'<span><b>Select brands</b> using the checkboxes, then click <b style="color:var(--red)">Set Selected to 0</b> to zero-out current week values for those brands. Or use the top checkbox to select all.</span>'
+    +'<span><b>Select brands</b> using the checkboxes, then click <b style="color:var(--red)">Set Selected to 0</b> to zero-out current week values for those brands.'
+      +(CU.isAdmin?' Admins can also click <b style="color:var(--red)">🗑 Delete Selected</b> to permanently remove inactive brands from the tracker.':'')
+      +' Or use the top checkbox to select all.</span>'
   +'</div>';
 
   // ── Action bar (always visible; button disabled when nothing selected) ──
@@ -6043,8 +6083,10 @@ function buildAOTable(trackerKey,sheetKey,sheet){
       +(selCount?selCount+' brand'+(selCount>1?'s':'')+' selected':'No brands selected')
     +'</span>'
     +(selCount?'<button onclick="aoClearSelection(\''+trackerKey+'\',\''+sheetKey+'\')" style="padding:3px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:11px;background:#fff;cursor:pointer;color:var(--text3)">✕ Clear</button>':'')
+    +(CU.isAdmin?'<button onclick="aoDeleteSelectedRows(\''+trackerKey+'\',\''+sheetKey+'\')" '+(selCount?'':'disabled ')
+      +'style="margin-left:auto;padding:5px 16px;border:1px solid var(--red);border-radius:var(--radius);font-size:12px;font-weight:700;background:'+(selCount?'#fff':'#f1f5f9')+';color:'+(selCount?'var(--red)':'var(--text4)')+';cursor:'+(selCount?'pointer':'not-allowed')+'">🗑 Delete Selected</button>':'')
     +'<button onclick="aoSetSelectedToZero(\''+trackerKey+'\',\''+sheetKey+'\')" '+(selCount?'':'disabled ')
-      +'style="margin-left:auto;padding:5px 16px;border:none;border-radius:var(--radius);font-size:12px;font-weight:700;background:'+(selCount?'var(--red)':'#e2e8f0')+';color:'+(selCount?'#fff':'var(--text4)')+';cursor:'+(selCount?'pointer':'not-allowed')+'">⟳ Set Selected to 0</button>'
+      +'style="'+(CU.isAdmin?'':'margin-left:auto;')+'padding:5px 16px;border:none;border-radius:var(--radius);font-size:12px;font-weight:700;background:'+(selCount?'var(--red)':'#e2e8f0')+';color:'+(selCount?'#fff':'var(--text4)')+';cursor:'+(selCount?'pointer':'not-allowed')+'">⟳ Set Selected to 0</button>'
   +'</div>';
 
   const legend='<div style="display:flex;gap:12px;padding:8px 12px;border-bottom:1px solid var(--border);background:#fafafa;font-size:11px;color:var(--text3);flex-wrap:wrap">'
