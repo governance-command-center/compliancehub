@@ -5724,6 +5724,59 @@ async function aoSetSelectedToZero(trackerKey,sheetKey){
   renderLiveTrackers();
 }
 
+// Finds today's [orderCol, productCol] pair for a sheet — shared by the zero/clear actions.
+function aoFindTodayCols(sheet){
+  const nowT=now(),todayStr=ds(nowT);
+  const dowToday=nowT.getDay();
+  if(dowToday===0||dowToday===6)return[];
+  const row0=sheet.row0||[];
+  const maxCol=row0.length;
+  for(let ci=4;ci<maxCol;ci+=2){
+    const h0=row0[ci]!=null?String(row0[ci]):'';
+    const dp=h0.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if(dp){
+      const colDateStr=dp[3]+'-'+dp[1].padStart(2,'0')+'-'+dp[2].padStart(2,'0');
+      if(colDateStr===todayStr)return[ci,ci+1];
+    }
+  }
+  const vBase=Math.max(maxCol,4);
+  const offsets={1:0,2:2,3:4,4:6,5:8};
+  if(offsets[dowToday]!==undefined)return[vBase+offsets[dowToday],vBase+offsets[dowToday]+1];
+  return[];
+}
+// Admin: blank out (not zero) today's Order/Product cells for selected brands — useful for
+// testing whether the "filled" state correctly reverts to truly empty.
+async function aoClearSelectedToday(trackerKey,sheetKey){
+  if(!CU.isAdmin){toast('Admin only.');return;}
+  const k='_aoSel_'+trackerKey+'_'+sheetKey;
+  const sel=window[k];
+  if(!sel||!sel.size){toast('No brands selected.');return;}
+  const t=D.trackers[trackerKey];if(!t)return;
+  const sheet=(t.sheets||{})[sheetKey];if(!sheet||!sheet.rows)return;
+  const rows=sheet.rows;
+  const editableCols=aoFindTodayCols(sheet);
+  if(!editableCols.length){toast('No editable column found for today.');return;}
+  const path='trackers/'+trackerKey+'/sheets/'+sheetKey;
+  const updates={};
+  if(!D.trackers[trackerKey].sheets[sheetKey].timestamps)D.trackers[trackerKey].sheets[sheetKey].timestamps={};
+  sel.forEach(function(ri){
+    const row=rows[ri];if(!row)return;
+    editableCols.forEach(function(c){
+      if(!D.trackers[trackerKey].sheets[sheetKey].rows)D.trackers[trackerKey].sheets[sheetKey].rows=[];
+      if(!D.trackers[trackerKey].sheets[sheetKey].rows[ri])D.trackers[trackerKey].sheets[sheetKey].rows[ri]=[];
+      D.trackers[trackerKey].sheets[sheetKey].rows[ri][c]='';
+      delete D.trackers[trackerKey].sheets[sheetKey].timestamps[ri+'_'+c];
+      updates['rows/'+ri+'/'+c]='';
+      updates['timestamps/'+ri+'_'+c]=null; // null deletes the key in Firebase
+    });
+  });
+  await fbUpd(path,updates);
+  const clearCount=sel.size;
+  sel.clear();
+  toast('Cleared '+clearCount+' brand'+(clearCount>1?'s':'')+" to blank for today.");
+  renderLiveTrackers();
+}
+
 
 
 // ── Admin: add a new brand row to a live AO tracker sheet ──
@@ -6069,7 +6122,7 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   const instrBanner='<div style="display:flex;align-items:center;gap:10px;padding:8px 14px;background:linear-gradient(135deg,#fffbeb,#fefce8);border-bottom:1px solid var(--yellow-mid);font-size:11px;color:#92400e;flex-wrap:wrap">'
     +'<span style="font-size:14px">☑️</span>'
     +'<span><b>Select brands</b> using the checkboxes, then click <b style="color:var(--red)">Set Selected to 0</b> to zero-out <b>today\'s</b> values for those brands (other days are never touched).'
-      +(CU.isAdmin?' Admins can also click <b style="color:var(--red)">🗑 Delete Selected</b> to permanently remove inactive brands from the tracker.':'')
+      +(CU.isAdmin?' Admins can also click <b style="color:var(--red)">🗑 Delete Selected</b> to permanently remove inactive brands, or <b style="color:var(--text3)">🧹 Blank Selected (Today)</b> to clear today\'s cells back to empty.':'')
       +' Or use the top checkbox to select all.</span>'
   +'</div>';
 
@@ -6083,6 +6136,8 @@ function buildAOTable(trackerKey,sheetKey,sheet){
     +(selCount?'<button onclick="aoClearSelection(\''+trackerKey+'\',\''+sheetKey+'\')" style="padding:3px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:11px;background:#fff;cursor:pointer;color:var(--text3)">✕ Clear</button>':'')
     +(CU.isAdmin?'<button onclick="aoDeleteSelectedRows(\''+trackerKey+'\',\''+sheetKey+'\')" '+(selCount?'':'disabled ')
       +'style="margin-left:auto;padding:5px 16px;border:1px solid var(--red);border-radius:var(--radius);font-size:12px;font-weight:700;background:'+(selCount?'#fff':'#f1f5f9')+';color:'+(selCount?'var(--red)':'var(--text4)')+';cursor:'+(selCount?'pointer':'not-allowed')+'">🗑 Delete Selected</button>':'')
+    +(CU.isAdmin?'<button onclick="aoClearSelectedToday(\''+trackerKey+'\',\''+sheetKey+'\')" '+(selCount?'':'disabled ')
+      +'style="'+(selCount?'':'margin-left:auto;')+'padding:5px 16px;border:1px solid var(--text4);border-radius:var(--radius);font-size:12px;font-weight:700;background:'+(selCount?'#fff':'#f1f5f9')+';color:'+(selCount?'var(--text3)':'var(--text4)')+';cursor:'+(selCount?'pointer':'not-allowed')+'">🧹 Blank Selected (Today)</button>':'')
     +'<button onclick="aoSetSelectedToZero(\''+trackerKey+'\',\''+sheetKey+'\')" '+(selCount?'':'disabled ')
       +'style="'+(CU.isAdmin?'':'margin-left:auto;')+'padding:5px 16px;border:none;border-radius:var(--radius);font-size:12px;font-weight:700;background:'+(selCount?'var(--red)':'#e2e8f0')+';color:'+(selCount?'#fff':'var(--text4)')+';cursor:'+(selCount?'pointer':'not-allowed')+'">⟳ Set Selected to 0</button>'
   +'</div>';
