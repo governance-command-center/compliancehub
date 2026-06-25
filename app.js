@@ -233,6 +233,48 @@ async function ltSetRowAssignee(trackerKey,sheetKey,ri,colIdx,value){
   renderLiveTrackers();
 }
 
+// ── Finance Report Row Ownership (Exec/CDM / Team Lead access control) ──
+// Mirrors aoIsRowOwner: a brand row "belongs" to whoever is named in its Exec/CDM or
+// Team Lead cell. Admin always has full access; everyone else gets view-only on rows
+// that aren't assigned to them.
+function frIsRowOwner(row,execCol,tlCol){
+  if(CU&&CU.isAdmin)return true;
+  if(!row)return false;
+  const nm=(CU&&CU.name||'').trim().toLowerCase();
+  if(!nm)return false;
+  const ex=row[execCol]!=null?String(row[execCol]).trim().toLowerCase():'';
+  const tl=row[tlCol]!=null?String(row[tlCol]).trim().toLowerCase():'';
+  return(ex&&ex===nm)||(tl&&tl===nm);
+}
+// Admin-only: edit any fixed-column cell (Region, Platform, Account Status text fallback,
+// Synagie Merchant ID, Brand/Store Name) on a Finance Report row. Exec/CDM and Team Lead use
+// frSetRowAssignee (dropdown of real members) instead, same split as the AO tracker.
+async function frUpdateFixedCell(trackerKey,sheetKey,ri,colIdx,value){
+  if(!CU.isAdmin){toast('Admin only.');return;}
+  if(!D.trackers[trackerKey])return;
+  const sheet=(D.trackers[trackerKey].sheets||{})[sheetKey];if(!sheet)return;
+  if(!sheet.rows)sheet.rows=[];
+  if(!sheet.rows[ri])sheet.rows[ri]=[];
+  sheet.rows[ri][colIdx]=value;
+  const updates={};updates['rows/'+ri+'/'+colIdx]=value;
+  await fbUpd('trackers/'+trackerKey+'/sheets/'+sheetKey,updates);
+  renderLiveTrackers();
+}
+// Admin-only: assign/reassign Exec/CDM or Team Lead for a Finance Report row, picked from
+// registered members so access control always matches a real login name exactly.
+async function frSetRowAssignee(trackerKey,sheetKey,ri,colIdx,value){
+  if(!CU.isAdmin){toast('Admin only.');return;}
+  if(!D.trackers[trackerKey])return;
+  const sheet=(D.trackers[trackerKey].sheets||{})[sheetKey];if(!sheet)return;
+  if(!sheet.rows)sheet.rows=[];
+  if(!sheet.rows[ri])sheet.rows[ri]=[];
+  sheet.rows[ri][colIdx]=value||'';
+  const updates={};updates['rows/'+ri+'/'+colIdx]=value||'';
+  await fbUpd('trackers/'+trackerKey+'/sheets/'+sheetKey,updates);
+  toast('Assignee updated.');
+  renderLiveTrackers();
+}
+
 function getAOStatusForDate(date){
   // Future dates have no data by definition — always Pending
   if(date>ds(now())) return 'Pending';
@@ -5458,6 +5500,7 @@ function renderLiveTrackers(){
     toolbarHtml='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">'
       +'<div style="font-size:15px;font-weight:700;flex:1">'+activeT.name+'</div>'
       +linkedBtn
+      +(ltCanManage&&activeT.category==='Finance'?'<button class="btn sm primary" data-action="fr-add-brand" data-key="'+_activeTracker+'">+ Add Brand</button>':'')
       +(ltCanManage&&activeT.category==='Finance'?'<button class="btn sm warning" data-action="fr-manage-dates" data-key="'+_activeTracker+'">🗑 Manage Columns</button>':'')
       +(ltCanEdit?'<button class="btn sm" data-action="export" data-key="'+_activeTracker+'">Export Excel</button>':'')
       
@@ -5799,6 +5842,7 @@ function ltOpenAddRow(trackerKey,sheetKey){
       '<button class="btn primary" onclick="ltSaveNewRow(\''+trackerKey+'\',\''+sheetKey+'\')">Add Brand</button>'+
       '<button class="btn" onclick="closeModal(\'modal-lt-addrow\')">Cancel</button>'+
     '</div>';
+  document.getElementById('modal-lt-addrow').querySelector('h3').textContent='Add New Brand';
   openModal('modal-lt-addrow');
 }
 async function ltSaveNewRow(trackerKey,sheetKey){
@@ -6586,6 +6630,14 @@ async function saveFRWeekOffset(platform,offset){
   renderDashboard();
 }
 
+// Fixed column labels — use actual header from Excel, fallback to these platform-specific defaults
+const FR_DEFAULT_FIXED=['Region','Platform','Account Status','Synagie Merchant ID','Brand / Store Name','Exec','Team Lead'];
+const FR_PLATFORM_FIXED_DEFAULTS={
+  'Lazada':['Region','Platform','Account Status','Synagie Merchant ID','Brand / Store Name','Exec','Team Lead'],
+  'Shopee':['Region','Platform','Account Status','Synagie Merchant ID','Brand / Store Name','Exec','Team Lead'],
+  'TikTok':['Region','Platform','Account Status','Synagie Merchant ID','Brand / Store Name','Exec','Team Lead'],
+};
+
 // Return the effective "reference date" for a platform, applying its week offset
 function frEffectiveDate(platform){
   const offset=FR_WEEK_OFFSET[platform]||0;
@@ -7132,18 +7184,11 @@ function buildFRTable(trackerKey,sheetKey,sheet){
 
   // Find where date columns start: first col index where the header looks like a date group
   // (contains "Income", "SW", "Order", date patterns, or is a date serial)
-  // Fixed column labels — use actual header from Excel, fallback to platform-specific defaults
-  const defaultFixed=['Region','Platform','Account Status','Synagie Merchant ID','Brand / Store Name','Exec','Team Lead'];
-  // Platform-specific fixed column label overrides (used when Excel cell is blank)
-  const platformFixedDefaults={
-    'Lazada':['Region','Platform','Account Status','Synagie Merchant ID','Brand / Store Name','Exec','Team Lead'],
-    'Shopee':['Region','Platform','Account Status','Synagie Merchant ID','Brand / Store Name','Exec','Team Lead'],
-    'TikTok':['Region','Platform','Account Status','Synagie Merchant ID','Brand / Store Name','Exec','Team Lead'],
-  };
-
   // For known platforms default to the standard 7 fixed columns — but allow the admin to
   // override this per-sheet (via Manage Columns) when the real Excel has a different number
   // of fixed columns, e.g. extra/renamed roles that were previously misclassified as date columns.
+  const defaultFixed=FR_DEFAULT_FIXED;
+  const platformFixedDefaults=FR_PLATFORM_FIXED_DEFAULTS;
   const activeDefaults=(platformFixedDefaults[platform]||defaultFixed);
   let fixedCount=(sheet.fixedColCount!=null&&sheet.fixedColCount>0)?sheet.fixedColCount:activeDefaults.length;
   const fixedLabels=[];
@@ -7420,6 +7465,20 @@ function buildFRTable(trackerKey,sheetKey,sheet){
   const brandCol=BRAND_IDX>=0?BRAND_IDX:4;
   const execCol=EXEC_IDX>=0?EXEC_IDX:5;
   const exitDateCol=EXIT_DATE_IDX>=0?EXIT_DATE_IDX:7;
+  const tlCol=fixedCount-1; // Team Lead is last fixed col
+  // Build a dropdown of registered members for Exec/CDM and Team Lead assignment — mirrors the
+  // AO tracker's aoMemberOpts so access control always matches a real login name exactly.
+  const frMemberOpts=function(i2v){
+    const cur=(i2v||'').trim();
+    let opts='<option value="">— Unassigned —</option>';
+    const seen={};
+    (D.members||[]).filter(function(m){return m.approved&&m.active!==false;}).forEach(function(m){
+      seen[m.name]=1;
+      opts+='<option value="'+escHtml(m.name)+'"'+(m.name===cur?' selected':'')+'>'+escHtml(m.name)+' ('+escHtml(m.role||'Member')+')</option>';
+    });
+    if(cur&&!seen[cur])opts+='<option value="'+escHtml(cur)+'" selected>'+escHtml(cur)+' (unmatched — pick a member)</option>';
+    return opts;
+  };
 
   // Get members tagged to FR tasks for this platform
   const frTask=(D.tasks||[]).find(function(t){return t.frLinked&&(t.frPlatform===platform||(String(t.title||'').toLowerCase().includes(platform.toLowerCase())));});
@@ -7437,7 +7496,6 @@ function buildFRTable(trackerKey,sheetKey,sheet){
     if(_frFilter.region&&!String(r[0]||'').toLowerCase().includes(_frFilter.region.toLowerCase()))return false;
     if(_frFilter.brand&&!String(r[brandCol]||'').toLowerCase().includes(_frFilter.brand.toLowerCase()))return false;
     if(_frFilter.exec&&!String(r[execCol]||'').toLowerCase().includes(_frFilter.exec.toLowerCase()))return false;
-    const tlCol=fixedCount-1; // Team Lead is last fixed col
     if(_frFilter.tl&&!String(r[tlCol]||'').toLowerCase().includes(_frFilter.tl.toLowerCase()))return false;
     return true;
   });
@@ -7497,27 +7555,53 @@ function buildFRTable(trackerKey,sheetKey,sheet){
             +'</div>'
           +'</td>';
         }
+      } else if(i===execCol||i===tlCol){
+        // Exec/CDM and Team Lead — admin-editable dropdown sourced from registered members,
+        // same pattern as the AO tracker, so row-level edit access always matches a real login.
+        if(isAdmin){
+          cells+='<td style="'+stickyTdStyle+'padding:4px 6px;border:1px solid var(--border);background:var(--surface);white-space:nowrap">'
+            +'<select onchange="frSetRowAssignee(\''+trackerKey+'\',\''+sheetKey+'\','+rowIdx+','+i+',this.value)" style="width:100%;max-width:'+((COL_WIDTHS[i]||130)-6)+'px;padding:2px 3px;font-size:11px;border:1px solid var(--border);border-radius:3px;background:#fff">'+frMemberOpts(v)+'</select>'
+          +'</td>';
+        } else {
+          cells+='<td style="'+stickyTdStyle+'padding:5px 8px;border:1px solid var(--border);font-size:12px;background:var(--surface);white-space:nowrap;color:var(--text2)">'+(v?escHtml(v):'<span style="color:var(--text4)">— Unassigned —</span>')+'</td>';
+        }
       } else if(i===brandCol){
-        // Brand / Store Name — plain text, never editable inline
-        cells+='<td style="'+stickyTdStyle+'padding:5px 8px;border:1px solid var(--border);font-size:12px;background:var(--surface);white-space:nowrap;color:var(--text2);font-weight:600">'+escHtml(v)+'</td>';
+        // Brand / Store Name — admin-editable text input; plain text for everyone else
+        if(isAdmin){
+          cells+='<td style="'+stickyTdStyle+'padding:3px 6px;border:1px solid var(--border);background:var(--surface);white-space:nowrap">'
+            +'<input type="text" value="'+escHtml(v).replace(/"/g,'&quot;')+'" onchange="frUpdateFixedCell(\''+trackerKey+'\',\''+sheetKey+'\','+rowIdx+','+i+',this.value)" style="width:100%;max-width:'+((COL_WIDTHS[i]||150)-10)+'px;padding:3px 6px;font-size:12px;font-weight:600;border:1px solid transparent;border-radius:3px;background:transparent;color:var(--text2)" onfocus="this.style.background=\'#fff\';this.style.border=\'1px solid var(--blue)\'" onblur="this.style.background=\'transparent\';this.style.border=\'1px solid transparent\'"/>'
+          +'</td>';
+        } else {
+          cells+='<td style="'+stickyTdStyle+'padding:5px 8px;border:1px solid var(--border);font-size:12px;background:var(--surface);white-space:nowrap;color:var(--text2);font-weight:600">'+escHtml(v)+'</td>';
+        }
       } else {
-        cells+='<td style="'+stickyTdStyle+'padding:5px 8px;border:1px solid var(--border);font-size:12px;background:var(--surface);white-space:nowrap;color:var(--text2)">'+escHtml(v)+'</td>';
+        // Region, Platform, Synagie Merchant ID, etc. — admin-editable text input
+        if(isAdmin){
+          cells+='<td style="'+stickyTdStyle+'padding:3px 6px;border:1px solid var(--border);background:var(--surface);white-space:nowrap">'
+            +'<input type="text" value="'+escHtml(v).replace(/"/g,'&quot;')+'" onchange="frUpdateFixedCell(\''+trackerKey+'\',\''+sheetKey+'\','+rowIdx+','+i+',this.value)" style="width:100%;max-width:'+((COL_WIDTHS[i]||80)-10)+'px;padding:3px 6px;font-size:12px;border:1px solid transparent;border-radius:3px;background:transparent;color:var(--text2)" onfocus="this.style.background=\'#fff\';this.style.border=\'1px solid var(--blue)\'" onblur="this.style.background=\'transparent\';this.style.border=\'1px solid transparent\'"/>'
+          +'</td>';
+        } else {
+          cells+='<td style="'+stickyTdStyle+'padding:5px 8px;border:1px solid var(--border);font-size:12px;background:var(--surface);white-space:nowrap;color:var(--text2)">'+escHtml(v)+'</td>';
+        }
       }
     }
 
     // Date cols — past columns are admin-only to edit/correct; active & future remain editable
-    // for authorised users; everything is read-only for TOD.
+    // for the row's assigned Exec/CDM or Team Lead (or admin); everyone else is read-only,
+    // same ownership model as the AO tracker. Everything is read-only for TOD.
+    const rowOwner=frIsRowOwner(row,execCol,tlCol);
     dateColGroups.forEach(function(dc){
       const v=row[dc.ci];
       const vS=(v===null||v===undefined)?'':String(v);
       const isDone=frIsDone(v);
       const pastLockedForUser=dc.isPast&&!isAdmin;
-      if(!canEdit||pastLockedForUser){
-        // TOD, or non-admin viewing a past column: read-only
+      const notOwnerLocked=!rowOwner&&!pastLockedForUser&&!dc.isFuture;
+      if(!canEdit||pastLockedForUser||notOwnerLocked){
+        // TOD, non-admin viewing a past column, or not this row's assigned Exec/Team Lead: read-only
         const bg=isDone?'#e8f5e9':dc.isPast?'#fafafa':dc.isActive?'#fffde7':'#f5f7ff';
         const col=isDone?'#388e3c':dc.isPast?'#9ca3af':dc.isActive?'var(--text3)':'#c7d2fe';
         const frTs=((sheet.frTimestamps||{})[rowIdx+'_'+dc.ci])||'';
-        const lockTitle=pastLockedForUser?' title="Past dates can only be edited by an admin"':'';
+        const lockTitle=pastLockedForUser?' title="Past dates can only be edited by an admin"':(notOwnerLocked?' title="View only — this brand is assigned to another Exec/Team Lead"':'');
         cells+='<td style="padding:5px 8px;border:1px solid var(--border);text-align:center;background:'+bg+'"'+lockTitle+'>'
           +'<span style="font-size:11px;color:'+col+';font-weight:'+(isDone?'700':'400')+'">'+escHtml(vS)+'</span>'
           +(frTs?'<div style="font-size:9px;color:var(--text4);line-height:1.2;text-align:center">'+escHtml(frTs)+'</div>':'')
@@ -7626,6 +7710,66 @@ function buildFRTable(trackerKey,sheetKey,sheet){
 }
 
 // Build the Exited tab — simplified view with only key columns + offboarding date
+// ── Admin: add a new brand row to a Finance Report sheet ──
+function frOpenAddBrand(trackerKey,sheetKey){
+  if(!CU.isAdmin){toast('Admin only.');return;}
+  const t=D.trackers[trackerKey];if(!t)return;
+  const sheet=(t.sheets||{})[sheetKey]||{};
+  const headerRows=sheet.headerRows||(sheet.row0?[sheet.row0]:[[]]);
+  const row0=headerRows[0]||[];
+  const platform=sheetKey;
+  const activeDefaults=(FR_PLATFORM_FIXED_DEFAULTS[platform]||FR_DEFAULT_FIXED);
+  const fixedCount=(sheet.fixedColCount!=null&&sheet.fixedColCount>0)?sheet.fixedColCount:activeDefaults.length;
+  const fixedLabels=[];
+  for(let i=0;i<fixedCount;i++){
+    const v=row0[i]!=null?String(row0[i]).trim():'';
+    fixedLabels.push(v||activeDefaults[i]||FR_DEFAULT_FIXED[i]||'Col '+(i+1));
+  }
+  const acctStatusCol=fixedLabels.findIndex(function(l){return /account.?status|acct.?status/i.test(l);});
+  const execCol=fixedLabels.findIndex(function(l){return /exec/i.test(l);});
+  const tlCol=fixedCount-1;
+  let memOpts='<option value="">— Unassigned —</option>';
+  (D.members||[]).filter(function(m){return m.approved&&m.active!==false;}).forEach(function(m){
+    memOpts+='<option value="'+escHtml(m.name)+'">'+escHtml(m.name)+' ('+escHtml(m.role||'Member')+')</option>';
+  });
+  let fieldsHtml='';
+  for(let i=0;i<fixedCount;i++){
+    const label=fixedLabels[i];
+    if(i===acctStatusCol){
+      fieldsHtml+='<div class="fg"><label class="flabel">'+escHtml(label)+'</label><select class="finput nb" id="frab-f-'+i+'"><option>Active</option><option>Inactive</option><option>Exited</option></select></div>';
+    } else if(i===execCol||i===tlCol){
+      fieldsHtml+='<div class="fg"><label class="flabel">'+escHtml(label)+'</label><select class="finput nb" id="frab-f-'+i+'">'+memOpts+'</select></div>';
+    } else {
+      fieldsHtml+='<div class="fg"><label class="flabel">'+escHtml(label)+'</label><input class="finput nb" id="frab-f-'+i+'" placeholder="e.g. '+escHtml(label)+'"/></div>';
+    }
+  }
+  document.getElementById('mltar-body').innerHTML=fieldsHtml
+    +'<div class="form-actions">'
+      +'<button class="btn primary" onclick="frSaveNewBrand(\''+trackerKey+'\',\''+sheetKey+'\','+fixedCount+')">Add Brand</button>'
+      +'<button class="btn" onclick="closeModal(\'modal-lt-addrow\')">Cancel</button>'
+    +'</div>';
+  document.getElementById('modal-lt-addrow').querySelector('h3').textContent='Add New Brand — '+sheetKey;
+  openModal('modal-lt-addrow');
+}
+async function frSaveNewBrand(trackerKey,sheetKey,fixedCount){
+  if(!CU.isAdmin){toast('Admin only.');return;}
+  const t=D.trackers[trackerKey];if(!t){toast('Tracker not found.');return;}
+  const sheet=(t.sheets||{})[sheetKey];if(!sheet){toast('Sheet not found.');return;}
+  const newRow=[];
+  for(let i=0;i<fixedCount;i++){
+    const el=document.getElementById('frab-f-'+i);
+    newRow.push(el?el.value.trim():'');
+  }
+  if(!newRow[0]&&!newRow.some(function(v,i){return i!==0&&v;})){toast('Please fill in at least the Region/Brand fields.');return;}
+  const rows=(sheet.rows||[]).slice();
+  rows.push(newRow);
+  D.trackers[trackerKey].sheets[sheetKey].rows=rows;
+  await fbSet('trackers/'+trackerKey+'/sheets/'+sheetKey+'/rows',rows);
+  closeModal('modal-lt-addrow');
+  toast('Brand added to '+sheetKey+'.');
+  renderLiveTrackers();
+}
+
 function buildExitedTable(trackerKey,sheetKey,sheet){
   if(!sheet)return'<div class="empty-state" style="padding:32px">No exited accounts yet.</div>';
   const rows=sheet.rows||[];
@@ -8266,6 +8410,7 @@ document.addEventListener('click',function(e){
     if(action==='delete'&&key){ltDelete(key);return;}
     if(action==='fr-manage-platforms'&&key){frManagePlatforms(key);return;}
     if(action==='fr-manage-dates'&&key){frManageDates(key);return;}
+    if(action==='fr-add-brand'&&key){frOpenAddBrand(key,_activeTrackerSheet||Object.keys((D.trackers[key]||{}).sheets||{})[0]);return;}
     if(action==='fr-status-change'){frChangeAccountStatus(btn.dataset.tk,btn.dataset.sk,parseInt(btn.dataset.ri),btn.dataset.val);return;}
     // TOD buttons
     if(action==='login'){todLogIn(btn.dataset.user,btn.dataset.date);return;}
