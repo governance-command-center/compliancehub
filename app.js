@@ -5407,32 +5407,33 @@ function renderLiveTrackers(){
   var byCat={};
   filtered.forEach(function(t){var c=t.category||'Other';if(!byCat[c])byCat[c]=[];byCat[c].push(t);});
 
-  // Build sidebar
+  // Build sidebar (now rendered as a horizontal strip across the top)
   var sideHtml='';
   LT_CATS.forEach(function(c){
     if(!byCat[c])return;
-    sideHtml+='<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text4);padding:8px 8px 4px">'+c+'</div>';
+    sideHtml+='<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text4);padding:6px 4px 4px;flex-shrink:0;white-space:nowrap">'+c+'</div>';
     byCat[c].forEach(function(t){
       var isActive=_activeTracker===t._key;
       var bg=isActive?'var(--blue-light)':'transparent';
+      var bd=isActive?'var(--blue)':'var(--border)';
       var fw=isActive?'600':'500';
       var fc=isActive?'var(--blue)':'var(--text2)';
       var sheetCount=Object.keys(t.sheets||{}).length;
       var dateStr=t.uploadedAt?new Date(t.uploadedAt).toLocaleDateString('en-PH',{month:'short',day:'numeric'}):'—';
       var icon=LT_ICONS[t.category]||'📋';
       var linked=t.aoLinked?'<span style="font-size:9px;background:var(--orange-light);color:var(--orange);padding:1px 5px;border-radius:20px;font-weight:700">📎 Dashboard</span>':t.frLinked?'<span style="font-size:9px;background:var(--blue-light);color:var(--blue);padding:1px 5px;border-radius:20px;font-weight:700">💰 Finance Tasks</span>':'';
-      sideHtml+='<div class="lt-tracker-item'+(isActive?' active':'')+'" data-trackerid="'+t._key+'" style="background:'+bg+'">'
-        +'<div style="width:32px;height:32px;border-radius:var(--radius);background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">'+icon+'</div>'
+      sideHtml+='<div class="lt-tracker-item'+(isActive?' active':'')+'" data-trackerid="'+t._key+'" style="background:'+bg+';border:1px solid '+bd+';border-radius:var(--radius-lg);flex-shrink:0;min-width:180px">'
+        +'<div style="width:28px;height:28px;border-radius:var(--radius);background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">'+icon+'</div>'
         +'<div style="flex:1;min-width:0">'
-          +'<div style="font-size:13px;font-weight:'+fw+';color:'+fc+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+t.name+'</div>'
-          +'<div style="font-size:10px;color:var(--text4)">'+sheetCount+' sheet(s) · '+dateStr+'</div>'
+          +'<div style="font-size:12px;font-weight:'+fw+';color:'+fc+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+t.name+'</div>'
+          +'<div style="font-size:10px;color:var(--text4);white-space:nowrap">'+sheetCount+' sheet(s) · '+dateStr+'</div>'
           +linked
         +'</div>'
       +'</div>';
     });
   });
   if(!trackers.length){
-    sideHtml='<div style="padding:20px;text-align:center;color:var(--text4);font-size:12px">No trackers yet.<br/>Upload your first Excel file.</div>';
+    sideHtml='<div style="padding:14px;text-align:center;color:var(--text4);font-size:12px;flex:1">No trackers yet. Upload your first Excel file.</div>';
   }
 
   // Build toolbar
@@ -5457,6 +5458,7 @@ function renderLiveTrackers(){
     toolbarHtml='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">'
       +'<div style="font-size:15px;font-weight:700;flex:1">'+activeT.name+'</div>'
       +linkedBtn
+      +(ltCanManage&&activeT.category==='Finance'?'<button class="btn sm warning" data-action="fr-manage-dates" data-key="'+_activeTracker+'">🗑 Manage Columns</button>':'')
       +(ltCanEdit?'<button class="btn sm" data-action="export" data-key="'+_activeTracker+'">Export Excel</button>':'')
       
       +(ltCanManage?'<button class="btn sm del" data-action="delete" data-key="'+_activeTracker+'">Delete</button>':'')
@@ -5478,17 +5480,17 @@ function renderLiveTrackers(){
       +'<div><div class="page-title">Live Trackers</div><div class="page-subtitle">Real-time AO and compliance tracker sheets</div></div>'
       +(ltCanManage?'<button class="btn primary" onclick="openAddTracker()">+ Upload Tracker</button>':'<span style="font-size:12px;color:var(--text3);padding:6px 10px;background:var(--blue-light);border-radius:var(--radius)">View &amp; edit your rows only</span>')
     +'</div>'
-    +'<div style="display:flex;gap:0;min-height:600px">'
-      +'<div style="width:260px;flex-shrink:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow)">'
-        +'<div style="padding:14px 16px;border-bottom:1px solid var(--border);background:#f8fafc">'
-          +'<div style="font-size:13px;font-weight:700;margin-bottom:8px">'+(CU.isAdmin?'My Trackers':'Trackers')+' ('+trackers.length+')</div>'
-          +'<input id="lt-search-val" placeholder="Search trackers..." oninput="renderLiveTrackers()" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;background:var(--surface)" value="'+q+'">'
+    +'<div style="display:flex;flex-direction:column;gap:10px">'
+      +'<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow);overflow:hidden">'
+        +'<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);background:#f8fafc;flex-wrap:wrap">'
+          +'<div style="font-size:13px;font-weight:700;white-space:nowrap">'+(CU.isAdmin?'My Trackers':'Trackers')+' ('+trackers.length+')</div>'
+          +'<input id="lt-search-val" placeholder="Search trackers..." oninput="renderLiveTrackers()" style="flex:1;min-width:160px;max-width:280px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;background:var(--surface)" value="'+q+'">'
         +'</div>'
-        +'<div style="flex:1;overflow-y:auto;padding:8px">'+sideHtml+'</div>'
+        +'<div style="display:flex;align-items:center;gap:8px;padding:8px 14px;overflow-x:auto">'+sideHtml+'</div>'
       +'</div>'
-      +'<div style="flex:1;overflow:hidden;display:flex;flex-direction:column;margin-left:14px;min-width:0">'
+      +'<div style="display:flex;flex-direction:column;min-width:0">'
         +toolbarHtml
-        +'<div style="flex:1;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow)">'+contentHtml+'</div>'
+        +'<div style="overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow);max-width:100%">'+contentHtml+'</div>'
       +'</div>'
     +'</div>';
 
@@ -8062,6 +8064,11 @@ async function lvDelete(key){
   toast('Entry deleted');
 }
 
+async function lvUpdateStatus(key,field,val){
+  await fbUpd('leaves/'+key,{[field]:val});
+  toast('Status updated');
+}
+
 function lvFiltered(){
   return (D.leaves||[]).filter(e=>{
     if(_lvFltRegion&&e.region!==_lvFltRegion)return false;
@@ -8101,6 +8108,11 @@ function lvRenderRecords(){
   </div>`;
 
   function stCol(s){return s==='Done'?'color:var(--green);font-weight:700':s==='Pending'?'color:var(--red);font-weight:700':'color:var(--text3)';}
+  function stSelect(key,field,val){
+    return `<select onchange="lvUpdateStatus('${key}','${field}',this.value)" style="${stCol(val)};border:1px solid var(--border);border-radius:var(--radius);padding:3px 6px;font-size:12px;font-family:inherit;background:#fff;cursor:pointer">`
+      +LV_STATUSES.map(s=>`<option${val===s?' selected':''}>${s}</option>`).join('')
+      +`</select>`;
+  }
 
   const tbody=rows.length?rows.map(e=>`<tr>
     <td>${e.month||'—'}</td>
@@ -8110,9 +8122,9 @@ function lvRenderRecords(){
     <td>${lvTypeBadge(e.type)}</td>
     <td style="text-align:center">${e.days}</td>
     <td style="color:var(--text3);white-space:nowrap">${e.buddy||'—'}</td>
-    <td style="${stCol(e.handover)}">${e.handover||'—'}</td>
-    <td style="${stCol(e.briefing)}">${e.briefing||'—'}</td>
-    <td style="${stCol(e.cal)}">${e.cal||'—'}</td>
+    <td>${stSelect(e._key,'handover',e.handover)}</td>
+    <td>${stSelect(e._key,'briefing',e.briefing)}</td>
+    <td>${stSelect(e._key,'cal',e.cal)}</td>
     <td style="color:var(--text3);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.remarks||'—'}</td>
     ${CU.isAdmin?`<td><button class="btn sm del" onclick="lvDelete('${e._key}')">Delete</button></td>`:'<td></td>'}
   </tr>`).join(''):`<tr><td colspan="12" class="empty-state">No entries found.</td></tr>`;
