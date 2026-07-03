@@ -5698,6 +5698,9 @@ function frSetFilter(field,val){_frFilter[field]=val;renderLiveTrackers();}
 
 // ── AO Row Selection ──
 function aoToggleRowSel(trackerKey,sheetKey,ri){
+  const t=D.trackers[trackerKey];const sheet=(t&&t.sheets||{})[sheetKey];
+  const row=sheet&&sheet.rows?sheet.rows[ri]:null;
+  if(!CU.isAdmin&&!aoIsRowOwner(row)){toast('This brand is assigned to another member — you can only select your own brands.');return;}
   const k='_aoSel_'+trackerKey+'_'+sheetKey;
   if(!window[k])window[k]=new Set();
   const s=window[k];
@@ -5714,6 +5717,9 @@ function aoSelectAll(trackerKey,sheetKey,cb){
     if(sheet&&sheet.rows){
       sheet.rows.forEach(function(r,ri){
         if(!r||String(r[3]||'').toUpperCase()==='TOTAL')return;
+        // Non-admins can only bulk-select brands assigned to them, so "select all" can never
+        // sweep up someone else's rows.
+        if(!CU.isAdmin&&!aoIsRowOwner(r))return;
         s.add(ri);
       });
     }
@@ -5777,11 +5783,21 @@ async function aoSetSelectedToZero(trackerKey,sheetKey){
   // separate copy of this logic, so the two can never drift out of sync again.
   let editableCols=aoFindTodayCols(sheet);
   if(!editableCols.length){toast('No editable column found for today.');return;}
+  // Ownership guard: same rule as single-cell edits (ltUpdateCell) — a non-admin may only
+  // zero brands where they're the CDM or Team Lead. Previously this bulk action skipped that
+  // check entirely, so selecting "all" and clicking this button would silently zero out other
+  // members' brands too (with the clicker's name/timestamp landing on cells they don't own).
+  const ownedIds=[],blockedIds=[];
+  sel.forEach(function(ri){
+    const row=rows[ri];if(!row)return;
+    if(aoIsRowOwner(row))ownedIds.push(ri);else blockedIds.push(ri);
+  });
+  if(!ownedIds.length){toast('Blocked: none of the selected brands are assigned to you.');return;}
   const ts=ltStamp();
   const path='trackers/'+trackerKey+'/sheets/'+sheetKey;
   const updates={};
   if(!D.trackers[trackerKey].sheets[sheetKey].timestamps)D.trackers[trackerKey].sheets[sheetKey].timestamps={};
-  sel.forEach(function(ri){
+  ownedIds.forEach(function(ri){
     const row=rows[ri];if(!row)return;
     editableCols.forEach(function(c){
       if(!D.trackers[trackerKey].sheets[sheetKey].rows)D.trackers[trackerKey].sheets[sheetKey].rows=[];
@@ -5793,9 +5809,10 @@ async function aoSetSelectedToZero(trackerKey,sheetKey){
     });
   });
   await fbUpd(path,updates);
-  const resetCount=sel.size;
+  const resetCount=ownedIds.length;
   sel.clear();
-  toast('Set '+resetCount+' brand'+(resetCount>1?'s':'')+" to 0 for today only.");
+  toast('Set '+resetCount+' brand'+(resetCount>1?'s':'')+" to 0 for today only."
+    +(blockedIds.length?' ('+blockedIds.length+' skipped — not assigned to you.)':''));
   renderLiveTrackers();
 }
 
