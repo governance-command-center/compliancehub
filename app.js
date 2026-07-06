@@ -61,6 +61,7 @@ const DOWF=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturda
 
 let CU=null;
 let D={tasks:[],members:[],statuses:{},actLog:[],calEntries:{},broadcast:null,incidents:[],extRequests:{},groups:[],trackers:{},todAttendance:{},auditLog:[],leaves:[],leadTasks:[],weeklyReports:[],personalTasks:[],_tLoaded:false,_mLoaded:false};
+let _extListenerInit=false;
 let _activeTracker=null,_activeTrackerSheet=null;
 
 let _todWeekStart=null;
@@ -114,8 +115,33 @@ function isSched(t,d){
   if(t.freq==='occasional'||t.freq==='other')return true;
   return false;
 }
+// Parse a free-typed time string like "7:00 PM" or "19:00" into [hours,minutes]. Returns null if unparseable.
+function parseTimeStr(str){
+  if(!str)return null;
+  const m=String(str).trim().match(/^(\d{1,2}):?(\d{2})?\s*(AM|PM|am|pm)?$/);
+  if(!m)return null;
+  let h=parseInt(m[1],10),mi=m[2]?parseInt(m[2],10):0;
+  const ap=(m[3]||'').toUpperCase();
+  if(ap==='PM'&&h<12)h+=12;
+  if(ap==='AM'&&h===12)h=0;
+  if(isNaN(h)||isNaN(mi)||h>23||mi>59)return null;
+  return[h,mi];
+}
+// Approved extension covering this task+date, if any
+function getApprovedExt(taskId,date){
+  return Object.values(D.extRequests||{}).find(function(r){return r.taskId==taskId&&r.date===date&&r.status==='Approved';});
+}
+// A task is overdue relative to its admin-set deadline — unless an approved extension
+// has moved that deadline, in which case the extension's proposed date/time applies instead.
 function isOverdue(t,date){
   const n=now(),dds=ds(n);
+  const ext=getApprovedExt(t.id,date);
+  if(ext&&ext.proposedDate){
+    const hm=parseTimeStr(ext.proposedTime)||[t.dh||17,t.dm||0];
+    if(dds<ext.proposedDate)return false;
+    if(dds>ext.proposedDate)return true;
+    return n.getHours()>hm[0]||(n.getHours()===hm[0]&&n.getMinutes()>hm[1]);
+  }
   if(date!==dds)return false;
   return n.getHours()>(t.dh||17)||(n.getHours()===(t.dh||17)&&n.getMinutes()>(t.dm||0));
 }
@@ -532,7 +558,21 @@ function startApp(){
   fbListen('members',v=>{D.members=v?Object.values(v).filter(Boolean):[];D._mLoaded=true;buildNav();rerender();});
   fbListen('statuses',v=>{D.statuses=v||{};rerender();});
   fbListen('actLog',v=>{D.actLog=v?Object.values(v).sort((a,b)=>(b.ts||0)-(a.ts||0)).slice(0,500):[];if(_curPage==='dashboard')renderDashboard();});
-  fbListen('extRequests',v=>{D.extRequests=v||{};if(_curPage==='dashboard')renderDashboard();});
+  fbListen('extRequests',v=>{
+    const prev=D.extRequests||{};const nv=v||{};
+    if(_extListenerInit&&CU&&CU.isAdmin){
+      Object.keys(nv).forEach(function(k){
+        if(!prev[k]&&nv[k].status==='Pending'){
+          const r=nv[k];
+          const nbT=document.getElementById('nb-title'),nbB=document.getElementById('nb-body'),nb=document.getElementById('notif-banner');
+          if(nbT&&nbB&&nb){nbT.textContent='New Extension Request';nbB.textContent=r.memberName+' requested an extension for "'+r.taskTitle+'"';nb.classList.add('show');setTimeout(()=>nb.classList.remove('show'),8000);}
+          toast('📩 New extension request from '+r.memberName);
+        }
+      });
+    }
+    _extListenerInit=true;
+    D.extRequests=nv;if(_curPage==='dashboard')renderDashboard();
+  });
   fbListen('incidents',v=>{D.incidents=v?Object.entries(v).map(([k,i])=>({...i,_key:k})).sort((a,b)=>(b.ts||0)-(a.ts||0)):[];if(_curPage==='incidents')renderIncidents();const open=D.incidents.filter(i=>i.status==='Open').length;const btn=document.getElementById('ntab-incidents');if(btn)btn.style.setProperty('--dot','block');});
   fbListen('broadcast',v=>{D.broadcast=v;if(v?.msg){const dis=localStorage.getItem('gh_bc_dis');if(dis!==String(v.ts))showBC(v);}else hideBC();});
   fbListen('calEntries',v=>{D.calEntries={};if(v)for(const[k,en]of Object.entries(v))if(en&&typeof en==='object'){D.calEntries[k]={};for(const[ek,e]of Object.entries(en))D.calEntries[k][ek]={...e,_key:ek};}if(selCalDate)renderCalDay(selCalDate);});
@@ -1531,7 +1571,7 @@ function renderDashboard(){
   let escBanner=escalated.length?`<div class="esc-banner"><span>⚠️</span><div><div style="font-weight:700;color:var(--orange);font-size:13px">${escalated.length} overdue task${escalated.length>1?'s':''}</div><div style="font-size:12px;color:var(--text3)">${escalated.map(t=>t.title).join(' · ')}</div></div></div>`:'';
 
   // Extension requests
-  const pendingExt=Object.entries(D.extRequests).filter(([,r])=>r.status==='Pending');
+  const pendingExt=CU.isAdmin?Object.entries(D.extRequests).filter(([,r])=>r.status==='Pending'):[];
   let extHtml='';
   if(pendingExt.length){
     extHtml=`<div class="section-hdr sh-teal" style="margin-top:4px">Extension Requests <span style="opacity:.7">(${pendingExt.length})</span></div>`;
@@ -1660,8 +1700,8 @@ function renderDashboard(){
     ${buildActivityFeed()}`;
 }
 
-async function approveExt(key){const r=D.extRequests[key];if(!r)return;await fbUpd(`extRequests/${key}`,{status:'Approved',reviewedBy:CU.name,reviewedAt:Date.now()});await logAct(r.taskId,r.date,CU.name,`Extension approved for ${r.memberName}. New: ${r.proposedDate} ${r.proposedTime}`,'EXT_APPROVED');toast('Extension approved');}
-async function declineExt(key){const r=D.extRequests[key];if(!r)return;await fbUpd(`extRequests/${key}`,{status:'Declined',reviewedBy:CU.name,reviewedAt:Date.now()});await logAct(r.taskId,r.date,CU.name,`Extension declined for ${r.memberName}`,'EXT_DECLINED');toast('Extension declined');}
+async function approveExt(key){if(!CU.isAdmin){toast('Only admins can approve extension requests');return;}const r=D.extRequests[key];if(!r)return;await fbUpd(`extRequests/${key}`,{status:'Approved',reviewedBy:CU.name,reviewedAt:Date.now()});await logAct(r.taskId,r.date,CU.name,`Extension approved for ${r.memberName}. New: ${r.proposedDate} ${r.proposedTime}`,'EXT_APPROVED');toast('Extension approved');}
+async function declineExt(key){if(!CU.isAdmin){toast('Only admins can decline extension requests');return;}const r=D.extRequests[key];if(!r)return;await fbUpd(`extRequests/${key}`,{status:'Declined',reviewedBy:CU.name,reviewedAt:Date.now()});await logAct(r.taskId,r.date,CU.name,`Extension declined for ${r.memberName}`,'EXT_DECLINED');toast('Extension declined');}
 
 function renderTasks(){
   var el=document.getElementById('pg-tasks');if(!el)return;
@@ -1689,15 +1729,40 @@ function renderTasks(){
     var html='<div class="page-header"><div><div class="page-title">Task Management</div><div class="page-subtitle">View, manage and track all governance tasks</div></div>'
       +'<div style="display:flex;gap:8px;align-items:center"><button class="btn primary" onclick="openPersonalTaskForm(null)">+ Personal Task</button></div></div>';
 
+    // Helper: builds the Status + Action (Request Extension) cells shared by both member sections below
+    var todayDate=ds(now());
+    function statusActionCells(t){
+      var appliesToday=isSched(t,now());
+      if(!appliesToday){
+        return '<td style="text-align:center"><span style="color:var(--text4);font-size:11px">—</span></td><td style="text-align:center"><span style="color:var(--text4);font-size:11px">Not due today</span></td>';
+      }
+      var myStat=getMemberStatus(t.id,todayDate,CU.username);
+      var isOv=isOverdue(t,todayDate)&&myStat!=='Done';
+      var statusCell='<span class="sbadge '+sbc(myStat)+'" style="cursor:default"><span class="sdot '+sdc(myStat)+'"></span>'+myStat+'</span>'+(isOv?'<div style="font-size:10px;color:var(--red);font-weight:700;margin-top:2px">OVERDUE</div>':'');
+      var extRec=Object.values(D.extRequests||{}).find(function(r){return r.taskId==t.id&&r.date===todayDate&&r.memberUsername===CU.username&&r.status!=='Declined';});
+      var actionCell;
+      if(myStat==='Done'){
+        actionCell='<span style="color:var(--text4);font-size:11px">—</span>';
+      } else if(extRec&&extRec.status==='Approved'){
+        actionCell='<span style="color:var(--teal);font-weight:600;font-size:11px">&#10003; Extended to '+extRec.proposedDate+' '+extRec.proposedTime+'</span>';
+      } else if(extRec&&extRec.status==='Pending'){
+        actionCell='<span style="color:var(--text3);font-size:11px">&#9203; Extension Pending</span>';
+      } else {
+        actionCell='<button class="btn sm teal" onclick="openExtRequestModal('+t.id+',\''+todayDate+'\')">Request Extension</button>';
+      }
+      return '<td style="text-align:center">'+statusCell+'</td><td style="text-align:center">'+actionCell+'</td>';
+    }
+
     // Section 1: Department-Wide Tasks — only tasks assigned to this member
     var allAdminTasks=(D.tasks||[]).filter(function(t){return !t.inactive&&(t.assignees||[]).includes(CU.username);});
     html+='<div class="section-hdr sh-gray" style="margin-bottom:8px">🏢 Department-Wide Tasks <span style="opacity:.7;font-weight:400;text-transform:none;letter-spacing:0;font-size:11px">(admin-created tasks assigned to you)</span></div>';
     if(allAdminTasks.length){
-      html+='<div class="tbl-wrap"><table><thead><tr><th style="width:50%">Task</th><th style="width:25%;text-align:center">Schedule</th><th style="width:25%;text-align:center">Deadline</th></tr></thead><tbody>';
+      html+='<div class="tbl-wrap"><table><thead><tr><th style="width:34%">Task</th><th style="width:16%;text-align:center">Schedule</th><th style="width:16%;text-align:center">Deadline</th><th style="width:14%;text-align:center">Status</th><th style="width:20%;text-align:center">Extension</th></tr></thead><tbody>';
       html+=allAdminTasks.map(function(t){
         return'<tr><td><div style="font-weight:600">'+t.title+'</div>'+(t.note?'<div style="font-size:11px;color:var(--text3)">'+t.note+'</div>':'')+'</td>'
           +'<td style="text-align:center"><span class="freq-chip fc-'+t.freq+'">'+schedLabel(t)+'</span></td>'
           +'<td style="text-align:center"><span class="dl-chip">'+(t.deadline||'—')+'</span></td>'
+          +statusActionCells(t)
         +'</tr>';
       }).join('');
       html+='</tbody></table></div>';
@@ -1708,12 +1773,13 @@ function renderTasks(){
     // Section 2: Lead-Specific Tasks
     html+='<div class="section-hdr sh-purple" style="margin-top:12px">👥 Lead-Specific Tasks <span style="opacity:.7;font-weight:400;text-transform:none;letter-spacing:0;font-size:11px">(assigned by your lead)</span></div>';
     if(myLeadTasksM.length){
-      html+='<div class="tbl-wrap"><table><thead><tr><th style="width:44%">Task</th><th style="width:18%">Lead</th><th style="width:18%;text-align:center">Schedule</th><th style="width:20%;text-align:center">Deadline</th></tr></thead><tbody>';
+      html+='<div class="tbl-wrap"><table><thead><tr><th style="width:30%">Task</th><th style="width:14%">Lead</th><th style="width:14%;text-align:center">Schedule</th><th style="width:14%;text-align:center">Deadline</th><th style="width:12%;text-align:center">Status</th><th style="width:16%;text-align:center">Extension</th></tr></thead><tbody>';
       html+=myLeadTasksM.map(function(t){
         return'<tr><td><div style="font-weight:600">'+t.title+'</div>'+(t.note?'<div style="font-size:11px;color:var(--text3)">'+t.note+'</div>':'')+'</td>'
           +'<td style="font-size:12px;color:var(--text3)">'+getMN(t._leadOwner)+'</td>'
           +'<td style="text-align:center"><span class="freq-chip fc-'+t.freq+'">'+schedLabel(t)+'</span></td>'
           +'<td style="text-align:center"><span class="dl-chip">'+(t.deadline||'—')+'</span></td>'
+          +statusActionCells(t)
         +'</tr>';
       }).join('');
       html+='</tbody></table></div>';
@@ -2227,6 +2293,27 @@ async function smMember(tid,date,u,val){
   toast('Status updated');
   // Refresh modal
   openStatusModal(tid,date);
+}
+
+// Quick-access entry point for a "Request Extension" button on the Tasks page —
+// opens the same center popup used from the status modal, pre-filled for today's occurrence.
+function openExtRequestModal(tid,date){
+  const task=(D.tasks.find(t=>t.id==tid))||(D.leadTasks||[]).find(t=>t.id==tid);if(!task)return;
+  const myStat=getMemberStatus(tid,date,CU.username);
+  if(myStat==='Done'){toast('This task is already marked Done — no extension needed');return;}
+  const existing=Object.values(D.extRequests||{}).find(function(r){return r.taskId==tid&&r.date===date&&r.memberUsername===CU.username&&r.status==='Pending';});
+  if(existing){toast('You already have a pending extension request for this task');return;}
+  document.getElementById('mne-body').innerHTML=`
+    <p style="font-size:13px;font-weight:600;margin-bottom:2px">${task.title}</p>
+    <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Current deadline: ${task.deadline||'—'}</p>
+    <p style="font-size:13px;color:var(--text3);margin-bottom:12px">Provide a reason and proposed new deadline for admin review.</p>
+    <div class="fg"><label class="flabel">Reason</label><textarea class="finput" id="ne-reason" rows="3" placeholder="Why do you need more time?"></textarea></div>
+    <div class="fg fg2">
+      <div><label class="flabel">Proposed Date</label><input class="finput nb" id="ne-date" type="date" value="${date}"/></div>
+      <div><label class="flabel">Proposed Time</label><input class="finput nb" id="ne-time" placeholder="e.g. 7:00 PM"/></div>
+    </div>
+    <div class="form-actions"><button class="btn teal" onclick="submitExtRequest(${tid},'${date}','${CU.username}')">Submit Request</button><button class="btn" onclick="closeModal('modal-ne')">Cancel</button></div>`;
+  openModal('modal-ne');
 }
 
 async function submitExtRequest(tid,date,u){
@@ -4521,19 +4608,46 @@ function checkOverdueAndBroadcast(){
   sched.forEach(function(t){
     const ov=computeTaskOverall(t.id,date);
     if(ov==='Done') return;
-    const n=now();
-    const deadlineMs=new Date(n.getFullYear(),n.getMonth(),n.getDate(),t.dh||17,t.dm||0,0).getTime();
-    const minsOverdue=Math.floor((n.getTime()-deadlineMs)/60000);
-    if(minsOverdue===2){
-      const alertKey='gh_alert_'+t.id+'_'+date;
-      if(localStorage.getItem(alertKey)) return;
+    if(!isOverdue(t,date)) return; // not late yet, or an approved extension has moved the deadline
+    const alertKey='gh_alert_'+t.id+'_'+date;
+    if(!localStorage.getItem(alertKey)){
       localStorage.setItem(alertKey,'1');
       const pending=(t.assignees||[]).filter(function(u){return(getMemberStatus(t.id,date,u)||'Pending')!=='Done';});
-      const names=pending.map(getMN).join(', ');
-      const msg='⚠️ OVERDUE: '+t.title+' is 2 mins past deadline ('+t.deadline+'). Pending: '+names;
+      const names=pending.map(getMN).join(', ')||'assigned team';
+      const msg='⚠️ OVERDUE: '+t.title+' is past deadline ('+t.deadline+'). Pending: '+names;
       fbSet('broadcast',{msg:msg,ts:Date.now(),sentBy:'System',auto:true});
       toast('Auto-broadcast sent: '+t.title+' overdue');
     }
+    logNonComplianceIncident(t,date);
+  });
+}
+
+// Auto-log a non-compliance incident once a task (including AO/FR-linked live tracker tasks)
+// passes its admin-set deadline without being completed. Skipped entirely if an approved
+// extension is currently covering this task/date — extended tasks are never non-compliance.
+function logNonComplianceIncident(t,date){
+  if(getApprovedExt(t.id,date))return;
+  const ncKey='gh_nc_'+t.id+'_'+date;
+  if(localStorage.getItem(ncKey))return;
+  localStorage.setItem(ncKey,'1');
+  const pending=(t.assignees||[]).filter(function(u){return(getMemberStatus(t.id,date,u)||'Pending')!=='Done';});
+  const kind=t.aoLinked?'Abnormal Orders (AO) tracker':t.frLinked?'Finance Report (FR) tracker':'task';
+  fbPush('incidents',{
+    title:'⏱ Non-Compliance: '+t.title,
+    incidentType:'Compliance',
+    incidentDate:date,date,
+    severity:'Medium',
+    category:'Compliance',
+    description:'The "'+t.title+'" '+kind+' was not completed by its deadline ('+t.deadline+').',
+    issue:'Pending: '+(pending.map(getMN).join(', ')||'Not yet completed'),
+    reportedBy:'System',
+    tagged:pending,
+    assignees:t.assignees||[],
+    responses:{},
+    status:'Open',
+    _autoNonCompliance:true,
+    _taskId:t.id,
+    ts:Date.now()
   });
 }
 
@@ -4545,11 +4659,8 @@ function checkLeadTaskOverdue(){
   myLeadTasks.forEach(function(t){
     const ov=computeTaskOverall(t.id,date);
     if(ov==='Done')return;
-    const n=now();
-    const deadlineMs=new Date(n.getFullYear(),n.getMonth(),n.getDate(),t.dh||17,t.dm||0,0).getTime();
-    const minsOverdue=Math.floor((n.getTime()-deadlineMs)/60000);
-    // Fire once, 2 mins past deadline
-    if(minsOverdue>=2){
+    // Not late yet, or an approved extension has moved the deadline — no non-compliance
+    if(isOverdue(t,date)){
       const escKey='gh_ltesc_'+t.id+'_'+date;
       if(localStorage.getItem(escKey))return;
       localStorage.setItem(escKey,'1');
