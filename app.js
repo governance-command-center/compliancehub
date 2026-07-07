@@ -7054,24 +7054,98 @@ const FR_HEADER_MAP = {
     { shortLabel:'Dec 01–31 (Monthly)', rows:[{l:'Monthly Report',v:'Dec 01 - 31'},{l:'Transaction Report',v:'MY'},{l:'Withdrawal Report',v:'SG'},{l:'Withdrawal - Screenshots',v:''}] },
 };
 
-// ── Look up header display info from the hardcoded map ──
-// Tries exact match first, then normalised whitespace match.
+// ── Generic header parser ──────────────────────────────────────────────
+// Reads whatever label/date text is actually in the uploaded Excel's column
+// header and extracts { shortLabel, rows:[{l,v}] } from it directly, instead
+// of requiring every week/month's exact header text to be pre-typed into a
+// lookup table. Works for Lazada/Shopee/TikTok's "Label: dd Mon - dd Mon"
+// and "Monthly Report/Income Mon dd - dd" conventions, plus a trailing
+// region-code list like "MY, SG, PH, ID, TH, VN" if present.
+const FR_LABEL_MARKERS = [
+  'Withdrawal - Screenshots','Withdrawal Report','Withdrawal',
+  'Transaction Report','Transaction',
+  'Monthly Report','Monthly Income',
+  'SW - Screenshots','SW',
+  'Payment Report - Screenshots','Payment Report',
+  'Order Report','Income'
+];
+const FR_MONTH_RE='(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*';
+
+function frCapMonth(s){ s=String(s||'').slice(0,3); return s.charAt(0).toUpperCase()+s.slice(1).toLowerCase(); }
+
+function frParseHeaderInfo(platform, rawTopLabel, rawSubLabels) {
+  const allText = [rawTopLabel||'', ...(rawSubLabels||[])].join(' ').replace(/\s+/g,' ').trim();
+  if (!allText) return { shortLabel: null, rows: [] };
+
+  const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  const markerRe = new RegExp('(' + FR_LABEL_MARKERS.map(escRe).join('|') + ')\\s*:?\\s*', 'g');
+
+  const hits = [];
+  let m;
+  while ((m = markerRe.exec(allText))) hits.push({ label: m[1], start: m.index, valueStart: markerRe.lastIndex });
+  if (!hits.length) return { shortLabel: null, rows: [] };
+
+  let rows = hits.map(function(h, i) {
+    const end = i + 1 < hits.length ? hits[i+1].start : allText.length;
+    return { l: h.label, v: allText.slice(h.valueStart, end).trim().replace(/\s+/g,' ') };
+  });
+
+  // Some source headers repeat the same label verbatim for two physical
+  // columns (e.g. Lazada's monthly cell literally has "Withdrawal Report"
+  // twice). Collapse adjacent same-label rows, keeping whichever has a value.
+  rows = rows.filter(function(r, i) {
+    return i === 0 || r.l !== rows[i-1].l || (r.v && !rows[i-1].v);
+  });
+
+  // Trailing region-code list, e.g. "MY, SG, PH, ID, TH, VN", sometimes
+  // rides along on the last labeled value instead of having its own label.
+  const regionsMatch = allText.match(/\b([A-Z]{2,3}(?:,\s*[A-Z]{2,3}){2,})\s*$/);
+  if (regionsMatch) {
+    const last = rows[rows.length - 1];
+    if (last && last.v.endsWith(regionsMatch[1])) last.v = last.v.slice(0, last.v.length - regionsMatch[1].length).trim();
+    rows.push({ l: 'Regions', v: regionsMatch[1] });
+  }
+
+  const isMonthly = /monthly/i.test(allText);
+  let shortLabel = null;
+  const rangeRe = new RegExp('(\\d{1,2})\\s*('+FR_MONTH_RE+')\\s*[-–]\\s*(\\d{1,2})\\s*('+FR_MONTH_RE+')?', 'i');
+  const monthOnceRe = new RegExp('('+FR_MONTH_RE+')\\.?\\s*(\\d{1,2})\\s*-\\s*(\\d{1,2})', 'i');
+  for (const r of rows) {
+    let rm = r.v.match(rangeRe);
+    if (rm) {
+      const mo1 = frCapMonth(rm[2]), mo2 = frCapMonth(rm[4] || rm[2]);
+      shortLabel = isMonthly ? (mo1 + ' ' + rm[1] + '–' + rm[3] + ' (Monthly)')
+        : (mo1 === mo2 ? (rm[1] + '–' + rm[3] + ' ' + mo1) : (rm[1] + ' ' + mo1 + '–' + rm[3] + ' ' + mo2));
+      break;
+    }
+    rm = r.v.match(monthOnceRe);
+    if (rm) { shortLabel = frCapMonth(rm[1]) + ' ' + rm[2] + '–' + rm[3] + (isMonthly ? ' (Monthly)' : ''); break; }
+  }
+
+  return { shortLabel: shortLabel || (rows[0] && rows[0].v) || null, rows };
+}
+
+// ── Look up header display info ──
+// Tries the generic parser first (works for any current or future week/month
+// automatically); falls back to the legacy hardcoded map only for old header
+// text the parser doesn't recognize.
 // Returns { shortLabel, tooltipHTML } or { shortLabel:null, tooltipHTML:null }
 function frGetColDateRanges(platform, colDate, rawTopLabel, rawSubLabels) {
-  // Build the full raw key the same way extract-text produced it
-  const allText = [rawTopLabel||'', ...(rawSubLabels||[])].join('  ').replace(/\s+/g,' ').trim();
-  // Try exact key first
-  let entry = FR_HEADER_MAP[rawTopLabel ? rawTopLabel.trim() : ''];
-  // If not found, try the combined full text
-  if (!entry) entry = FR_HEADER_MAP[allText];
-  // Normalised whitespace fallback
-  if (!entry) {
-    const norm = s => s.replace(/\s+/g,' ').trim();
-    const normKey = norm(rawTopLabel||'');
-    entry = Object.keys(FR_HEADER_MAP).map(k=>({k,n:norm(k)})).find(x=>x.n===normKey);
-    if (entry) entry = FR_HEADER_MAP[entry.k];
+  let entry = frParseHeaderInfo(platform, rawTopLabel, rawSubLabels);
+  if (!entry.shortLabel) {
+    // Build the full raw key the same way extract-text produced it
+    const allText = [rawTopLabel||'', ...(rawSubLabels||[])].join('  ').replace(/\s+/g,' ').trim();
+    let legacy = FR_HEADER_MAP[rawTopLabel ? rawTopLabel.trim() : ''];
+    if (!legacy) legacy = FR_HEADER_MAP[allText];
+    if (!legacy) {
+      const norm = s => s.replace(/\s+/g,' ').trim();
+      const normKey = norm(rawTopLabel||'');
+      const found = Object.keys(FR_HEADER_MAP).map(k=>({k,n:norm(k)})).find(x=>x.n===normKey);
+      if (found) legacy = FR_HEADER_MAP[found.k];
+    }
+    if (legacy) entry = legacy;
   }
-  if (!entry) return { shortLabel: null, tooltipHTML: null };
+  if (!entry || !entry.shortLabel) return { shortLabel: null, tooltipHTML: null };
 
   const rowsHTML = entry.rows.map(function(r) {
     return '<div style="display:flex;align-items:baseline;gap:6px;line-height:1.9">'
@@ -7476,19 +7550,23 @@ function buildFRTable(trackerKey,sheetKey,sheet){
     const bg = '#0f1e3c';
     const fg = '#ffffff';
 
-    // ── Look up map entry using same 3-level fallback as frGetColDateRanges ──
-    const _allText = [dc.topLabel||'', ...dc.subLabels].join('  ').replace(/\s+/g,' ').trim();
-    const _norm = function(s){return s.replace(/\s+/g,' ').trim();};
-    let entry = FR_HEADER_MAP[dc.topLabel ? dc.topLabel.trim() : ''];
-    if (!entry) entry = FR_HEADER_MAP[_allText];
-    if (!entry) {
-      const _ek = Object.keys(FR_HEADER_MAP).find(function(k){ return _norm(k) === _norm(dc.topLabel||''); });
-      if (_ek) entry = FR_HEADER_MAP[_ek];
-    }
-    // Also try allText normalized
-    if (!entry) {
-      const _ek2 = Object.keys(FR_HEADER_MAP).find(function(k){ return _norm(k) === _norm(_allText); });
-      if (_ek2) entry = FR_HEADER_MAP[_ek2];
+    // ── Resolve header entry: generic parser first, legacy map as fallback ──
+    let entry = frParseHeaderInfo(platform, dc.topLabel, dc.subLabels);
+    if (!entry.shortLabel) {
+      const _allText = [dc.topLabel||'', ...dc.subLabels].join('  ').replace(/\s+/g,' ').trim();
+      const _norm = function(s){return s.replace(/\s+/g,' ').trim();};
+      let legacy = FR_HEADER_MAP[dc.topLabel ? dc.topLabel.trim() : ''];
+      if (!legacy) legacy = FR_HEADER_MAP[_allText];
+      if (!legacy) {
+        const _ek = Object.keys(FR_HEADER_MAP).find(function(k){ return _norm(k) === _norm(dc.topLabel||''); });
+        if (_ek) legacy = FR_HEADER_MAP[_ek];
+      }
+      if (!legacy) {
+        const _ek2 = Object.keys(FR_HEADER_MAP).find(function(k){ return _norm(k) === _norm(_allText); });
+        if (_ek2) legacy = FR_HEADER_MAP[_ek2];
+      }
+      if (legacy) entry = legacy;
+      else entry = null;
     }
 
     // ── Compute Report Date ──
