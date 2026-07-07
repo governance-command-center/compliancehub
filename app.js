@@ -7122,7 +7122,46 @@ function frParseHeaderInfo(platform, rawTopLabel, rawSubLabels) {
     if (rm) { shortLabel = frCapMonth(rm[1]) + ' ' + rm[2] + '–' + rm[3] + (isMonthly ? ' (Monthly)' : ''); break; }
   }
 
-  return { shortLabel: shortLabel || (rows[0] && rows[0].v) || null, rows };
+  // ── Due date ──
+  // Instead of relying on a manually-set "week offset" to guess which column
+  // is currently active, read the real deadline straight out of the header:
+  // the reporting deadline is always the day after the latest date mentioned
+  // anywhere in the column (the Monday after a Lazada withdrawal date, the
+  // Thursday after a Shopee/TikTok order-report window, the 1st of the month
+  // after a monthly "May 01 - 31" window, etc). Self-corrects every period —
+  // nothing to keep configured in sync.
+  const MONTHS_IDX={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+  function frResolveYear(mIdx, day) {
+    const yr = now().getFullYear();
+    let d = new Date(yr, mIdx, day);
+    if (d - now() > 183*86400000) d = new Date(yr-1, mIdx, day);
+    return d;
+  }
+  let latestDate = null;
+  function considerDate(mIdx, day) {
+    if (mIdx===undefined) return;
+    const d = frResolveYear(mIdx, day);
+    if (!latestDate || d > latestDate) latestDate = d;
+  }
+  const ddMonRe = /(\d{1,2})\s+([A-Za-z]{3,9})\b/g;
+  const monDdDdRe = new RegExp('('+FR_MONTH_RE+')\\.?\\s*(\\d{1,2})\\s*-\\s*(\\d{1,2})', 'gi');
+  for (const r of rows) {
+    let mm;
+    monDdDdRe.lastIndex = 0;
+    while ((mm = monDdDdRe.exec(r.v))) {
+      const mi = MONTHS_IDX[mm[1].toLowerCase().slice(0,3)];
+      considerDate(mi, parseInt(mm[2])); considerDate(mi, parseInt(mm[3]));
+    }
+    ddMonRe.lastIndex = 0;
+    while ((mm = ddMonRe.exec(r.v))) {
+      const mi = MONTHS_IDX[mm[2].toLowerCase().slice(0,3)];
+      considerDate(mi, parseInt(mm[1]));
+    }
+  }
+  let dueDate = null;
+  if (latestDate) { dueDate = new Date(latestDate.getTime()); dueDate.setDate(dueDate.getDate()+1); }
+
+  return { shortLabel: shortLabel || (rows[0] && rows[0].v) || null, rows, dueDate };
 }
 
 // ── Look up header display info ──
@@ -7408,8 +7447,6 @@ function buildFRTable(trackerKey,sheetKey,sheet){
   if(!headerRows.length||!headerRows[0].length)return'<div class="empty-state" style="padding:32px">No data. Upload your Finance Report Excel file.</div>';
 
   const platform=sheetKey;
-  const targetDow=FR_DOW[platform]||4;
-  const todayD=frEffectiveDate(platform); // uses week offset so "current" column reflects correct reporting week
   const isAdmin=CU.isAdmin;
   const myName=CU.name;
   const canEdit=!isTOD();
@@ -7467,22 +7504,32 @@ function buildFRTable(trackerKey,sheetKey,sheet){
     // (including the completion % footer) and makes the freeze boundary look wrong.
     const hasAnyLabel=topLabel||subLabels.some(function(s){return s;});
     if(!hasAnyLabel&&!parsedDate)continue;
-    dateColGroups.push({ci,topLabel,subLabels,parsedDate,isActive:false,isPast:false,isFuture:false});
+    // Real reporting deadline for this column, read straight from its header text
+    // (see frParseHeaderInfo) — no manually-set week offset involved.
+    const entry=frParseHeaderInfo(platform,topLabel,subLabels);
+    dateColGroups.push({ci,topLabel,subLabels,parsedDate,dueDate:entry.dueDate||null,entry,isActive:false,isPast:false,isFuture:false});
   }
 
-  // Mark active/past/future
+  // ── Mark active/past/future ──
+  // The active column is the one whose real deadline (dueDate, parsed straight
+  // from the header) is soonest without having already passed — i.e. today's
+  // or the next upcoming due date. This naturally gives Lazada (reports on a
+  // 1-week lag) last week's column when it's due today, while giving
+  // Shopee/TikTok (no lag) this week's column ahead of Thursday's due date —
+  // all without needing a manually-maintained week-offset setting.
+  const todayMid=new Date(now().getFullYear(),now().getMonth(),now().getDate());
   let activeIdx=-1,bestDiff=Infinity;
   dateColGroups.forEach(function(dc,i){
-    if(!dc.parsedDate)return;
-    const diff=todayD-dc.parsedDate;
+    if(!dc.dueDate)return;
+    const diff=dc.dueDate-todayMid;
     if(diff>=0&&diff<bestDiff){bestDiff=diff;activeIdx=i;}
   });
   if(activeIdx===-1){
-    let minF=Infinity;
+    let minPast=Infinity;
     dateColGroups.forEach(function(dc,i){
-      if(!dc.parsedDate)return;
-      const diff=dc.parsedDate-todayD;
-      if(diff>=0&&diff<minF){minF=diff;activeIdx=i;}
+      if(!dc.dueDate)return;
+      const diff=todayMid-dc.dueDate;
+      if(diff>=0&&diff<minPast){minPast=diff;activeIdx=i;}
     });
   }
   dateColGroups.forEach(function(dc,i){
@@ -7551,7 +7598,7 @@ function buildFRTable(trackerKey,sheetKey,sheet){
     const fg = '#ffffff';
 
     // ── Resolve header entry: generic parser first, legacy map as fallback ──
-    let entry = frParseHeaderInfo(platform, dc.topLabel, dc.subLabels);
+    let entry = dc.entry || frParseHeaderInfo(platform, dc.topLabel, dc.subLabels);
     if (!entry.shortLabel) {
       const _allText = [dc.topLabel||'', ...dc.subLabels].join('  ').replace(/\s+/g,' ').trim();
       const _norm = function(s){return s.replace(/\s+/g,' ').trim();};
