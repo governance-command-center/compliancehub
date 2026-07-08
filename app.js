@@ -8800,10 +8800,13 @@ function initFRTabDrag(key){
   if(!bar)return;
   const t=D.trackers[key];if(!t)return;
   let dragSrc=null;
+  // Always start clean so a leftover flag can never block clicks
+  window._frDidDrag=false;
   bar.querySelectorAll('.fr-drag-tab').forEach(function(tab){
     tab.addEventListener('dragstart',function(e){
       dragSrc=tab;
-      window._frDidDrag=true;
+      // Do NOT set the click-guard here — dragstart can fire without a matching
+      // dragend/drop (aborted drag), which would leave clicks permanently blocked.
       tab.style.opacity='.4';
       e.dataTransfer.effectAllowed='move';
     });
@@ -8818,6 +8821,8 @@ function initFRTabDrag(key){
       e.preventDefault();
       e.dataTransfer.dropEffect='move';
       if(dragSrc&&dragSrc!==tab){
+        // Only now do we know a real reorder is happening — suppress the click
+        window._frDidDrag=true;
         bar.querySelectorAll('.fr-drag-tab').forEach(function(t2){t2.classList.remove('fr-drag-over');});
         tab.classList.add('fr-drag-over');
         const rect=tab.getBoundingClientRect();
