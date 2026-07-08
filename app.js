@@ -5736,7 +5736,10 @@ function buildTrackerContent(key){
       const fw=active?'700':'500';
       const fc=active?(isExitedN?'var(--red)':'var(--blue)'):(isExitedN?'#e57373':'var(--text3)');
       const bb=active?(isExitedN?'var(--red)':'var(--blue)'):'transparent';
+      const nEsc=escHtml(n).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+      const kEsc=String(key).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
       tabsHtml+='<div class="lt-sheet-tab fr-drag-tab" data-key="'+key+'" data-sheet="'+n+'" draggable="true"'
+        +' onclick="if(!window._frDidDrag)ltSetSheet(\''+kEsc+'\',\''+nEsc+'\');window._frDidDrag=false"'
         +' style="padding:6px 12px;font-size:11px;font-weight:'+fw+';color:'+fc+';border-bottom:2px solid '+bb+';cursor:grab;white-space:nowrap;transition:all .15s;user-select:none;display:flex;align-items:center;gap:5px">'
         +'<span style="font-size:10px;color:var(--text4);line-height:1">⠿</span>'
         +(isExitedN?'⛔ ':'')
@@ -5753,7 +5756,9 @@ function buildTrackerContent(key){
       const fw=active?'700':'500';
       const fc=active?(isExitedN?'var(--red)':'var(--blue)'):(isExitedN?'#e57373':'var(--text3)');
       const bb=active?(isExitedN?'var(--red)':'var(--blue)'):'transparent';
-      tabsHtml+='<div class="lt-sheet-tab" data-key="'+key+'" data-sheet="'+n+'" style="padding:6px 14px;font-size:11px;font-weight:'+fw+';color:'+fc+';border-bottom:2px solid '+bb+';cursor:pointer;white-space:nowrap;transition:all .15s">'+(isExitedN?'⛔ ':'')+escHtml(n)+'</div>';
+      const nEsc2=escHtml(n).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+      const kEsc2=String(key).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+      tabsHtml+='<div class="lt-sheet-tab" data-key="'+key+'" data-sheet="'+n+'" onclick="ltSetSheet(\''+kEsc2+'\',\''+nEsc2+'\')" style="padding:6px 14px;font-size:11px;font-weight:'+fw+';color:'+fc+';border-bottom:2px solid '+bb+';cursor:pointer;white-space:nowrap;transition:all .15s">'+(isExitedN?'⛔ ':'')+escHtml(n)+'</div>';
     });
     tabsHtml='<div style="border-bottom:1px solid var(--border);display:flex;overflow-x:auto;background:#fafafa">'+tabsHtml+'</div>';
   }
@@ -8679,13 +8684,7 @@ function lvDownload(name,content,type){
 
 // Event delegation for Live Trackers sidebar, toolbar, and TOD buttons
 document.addEventListener('click',function(e){
-  // Sheet tab
-  var tab=e.target.closest('.lt-sheet-tab');
-  if(tab){
-    // FR draggable tabs handle their own click (with drag-vs-click guard) in initFRTabDrag
-    if(tab.classList.contains('fr-drag-tab')){if(window._frDidDrag)window._frDidDrag=false;return;}
-    var k=tab.dataset.key,s=tab.dataset.sheet;if(k&&s){_activeTrackerSheet=s;renderLiveTrackers();}return;
-  }
+  // Sheet tab clicks are handled via inline onclick (ltSetSheet) on each tab.
 
   // Tracker sidebar item
   var ti=e.target.closest('.lt-tracker-item[data-trackerid]');
@@ -8802,11 +8801,6 @@ function initFRTabDrag(key){
   const t=D.trackers[key];if(!t)return;
   let dragSrc=null;
   bar.querySelectorAll('.fr-drag-tab').forEach(function(tab){
-    // Plain click = switch sheet. Only a real drag should reorder.
-    tab.addEventListener('click',function(){
-      if(window._frDidDrag){window._frDidDrag=false;return;}
-      var s=tab.dataset.sheet;if(s){_activeTrackerSheet=s;renderLiveTrackers();}
-    });
     tab.addEventListener('dragstart',function(e){
       dragSrc=tab;
       window._frDidDrag=true;
