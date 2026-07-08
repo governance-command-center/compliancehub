@@ -8681,7 +8681,11 @@ function lvDownload(name,content,type){
 document.addEventListener('click',function(e){
   // Sheet tab
   var tab=e.target.closest('.lt-sheet-tab');
-  if(tab){var k=tab.dataset.key,s=tab.dataset.sheet;if(k&&s){_activeTrackerSheet=s;renderLiveTrackers();}return;}
+  if(tab){
+    // FR draggable tabs handle their own click (with drag-vs-click guard) in initFRTabDrag
+    if(tab.classList.contains('fr-drag-tab')){if(window._frDidDrag)window._frDidDrag=false;return;}
+    var k=tab.dataset.key,s=tab.dataset.sheet;if(k&&s){_activeTrackerSheet=s;renderLiveTrackers();}return;
+  }
 
   // Tracker sidebar item
   var ti=e.target.closest('.lt-tracker-item[data-trackerid]');
@@ -8798,8 +8802,14 @@ function initFRTabDrag(key){
   const t=D.trackers[key];if(!t)return;
   let dragSrc=null;
   bar.querySelectorAll('.fr-drag-tab').forEach(function(tab){
+    // Plain click = switch sheet. Only a real drag should reorder.
+    tab.addEventListener('click',function(){
+      if(window._frDidDrag){window._frDidDrag=false;return;}
+      var s=tab.dataset.sheet;if(s){_activeTrackerSheet=s;renderLiveTrackers();}
+    });
     tab.addEventListener('dragstart',function(e){
       dragSrc=tab;
+      window._frDidDrag=true;
       tab.style.opacity='.4';
       e.dataTransfer.effectAllowed='move';
     });
@@ -8807,6 +8817,8 @@ function initFRTabDrag(key){
       tab.style.opacity='1';
       bar.querySelectorAll('.fr-drag-tab').forEach(function(t2){t2.classList.remove('fr-drag-over');});
       dragSrc=null;
+      // Clear the guard after the (suppressed) click would have fired
+      setTimeout(function(){window._frDidDrag=false;},50);
     });
     tab.addEventListener('dragover',function(e){
       e.preventDefault();
@@ -8862,6 +8874,10 @@ function frManageDates(key){
   const dateList=dateCols.map(dc=>{
     const isBlank=!dc.label&&!dc.subLabels.some(s=>s);
     return `
+    <div style="display:flex;justify-content:center;margin:2px 0">
+      <button type="button" onclick="frInsertDateFieldBefore(this,${numSubRows})" title="Insert a new column here (before this one) — use this to slot in a missed week"
+        style="background:none;border:1px dashed var(--border);color:var(--text3);border-radius:20px;font-size:10px;padding:1px 10px;cursor:pointer">+ Insert column here</button>
+    </div>
     <div style="background:${isBlank?'#fff7ed':'var(--bg)'};border:1px solid ${isBlank?'var(--orange)':'var(--border)'};border-radius:var(--radius);padding:8px 10px;margin-bottom:6px">
       <div style="font-size:9px;color:var(--text4);margin-bottom:3px">Column index ${dc.idx}${isBlank?' — ⚠ blank/leftover, hidden from the table already. Click ✕ to remove it for good.':''}</div>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
@@ -8895,8 +8911,7 @@ function frManageDates(key){
   openModal('modal-lt-upload');
 }
 
-function frAddDateField(numSubRows){
-  const list=document.getElementById('date-col-list');
+function frBuildBlankDateEntryDiv(numSubRows){
   const ns=numSubRows||0;
   const div=document.createElement('div');
   div.className='date-entry-wrap';
@@ -8907,7 +8922,22 @@ function frAddDateField(numSubRows){
   </div>`;
   for(let ri=0;ri<ns;ri++){inner+=`<input class="finput nb" style="width:100%;font-size:11px;margin-bottom:3px" data-colidx="new" data-rowoffset="${ri+1}" placeholder="Sub-row ${ri+1}"/>`;}
   div.innerHTML=inner;
-  list.appendChild(div);
+  return div;
+}
+
+function frAddDateField(numSubRows){
+  document.getElementById('date-col-list').appendChild(frBuildBlankDateEntryDiv(numSubRows));
+}
+
+// Inserts a new blank date column card immediately before the existing column whose
+// "+ Insert column here" button was clicked — lets an admin slot a missed week into
+// its correct chronological position instead of it landing at the end of the list.
+function frInsertDateFieldBefore(btnEl,numSubRows){
+  const insertRow=btnEl.parentElement; // the "+ Insert column here" wrapper row
+  const targetCard=insertRow.nextElementSibling; // the actual column card right after it
+  const div=frBuildBlankDateEntryDiv(numSubRows);
+  if(targetCard&&targetCard.parentNode)targetCard.parentNode.insertBefore(div,targetCard);
+  else document.getElementById('date-col-list').appendChild(div);
 }
 
 // Lets admin move the fixed/date-column boundary for a sheet — used when a column has landed on
