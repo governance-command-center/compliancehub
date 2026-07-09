@@ -5745,7 +5745,9 @@ function buildTrackerContent(key){
         +escHtml(n)
         +'</div>';
     });
+    const kEscBtn=String(key).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
     tabsHtml='<div id="fr-tab-bar-'+key+'" style="border-bottom:1px solid var(--border);display:flex;overflow-x:auto;background:#fafafa;align-items:stretch" title="Hold and drag tabs to reorder">'+tabsHtml
+      +'<button onclick="frOpenAddTab(\''+kEscBtn+'\')" title="Add a new platform tab (e.g. Lazada, Shopee, TikTok)" style="padding:5px 12px;margin:4px 6px;font-size:11px;font-weight:700;color:var(--blue);background:var(--blue-light);border:1px solid var(--blue-mid);border-radius:20px;cursor:pointer;white-space:nowrap;align-self:center;font-family:inherit">+ Add Tab</button>'
       +'<span style="font-size:10px;color:var(--text4);padding:6px 10px;align-self:center;white-space:nowrap;margin-left:auto">⠿ drag to reorder</span>'
       +'</div>';
   } else {
@@ -6041,6 +6043,73 @@ async function ltSaveNewRow(trackerKey,sheetKey){
   await fbUpd('trackers/'+trackerKey+'/sheets/'+sheetKey,{rows:rows,timestamps:newTimestamps});
   closeModal('modal-lt-addrow');
   toast('Brand "'+brand+'" added to tracker.');
+  renderLiveTrackers();
+}
+
+// ── Admin: add a new platform tab (sheet) to a Finance tracker ──
+// Creates an empty sheet with the standard fixed-column headers so admins can
+// build out Lazada / Shopee / TikTok (or any new platform) tabs directly in-app,
+// without re-uploading the whole Excel workbook.
+function frOpenAddTab(trackerKey){
+  if(!CU.isAdmin){toast('Admin only.');return;}
+  const t=D.trackers[trackerKey];
+  if(!t){toast('Tracker not found.');return;}
+  if(t.category!=='Finance'){toast('Add Tab is for Finance trackers only.');return;}
+  const existing=Object.keys(t.sheets||{});
+  const existLabel=existing.length?existing.join(', '):'(none yet)';
+  // Suggest the common platforms that aren't already present
+  const common=['Lazada','Shopee','TikTok'];
+  const missing=common.filter(function(p){return !existing.some(function(e){return e.toLowerCase()===p.toLowerCase();});});
+  const chips=missing.map(function(p){
+    return '<button type="button" class="btn sm" onclick="document.getElementById(\'frtab-name\').value=\''+p+'\'" '
+      +'style="font-size:11px;padding:2px 10px">'+p+'</button>';
+  }).join(' ');
+  document.getElementById('mltar-body').innerHTML=
+    '<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Existing tabs: <b>'+escHtml(existLabel)+'</b></div>'+
+    '<div class="fg"><label class="flabel">Tab / Platform Name</label>'+
+      '<input class="finput nb" id="frtab-name" placeholder="e.g. Lazada, Shopee, TikTok" autocomplete="off"/></div>'+
+    (chips?'<div style="margin:-4px 0 12px;display:flex;gap:6px;flex-wrap:wrap">'+chips+'</div>':'')+
+    '<div style="font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.5">'+
+      'A blank tab is created with the standard fixed columns (Region, Platform, Account Status, '+
+      'Synagie Merchant ID, Brand / Store Name, Exec, Team Lead). Upload the platform\'s weekly date '+
+      'columns via <b>Manage Columns</b>, or add brands with <b>+ Add Brand</b>.'+
+    '</div>'+
+    '<div class="form-actions">'+
+      '<button class="btn primary" onclick="frSaveNewTab(\''+String(trackerKey).replace(/\\/g,'\\\\').replace(/'/g,"\\'")+'\')">Create Tab</button>'+
+      '<button class="btn" onclick="closeModal(\'modal-lt-addrow\')">Cancel</button>'+
+    '</div>';
+  document.getElementById('modal-lt-addrow').querySelector('h3').textContent='Add Tab';
+  openModal('modal-lt-addrow');
+  setTimeout(function(){var el=document.getElementById('frtab-name');if(el)el.focus();},40);
+}
+
+async function frSaveNewTab(trackerKey){
+  if(!CU.isAdmin){toast('Admin only.');return;}
+  const name=(document.getElementById('frtab-name')?.value||'').trim();
+  if(!name){toast('Tab name is required.');return;}
+  // Firebase keys can't contain . # $ [ ] or /
+  if(/[.#$\[\]\/]/.test(name)){toast('Tab name can\'t contain . # $ [ ] or /');return;}
+  const t=D.trackers[trackerKey];
+  if(!t){toast('Tracker not found.');return;}
+  const sheets=t.sheets||{};
+  // Prevent duplicate tab names (case-insensitive)
+  if(Object.keys(sheets).some(function(k){return k.toLowerCase()===name.toLowerCase();})){
+    toast('A tab named "'+name+'" already exists.');return;
+  }
+  // Seed with the platform's standard fixed-column header row so the table renders
+  // immediately (an empty header row is what shows "No data").
+  const fixed=(FR_PLATFORM_FIXED_DEFAULTS[name]||FR_DEFAULT_FIXED).slice();
+  const newSheet={headerRows:[fixed],row0:fixed,row1:[],rows:[],timestamps:{}};
+  // Append to saved tab order (if any) so the new tab shows at the end.
+  const order=(t.tabOrder&&Array.isArray(t.tabOrder)?t.tabOrder.slice():Object.keys(sheets));
+  if(!order.includes(name))order.push(name);
+  D.trackers[trackerKey].sheets=Object.assign({},sheets,{[name]:newSheet});
+  D.trackers[trackerKey].tabOrder=order;
+  await fbUpd('trackers/'+trackerKey,{['sheets/'+name]:newSheet,tabOrder:order});
+  _activeTracker=trackerKey;
+  _activeTrackerSheet=name;
+  closeModal('modal-lt-addrow');
+  toast('Tab "'+name+'" created.');
   renderLiveTrackers();
 }
 
@@ -6580,34 +6649,71 @@ function ltPreviewFile(evt){
         const raw=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:false});
         if(!raw.length){_ltParsed[name]={headerRows:[],rows:[],timestamps:{}};return;}
 
-        // ── Step 1: Skip "Sharepoint" link row if present ──
-        // Some sheets (Lazada, Shopee, TikTok) have a "Sharepoint" link row as the very first row.
-        // It has col[0] = "Sharepoint" (case-insensitive) and is always row index 0.
+        // Helper: is a whole row effectively blank? (all cells null/empty)
+        const _rowBlank=function(r){
+          return !r||!r.some(function(c){return c!=null&&String(c).trim()!=='';});
+        };
+        // Helper: does a row contain the given text in any cell? (case-insensitive substring)
+        const _rowHas=function(r,txt){
+          if(!r)return false;
+          const t=txt.toLowerCase();
+          return r.some(function(c){return c!=null&&String(c).trim().toLowerCase().indexOf(t)!==-1;});
+        };
+
+        // ── Step 1: Skip leading "Sharepoint" link row(s) AND leading blank rows ──
+        // Some sheets (Lazada, Shopee, TikTok) begin with a "Sharepoint" link row and/or one or
+        // more blank/title/banner rows before the real column headers. Shopee often has the header
+        // on the very first row (so the old code worked), but Lazada/TikTok tabs frequently carry a
+        // blank or merged banner row first, which left headerRows[0] empty → "No data" even though
+        // the sheet had content. Advance scanStart past any leading blank rows and any Sharepoint row.
         let scanStart=0;
-        if(raw[0]&&raw[0][0]!=null&&String(raw[0][0]).trim().toLowerCase()==='sharepoint'){
-          scanStart=1;
+        while(scanStart<raw.length&&(_rowBlank(raw[scanStart])
+              ||(raw[scanStart]&&raw[scanStart][0]!=null&&String(raw[scanStart][0]).trim().toLowerCase()==='sharepoint'))){
+          scanStart++;
         }
+        if(scanStart>=raw.length)scanStart=0; // all-blank guard
 
         // ── Step 2: Find where data rows begin ──
-        // Data rows start at the first row (after scanStart) where col[0] is a 2-letter region code.
+        // Primary: first row (after scanStart) whose col[0] is a known 2-letter region code.
         // Everything from scanStart up to (but not including) that row is header rows.
+        // Widen the scan window (some sheets have several header/sub-header rows) and add a
+        // fallback that locates the header row by its labels when no region code is found.
         const REGIONS=['MY','SG','PH','VN','TH','ID','EP','AU','JP','KR','CN','IN','HK','TW'];
-        let dataStartIdx=scanStart+1; // safe default: 1 header row after optional Sharepoint
-        for(let ri=scanStart;ri<Math.min(raw.length,15);ri++){
+        let dataStartIdx=-1;
+        for(let ri=scanStart;ri<Math.min(raw.length,40);ri++){
           const r=raw[ri];
           const v=r&&r[0]!=null?String(r[0]).trim():'';
-          // Region code: exactly 2 uppercase letters
+          // Region code: exactly 2 uppercase letters in the whitelist
           if(v&&/^[A-Z]{2}$/.test(v)&&REGIONS.includes(v)){
             dataStartIdx=ri;
             break;
           }
+        }
+        // Fallback: no region code found. Find the last header-looking row (contains "Region",
+        // "Platform", "Brand", or a date-range/report label) and treat the row after it as data.
+        if(dataStartIdx===-1){
+          let lastHeaderRow=scanStart;
+          for(let ri=scanStart;ri<Math.min(raw.length,40);ri++){
+            const r=raw[ri];
+            if(_rowBlank(r))continue;
+            if(_rowHas(r,'region')||_rowHas(r,'platform')||_rowHas(r,'brand')
+               ||_rowHas(r,'transaction')||_rowHas(r,'income')||_rowHas(r,'payment report')
+               ||_rowHas(r,'order report')||_rowHas(r,'withdrawal')){
+              lastHeaderRow=ri;
+            }
+          }
+          dataStartIdx=lastHeaderRow+1;
         }
         // Guard: must have at least one header row after scanStart
         if(dataStartIdx<=scanStart)dataStartIdx=scanStart+1;
 
         // ── Step 3: Slice header rows (skip Sharepoint row entirely) and data rows ──
         // headerRows = rows from scanStart to dataStartIdx (the actual column headers)
-        const headerRows=raw.slice(scanStart,dataStartIdx);
+        let headerRows=raw.slice(scanStart,dataStartIdx);
+        // Defensively drop any leading fully-blank header rows so headerRows[0] always carries
+        // the real column labels (an empty headerRows[0] is what triggered the "No data" state
+        // for Lazada/TikTok tabs whose first row was blank).
+        while(headerRows.length>1&&_rowBlank(headerRows[0]))headerRows.shift();
         // data rows = from dataStartIdx onward, filtered to non-blank leading cell
         const rows=raw.slice(dataStartIdx).filter(function(r){
           return r&&r[0]!=null&&String(r[0]).trim()!=='';
