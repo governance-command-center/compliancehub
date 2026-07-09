@@ -7635,6 +7635,10 @@ function buildFRTable(trackerKey,sheetKey,sheet){
     if(i===activeIdx)dc.isActive=true;
     else if(activeIdx>=0&&i<activeIdx)dc.isPast=true;
     else dc.isFuture=true;
+    // Week offset from the active column (0 = active, -1 = one week before, +1 = one week after).
+    // Used to build a rolling Report/Input Date anchored to today's active column, rather than
+    // deriving each date from its own income-window text.
+    dc.weekOffset=(activeIdx>=0)?(i-activeIdx):null;
   });
 
   // ── Limit visible columns: show from May 1 monthly report onward + all future ──
@@ -7716,10 +7720,29 @@ function buildFRTable(trackerKey,sheetKey,sheet){
     }
 
     // ── Compute Report Date ──
+    // Primary rule (Shopee/TikTok — weekly, due every Thursday; Lazada weekly-withdrawal too):
+    // anchor the date to TODAY's active column and roll ±7 days per column. The active column
+    // shows the current/upcoming due-day (e.g. Thursday Jul 9), the next column +7 (Jul 16), the
+    // previous column -7 (Jul 2), and so on. This tracks the real reporting calendar relative to
+    // today instead of re-deriving each date from its own income-window text.
+    var MONTHS_IDX={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+    var MONTHS_STR=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     var reportDateStr = '';
-    if (entry && entry.rows) {
-      var MONTHS_IDX={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
-      var MONTHS_STR=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var _dueDow = (FR_DOW[platform]!==undefined ? FR_DOW[platform] : 4); // Shopee/TikTok=Thu(4), Lazada=Tue(2)
+    var _isLazadaMonthly = false;
+    if (platform === 'Lazada' && entry && entry.rows) {
+      // Lazada's headline report is monthly — keep the month-end derivation for it.
+      var _mRowLZ = entry.rows.find(function(r){return /monthly.?report/i.test(r.l);});
+      if (_mRowLZ && _mRowLZ.v && /[A-Za-z]{3,}/.test(_mRowLZ.v)) _isLazadaMonthly = true;
+    }
+    if (dc.weekOffset !== null && dc.weekOffset !== undefined && !_isLazadaMonthly) {
+      // Anchor = today snapped forward to the platform's due day-of-week, then shifted by weekOffset weeks.
+      var _anchor = new Date(now().getFullYear(), now().getMonth(), now().getDate());
+      for (var _g=0; _g<7; _g++){ if(_anchor.getDay()===_dueDow) break; _anchor.setDate(_anchor.getDate()+1); }
+      _anchor.setDate(_anchor.getDate() + dc.weekOffset*7);
+      reportDateStr = MONTHS_STR[_anchor.getMonth()] + ' ' + _anchor.getDate();
+    } else if (entry && entry.rows) {
+      // Fallback: no active column resolved (or Lazada monthly) — derive from the column's own header text.
       function _parseFirstDate(str) {
         if (!str) return null;
         var m = String(str).match(/(\d{1,2})\s+([A-Za-z]{3})/);
