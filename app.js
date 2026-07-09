@@ -7736,8 +7736,14 @@ function buildFRTable(trackerKey,sheetKey,sheet){
       if (_mRowLZ && _mRowLZ.v && /[A-Za-z]{3,}/.test(_mRowLZ.v)) _isLazadaMonthly = true;
     }
     if (dc.weekOffset !== null && dc.weekOffset !== undefined && !_isLazadaMonthly) {
-      // Anchor = today snapped forward to the platform's due day-of-week, then shifted by weekOffset weeks.
+      // Anchor = today, shifted by the platform's reporting lag (Lazada reports one week behind,
+      // FR_WEEK_OFFSET = -1; Shopee/TikTok = 0), then snapped forward to the platform's due
+      // day-of-week, then shifted by this column's weekOffset. For Lazada the active column
+      // (weekOffset 0) is the lagged week 29 Jun–05 Jul, whose report is due Tue Jul 7 — the
+      // -1 lag is what pulls the anchor back so it lands on Jul 7 instead of Jul 14.
+      var _platLag = (typeof FR_WEEK_OFFSET !== 'undefined' && FR_WEEK_OFFSET[platform]) ? FR_WEEK_OFFSET[platform] : 0;
       var _anchor = new Date(now().getFullYear(), now().getMonth(), now().getDate());
+      _anchor.setDate(_anchor.getDate() + _platLag*7);
       for (var _g=0; _g<7; _g++){ if(_anchor.getDay()===_dueDow) break; _anchor.setDate(_anchor.getDate()+1); }
       _anchor.setDate(_anchor.getDate() + dc.weekOffset*7);
       reportDateStr = MONTHS_STR[_anchor.getMonth()] + ' ' + _anchor.getDate();
