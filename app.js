@@ -6818,20 +6818,8 @@ function frEffectiveDate(platform){
 // Covers Lazada, Shopee, TikTok, and Miravia tabs exactly as defined in the Excel.
 const FR_HEADER_MAP = {
   // ── LAZADA ──
-  'Monthly Report  May 01 - 31  Transaction Report  MY Withdrawal Report  SG Withdrawal Report  Withdrawal - Screenshots':
-    { shortLabel:'May 01–31 (Monthly)', rows:[{l:'Monthly Report',v:'May 01 - 31'},{l:'Transaction Report',v:'MY'},{l:'Withdrawal Report',v:'SG'},{l:'Withdrawal - Screenshots',v:''}] },
-  'Transaction:  01 Jun - 07 Jun  Withdrawal:  08 Jun Withdrawal - Screenshots  MY, SG, PH, ID, TH, VN':
-    { shortLabel:'01–07 Jun', rows:[{l:'Transaction',v:'01 Jun – 07 Jun'},{l:'Withdrawal',v:'08 Jun'},{l:'Withdrawal - Screenshots',v:''},{l:'Regions',v:'MY, SG, PH, ID, TH, VN'}] },
-  'Transaction:  08 Jun - 14 Jun  Withdrawal:  15 Jun Withdrawal - Screenshots  MY, SG, PH, ID, TH, VN':
-    { shortLabel:'08–14 Jun', rows:[{l:'Transaction',v:'08 Jun – 14 Jun'},{l:'Withdrawal',v:'15 Jun'},{l:'Withdrawal - Screenshots',v:''},{l:'Regions',v:'MY, SG, PH, ID, TH, VN'}] },
-  'Transaction:  15 Jun - 21 Jun  Withdrawal:  22 Jun Withdrawal - Screenshots  MY, SG, PH, ID, TH, VN':
-    { shortLabel:'15–21 Jun', rows:[{l:'Transaction',v:'15 Jun – 21 Jun'},{l:'Withdrawal',v:'22 Jun'},{l:'Withdrawal - Screenshots',v:''},{l:'Regions',v:'MY, SG, PH, ID, TH, VN'}] },
-  'Transaction:  22 Jun - 28 Jun  Withdrawal:  29 Jun Withdrawal - Screenshots  MY, SG, PH, ID, TH, VN':
-    { shortLabel:'22–28 Jun', rows:[{l:'Transaction',v:'22 Jun – 28 Jun'},{l:'Withdrawal',v:'29 Jun'},{l:'Withdrawal - Screenshots',v:''},{l:'Regions',v:'MY, SG, PH, ID, TH, VN'}] },
   'Transaction:  29 Jun - 05 Jul  Withdrawal:  06 Jul Withdrawal - Screenshots  MY, SG, PH, ID, TH, VN':
     { shortLabel:'29 Jun–05 Jul', rows:[{l:'Transaction',v:'29 Jun – 05 Jul'},{l:'Withdrawal',v:'06 Jul'},{l:'Withdrawal - Screenshots',v:''},{l:'Regions',v:'MY, SG, PH, ID, TH, VN'}] },
-  'Monthly Report  June 01 - 30  Transaction Report  MY Withdrawal Report  SG Withdrawal Report  Withdrawal - Screenshots':
-    { shortLabel:'Jun 01–30 (Monthly)', rows:[{l:'Monthly Report',v:'Jun 01 - 30'},{l:'Transaction Report',v:'MY'},{l:'Withdrawal Report',v:'SG'},{l:'Withdrawal - Screenshots',v:''}] },
   'Transaction: 06 Jul - 12 Jul Withdrawal: 13 Jul Withdrawal - Screenshots  MY, SG, PH, ID, TH, VN':
     { shortLabel:'06–12 Jul', rows:[{l:'Transaction',v:'06 Jul – 12 Jul'},{l:'Withdrawal',v:'13 Jul'},{l:'Withdrawal - Screenshots',v:''},{l:'Regions',v:'MY, SG, PH, ID, TH, VN'}] },
   'Transaction: 13 Jul - 19 Jul Withdrawal: 20 Jul Withdrawal - Screenshots  MY, SG, PH, ID, TH, VN':
@@ -6898,18 +6886,6 @@ const FR_HEADER_MAP = {
     { shortLabel:'Dec 01–31 (Monthly)', rows:[{l:'Monthly Report',v:'Dec 01 - 31'},{l:'Transaction Report',v:'MY'},{l:'Withdrawal Report',v:'SG'},{l:'Withdrawal - Screenshots',v:''}] },
 
   // ── SHOPEE ──
-  'Monthly Income: May 01 - 31  SW: May 01 - 31  Order Report: May 01 - 31  SW - Screenshots':
-    { shortLabel:'May 01–31 (Monthly)', rows:[{l:'Monthly Income',v:'May 01 - 31'},{l:'SW',v:'May 01 - 31'},{l:'Order Report',v:'May 01 - 31'},{l:'SW - Screenshots',v:''}] },
-  'Income: 03 Jun - 09 Jun  SW: 04 Jun - 10 Jun  Order Report: 04 Jun - 10 Jun  SW - Screenshots':
-    { shortLabel:'03–09 Jun', rows:[{l:'Income',v:'03 Jun – 09 Jun'},{l:'SW',v:'04 Jun – 10 Jun'},{l:'Order Report',v:'04 Jun – 10 Jun'},{l:'SW - Screenshots',v:''}] },
-  'Income: 10 Jun - 16 Jun  SW: 11 Jun - 17 Jun  Order Report: 11 Jun - 17 Jun  SW - Screenshots':
-    { shortLabel:'10–16 Jun', rows:[{l:'Income',v:'10 Jun – 16 Jun'},{l:'SW',v:'11 Jun – 17 Jun'},{l:'Order Report',v:'11 Jun – 17 Jun'},{l:'SW - Screenshots',v:''}] },
-  'Income: 17 Jun - 23 Jun  SW: 18 Jun - 24 Jun  Order Report: 18 Jun - 24 Jun  SW - Screenshots':
-    { shortLabel:'17–23 Jun', rows:[{l:'Income',v:'17 Jun – 23 Jun'},{l:'SW',v:'18 Jun – 24 Jun'},{l:'Order Report',v:'18 Jun – 24 Jun'},{l:'SW - Screenshots',v:''}] },
-  'Income: 24 Jun - 30 Jun  SW: 25 Jun - 01 Jul  Order Report: 25 Jun - 01 Jul  SW - Screenshots':
-    { shortLabel:'24–30 Jun', rows:[{l:'Income',v:'24 Jun – 30 Jun'},{l:'SW',v:'25 Jun – 01 Jul'},{l:'Order Report',v:'25 Jun – 01 Jul'},{l:'SW - Screenshots',v:''}] },
-  'Monthly Income: June 01 - 30  SW: June 01 - 30  Order Report: June 01 - 30  SW - Screenshots':
-    { shortLabel:'Jun 01–30 (Monthly)', rows:[{l:'Monthly Income',v:'Jun 01 - 30'},{l:'SW',v:'Jun 01 - 30'},{l:'Order Report',v:'Jun 01 - 30'},{l:'SW - Screenshots',v:''}] },
   'Income: 01 Jul - 07 Jul  SW: 02 Jul - 08 Jul  Order Report: 02 Jul - 08 Jul  SW - Screenshots':
     { shortLabel:'01–07 Jul', rows:[{l:'Income',v:'01 Jul – 07 Jul'},{l:'SW',v:'02 Jul – 08 Jul'},{l:'Order Report',v:'02 Jul – 08 Jul'},{l:'SW - Screenshots',v:''}] },
   'Income: 08 Jul - 14 Jul  SW: 09 Jul - 15 Jul  Order Report: 09 Jul - 15 Jul  SW - Screenshots':
@@ -6978,18 +6954,6 @@ const FR_HEADER_MAP = {
     { shortLabel:'Dec 01–31 (Monthly)', rows:[{l:'Monthly Income',v:'Dec 01 - 31'},{l:'SW',v:'Dec 01 - 31'},{l:'Order Report',v:'Dec 01 - 31'},{l:'SW - Screenshots',v:''}] },
 
   // ── TIKTOK ──
-  'Monthly Report  May 01 - 31  Transaction Report  MY Withdrawal Report  SG Withdrawal Report  Withdrawal - Screenshots':
-    { shortLabel:'May 01–31 (Monthly)', rows:[{l:'Monthly Report',v:'May 01 - 31'},{l:'Transaction Report',v:'MY'},{l:'Withdrawal Report',v:'SG'},{l:'Withdrawal - Screenshots',v:''}] },
-  'Payment Report: 04 Jun - 10 Jun  Order Report: 04 Jun - 10 Jun  Payment Report - Screenshots':
-    { shortLabel:'04–10 Jun', rows:[{l:'Payment Report',v:'04 Jun – 10 Jun'},{l:'Order Report',v:'04 Jun – 10 Jun'},{l:'Payment Report - Screenshots',v:''}] },
-  'Payment Report: 11 Jun - 17 Jun  Order Report: 11 Jun - 17 Jun  Payment Report - Screenshots':
-    { shortLabel:'11–17 Jun', rows:[{l:'Payment Report',v:'11 Jun – 17 Jun'},{l:'Order Report',v:'11 Jun – 17 Jun'},{l:'Payment Report - Screenshots',v:''}] },
-  'Payment Report: 18 Jun - 24 Jun  Order Report: 18 Jun - 24 Jun  Payment Report - Screenshots':
-    { shortLabel:'18–24 Jun', rows:[{l:'Payment Report',v:'18 Jun – 24 Jun'},{l:'Order Report',v:'18 Jun – 24 Jun'},{l:'Payment Report - Screenshots',v:''}] },
-  'Payment Report: 25 Jun - 01 Jul  Order Report: 25 Jun - 01 Jul  Payment Report - Screenshots':
-    { shortLabel:'25 Jun–01 Jul', rows:[{l:'Payment Report',v:'25 Jun – 01 Jul'},{l:'Order Report',v:'25 Jun – 01 Jul'},{l:'Payment Report - Screenshots',v:''}] },
-  'Monthly Report  June  01 - 30  Transaction Report  MY Withdrawal Report  SG Withdrawal Report  Withdrawal - Screenshots':
-    { shortLabel:'Jun 01–30 (Monthly)', rows:[{l:'Monthly Report',v:'Jun 01 - 30'},{l:'Transaction Report',v:'MY'},{l:'Withdrawal Report',v:'SG'},{l:'Withdrawal - Screenshots',v:''}] },
   'Payment Report: 02 Jul - 08 Jul  Order Report: 02 Jul - 08 Jul  Payment Report - Screenshots':
     { shortLabel:'02–08 Jul', rows:[{l:'Payment Report',v:'02 Jul – 08 Jul'},{l:'Order Report',v:'02 Jul – 08 Jul'},{l:'Payment Report - Screenshots',v:''}] },
   'Payment Report: 09 Jul - 15 Jul  Order Report: 09 Jul - 15 Jul  Payment Report - Screenshots':
