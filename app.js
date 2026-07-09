@@ -7270,7 +7270,7 @@ function frParseHeaderInfo(platform, rawTopLabel, rawSubLabels) {
   let dueDate = null;
   if (latestDate) { dueDate = new Date(latestDate.getTime()); dueDate.setDate(dueDate.getDate()+1); }
 
-  return { shortLabel: shortLabel || (rows[0] && rows[0].v) || null, rows, dueDate };
+  return { shortLabel: shortLabel || (rows[0] && rows[0].v) || null, rows, dueDate, isMonthly, latestDate };
 }
 
 // ── Look up header display info ──
@@ -7631,15 +7631,38 @@ function buildFRTable(trackerKey,sheetKey,sheet){
   const _activeCiTbl=frActiveColIdx(sheet,platform);
   let activeIdx=-1;
   dateColGroups.forEach(function(dc,i){if(dc.ci===_activeCiTbl)activeIdx=i;});
+  // Flag which columns are monthly reports (e.g. Lazada's "Monthly Report: June 01 - 30").
+  // Monthly columns must NOT participate in the rolling weekly Report-Date sequence — their
+  // date is always the 1st of the month following their coverage, and they must not consume a
+  // week slot (otherwise the weekly column after them skips a week, e.g. Jul 14 going missing).
+  dateColGroups.forEach(function(dc){
+    const _e=dc.entry||frParseHeaderInfo(platform,dc.topLabel,dc.subLabels);
+    dc.isMonthlyCol=!!(_e&&_e.isMonthly);
+  });
   dateColGroups.forEach(function(dc,i){
     if(i===activeIdx)dc.isActive=true;
     else if(activeIdx>=0&&i<activeIdx)dc.isPast=true;
     else dc.isFuture=true;
-    // Week offset from the active column (0 = active, -1 = one week before, +1 = one week after).
-    // Used to build a rolling Report/Input Date anchored to today's active column, rather than
-    // deriving each date from its own income-window text.
-    dc.weekOffset=(activeIdx>=0)?(i-activeIdx):null;
   });
+  // Week offset from the active column, counting ONLY weekly (non-monthly) columns so the
+  // rolling date sequence stays contiguous regardless of interleaved monthly columns.
+  // 0 = active weekly column, -1 = previous weekly column, +1 = next weekly column, etc.
+  (function(){
+    if(activeIdx<0){dateColGroups.forEach(function(dc){dc.weekOffset=null;});return;}
+    // Walk outward from the active column, incrementing the counter only on weekly columns.
+    let cnt=0;
+    for(let i=activeIdx;i<dateColGroups.length;i++){
+      const dc=dateColGroups[i];
+      if(dc.isMonthlyCol){dc.weekOffset=null;continue;}
+      dc.weekOffset=cnt;cnt++;
+    }
+    cnt=0;
+    for(let i=activeIdx-1;i>=0;i--){
+      const dc=dateColGroups[i];
+      if(dc.isMonthlyCol){dc.weekOffset=null;continue;}
+      cnt--;dc.weekOffset=cnt;
+    }
+  })();
 
   // ── Limit visible columns: show from May 1 monthly report onward + all future ──
   // Columns before May 1 of the current year are hidden (those are the "old dates" to remove).
@@ -7720,27 +7743,37 @@ function buildFRTable(trackerKey,sheetKey,sheet){
     }
 
     // ── Compute Report Date ──
-    // Primary rule (Shopee/TikTok — weekly, due every Thursday; Lazada weekly-withdrawal too):
-    // anchor the date to TODAY's active column and roll ±7 days per column. The active column
-    // shows the current/upcoming due-day (e.g. Thursday Jul 9), the next column +7 (Jul 16), the
-    // previous column -7 (Jul 2), and so on. This tracks the real reporting calendar relative to
-    // today instead of re-deriving each date from its own income-window text.
+    // Two distinct rules, applied identically on Lazada, Shopee and TikTok:
+    //  • MONTHLY column  → report date is always the 1st of the month FOLLOWING its coverage
+    //                      (June coverage → Jul 1, July coverage → Aug 1). It is NOT part of the
+    //                      weekly sequence and never shifts the weekly dates.
+    //  • WEEKLY column   → rolling anchored due-day: anchor today (shifted by the platform's
+    //                      reporting lag), snap forward to the platform's due day-of-week, then
+    //                      shift by this column's weekOffset (which counts weekly columns only,
+    //                      so an interleaved monthly column never eats a week slot).
     var MONTHS_IDX={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
     var MONTHS_STR=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     var reportDateStr = '';
     var _dueDow = (FR_DOW[platform]!==undefined ? FR_DOW[platform] : 4); // Shopee/TikTok=Thu(4), Lazada=Tue(2)
-    var _isLazadaMonthly = false;
-    if (platform === 'Lazada' && entry && entry.rows) {
-      // Lazada's headline report is monthly — keep the month-end derivation for it.
-      var _mRowLZ = entry.rows.find(function(r){return /monthly.?report/i.test(r.l);});
-      if (_mRowLZ && _mRowLZ.v && /[A-Za-z]{3,}/.test(_mRowLZ.v)) _isLazadaMonthly = true;
-    }
-    if (dc.weekOffset !== null && dc.weekOffset !== undefined && !_isLazadaMonthly) {
-      // Anchor = today, shifted by the platform's reporting lag (Lazada reports one week behind,
-      // FR_WEEK_OFFSET = -1; Shopee/TikTok = 0), then snapped forward to the platform's due
-      // day-of-week, then shifted by this column's weekOffset. For Lazada the active column
-      // (weekOffset 0) is the lagged week 29 Jun–05 Jul, whose report is due Tue Jul 7 — the
-      // -1 lag is what pulls the anchor back so it lands on Jul 7 instead of Jul 14.
+
+    if (dc.isMonthlyCol) {
+      // Monthly report → 1st of the month after the coverage month. Prefer the latest date the
+      // header parser found (e.g. June 30 → July); fall back to scanning the header text for a month.
+      var _covMonth = null, _covYear = now().getFullYear();
+      if (entry && entry.latestDate) { _covMonth = entry.latestDate.getMonth(); _covYear = entry.latestDate.getFullYear(); }
+      if (_covMonth === null && entry && entry.rows) {
+        for (var _ri=0; _ri<entry.rows.length; _ri++) {
+          var _mm = String(entry.rows[_ri].v||'').match(/([A-Za-z]{3,})/);
+          if (_mm) { var _mi=MONTHS_IDX[_mm[1].toLowerCase().slice(0,3)]; if(_mi!==undefined){_covMonth=_mi;break;} }
+        }
+      }
+      if (_covMonth !== null) {
+        var _nm = _covMonth + 1, _ny = _covYear;
+        if (_nm > 11) { _nm = 0; _ny = _covYear + 1; }
+        var _md = new Date(_ny, _nm, 1);
+        reportDateStr = MONTHS_STR[_md.getMonth()] + ' ' + _md.getDate();
+      }
+    } else if (dc.weekOffset !== null && dc.weekOffset !== undefined) {
       var _platLag = (typeof FR_WEEK_OFFSET !== 'undefined' && FR_WEEK_OFFSET[platform]) ? FR_WEEK_OFFSET[platform] : 0;
       var _anchor = new Date(now().getFullYear(), now().getMonth(), now().getDate());
       _anchor.setDate(_anchor.getDate() + _platLag*7);
@@ -7748,7 +7781,7 @@ function buildFRTable(trackerKey,sheetKey,sheet){
       _anchor.setDate(_anchor.getDate() + dc.weekOffset*7);
       reportDateStr = MONTHS_STR[_anchor.getMonth()] + ' ' + _anchor.getDate();
     } else if (entry && entry.rows) {
-      // Fallback: no active column resolved (or Lazada monthly) — derive from the column's own header text.
+      // Fallback: no active column resolved — derive from the column's own header text.
       function _parseFirstDate(str) {
         if (!str) return null;
         var m = String(str).match(/(\d{1,2})\s+([A-Za-z]{3})/);
@@ -7767,26 +7800,8 @@ function buildFRTable(trackerKey,sheetKey,sheet){
       }
       function _findRow(pat) { return entry.rows.find(function(r){return pat.test(r.l);}) || null; }
       var rdDate = null;
-      var isLazada = platform === 'Lazada';
-      if (isLazada) {
-        var mRow = _findRow(/monthly.?report/i);
-        if (mRow && mRow.v) {
-          var mm = String(mRow.v).match(/([A-Za-z]{3,})/);
-          if (mm) { var mi=MONTHS_IDX[mm[1].toLowerCase().slice(0,3)]; if(mi!==undefined){var yr2=new Date().getFullYear();rdDate=new Date(yr2,mi+1,1);if(mi+1>11)rdDate=new Date(yr2+1,0,1);} }
-        } else {
-          var wRow = _findRow(/^withdrawal$/i);
-          if (wRow && wRow.v) { var wd=_parseFirstDate(wRow.v); if(wd)rdDate=_nextDow(wd,2); }
-        }
-      } else {
-        var miRow = _findRow(/monthly.?income/i);
-        if (miRow && miRow.v) {
-          var mm2 = String(miRow.v).match(/([A-Za-z]{3,})/);
-          if (mm2) { var mi2=MONTHS_IDX[mm2[1].toLowerCase().slice(0,3)]; if(mi2!==undefined){var yr3=new Date().getFullYear();rdDate=new Date(yr3,mi2+1,1);if(mi2+1>11)rdDate=new Date(yr3+1,0,1);} }
-        } else {
-          var incRow = _findRow(/^income$/i);
-          if (incRow && incRow.v) { var id=_parseFirstDate(incRow.v); if(id)rdDate=_nextDow(id,4); }
-        }
-      }
+      var incRow = _findRow(/^income$/i) || _findRow(/^withdrawal$/i);
+      if (incRow && incRow.v) { var id=_parseFirstDate(incRow.v); if(id)rdDate=_nextDow(id,_dueDow); }
       if (rdDate) reportDateStr = MONTHS_STR[rdDate.getMonth()] + ' ' + rdDate.getDate();
     }
 
