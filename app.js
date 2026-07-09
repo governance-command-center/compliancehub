@@ -7451,6 +7451,7 @@ function buildFRTable(trackerKey,sheetKey,sheet){
   if(!headerRows.length||!headerRows[0].length)return'<div class="empty-state" style="padding:32px">No data. Upload your Finance Report Excel file.</div>';
 
   const platform=sheetKey;
+  const targetDow=FR_DOW[platform]||4;
   const isAdmin=CU.isAdmin;
   const myName=CU.name;
   const canEdit=!isTOD();
