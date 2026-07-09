@@ -5736,9 +5736,11 @@ function buildTrackerContent(key){
       const fw=active?'700':'500';
       const fc=active?(isExitedN?'var(--red)':'var(--blue)'):(isExitedN?'#e57373':'var(--text3)');
       const bb=active?(isExitedN?'var(--red)':'var(--blue)'):'transparent';
-      tabsHtml+='<div class="lt-sheet-tab fr-drag-tab" data-key="'+key+'" data-sheet="'+n+'" draggable="true"'
-        +' style="padding:6px 12px;font-size:11px;font-weight:'+fw+';color:'+fc+';border-bottom:2px solid '+bb+';cursor:grab;white-space:nowrap;transition:all .15s;user-select:none;display:flex;align-items:center;gap:5px">'
-        +'<span style="font-size:10px;color:var(--text4);line-height:1">⠿</span>'
+      const nEsc=escHtml(n).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+      const kEsc=String(key).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+      tabsHtml+='<div class="lt-sheet-tab fr-drag-tab" data-key="'+escHtml(key)+'" data-sheet="'+escHtml(n)+'" draggable="true"'
+        +' style="padding:6px 12px;font-size:11px;font-weight:'+fw+';color:'+fc+';border-bottom:2px solid '+bb+';cursor:pointer;white-space:nowrap;transition:all .15s;user-select:none;display:flex;align-items:center;gap:5px">'
+        +'<span style="font-size:10px;color:var(--text4);line-height:1;pointer-events:none">⠿</span>'
         +(isExitedN?'⛔ ':'')
         +escHtml(n)
         +'</div>';
@@ -5753,7 +5755,9 @@ function buildTrackerContent(key){
       const fw=active?'700':'500';
       const fc=active?(isExitedN?'var(--red)':'var(--blue)'):(isExitedN?'#e57373':'var(--text3)');
       const bb=active?(isExitedN?'var(--red)':'var(--blue)'):'transparent';
-      tabsHtml+='<div class="lt-sheet-tab" data-key="'+key+'" data-sheet="'+n+'" style="padding:6px 14px;font-size:11px;font-weight:'+fw+';color:'+fc+';border-bottom:2px solid '+bb+';cursor:pointer;white-space:nowrap;transition:all .15s">'+(isExitedN?'⛔ ':'')+escHtml(n)+'</div>';
+      const nEsc2=escHtml(n).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+      const kEsc2=String(key).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+      tabsHtml+='<div class="lt-sheet-tab" data-key="'+key+'" data-sheet="'+n+'" onclick="ltSetSheet(\''+kEsc2+'\',\''+nEsc2+'\')" style="padding:6px 14px;font-size:11px;font-weight:'+fw+';color:'+fc+';border-bottom:2px solid '+bb+';cursor:pointer;white-space:nowrap;transition:all .15s">'+(isExitedN?'⛔ ':'')+escHtml(n)+'</div>';
     });
     tabsHtml='<div style="border-bottom:1px solid var(--border);display:flex;overflow-x:auto;background:#fafafa">'+tabsHtml+'</div>';
   }
@@ -8679,9 +8683,7 @@ function lvDownload(name,content,type){
 
 // Event delegation for Live Trackers sidebar, toolbar, and TOD buttons
 document.addEventListener('click',function(e){
-  // Sheet tab
-  var tab=e.target.closest('.lt-sheet-tab');
-  if(tab){var k=tab.dataset.key,s=tab.dataset.sheet;if(k&&s){_activeTrackerSheet=s;renderLiveTrackers();}return;}
+  // Sheet tab clicks are handled via inline onclick (ltSetSheet) on each tab.
 
   // Tracker sidebar item
   var ti=e.target.closest('.lt-tracker-item[data-trackerid]');
@@ -8797,21 +8799,47 @@ function initFRTabDrag(key){
   if(!bar)return;
   const t=D.trackers[key];if(!t)return;
   let dragSrc=null;
+  let didReorder=false;      // whether tabs actually changed position during this drag
+  let downX=0,downY=0,downTab=null;  // for click-vs-drag detection
+
+  function selectTab(tab){
+    if(!tab)return;
+    const sheet=tab.dataset.sheet;
+    if(sheet==null)return;
+    ltSetSheet(key,sheet);
+  }
+
   bar.querySelectorAll('.fr-drag-tab').forEach(function(tab){
+    // ── Click detection via pointer (native 'click' is unreliable on draggable els) ──
+    tab.addEventListener('mousedown',function(e){
+      downTab=tab;downX=e.clientX;downY=e.clientY;
+    });
+    tab.addEventListener('mouseup',function(e){
+      // If this is the same tab we pressed on, and the pointer barely moved,
+      // AND no HTML5 drag reorder happened, treat it as a click.
+      const moved=Math.abs(e.clientX-downX)>5||Math.abs(e.clientY-downY)>5;
+      if(downTab===tab&&!moved&&!didReorder){
+        selectTab(tab);
+      }
+      downTab=null;
+    });
+
+    // ── HTML5 drag reorder ──
     tab.addEventListener('dragstart',function(e){
       dragSrc=tab;
+      didReorder=false;
       tab.style.opacity='.4';
       e.dataTransfer.effectAllowed='move';
     });
     tab.addEventListener('dragend',function(){
       tab.style.opacity='1';
       bar.querySelectorAll('.fr-drag-tab').forEach(function(t2){t2.classList.remove('fr-drag-over');});
-      dragSrc=null;
     });
     tab.addEventListener('dragover',function(e){
       e.preventDefault();
       e.dataTransfer.dropEffect='move';
       if(dragSrc&&dragSrc!==tab){
+        didReorder=true;
         bar.querySelectorAll('.fr-drag-tab').forEach(function(t2){t2.classList.remove('fr-drag-over');});
         tab.classList.add('fr-drag-over');
         const rect=tab.getBoundingClientRect();
@@ -8821,20 +8849,24 @@ function initFRTabDrag(key){
     });
     tab.addEventListener('drop',function(e){e.preventDefault();});
   });
-  // Save on mouseup anywhere in the bar (after a drag has occurred)
+
+  // Save order once, when the whole drag gesture ends — only if something moved.
   bar.addEventListener('dragend',async function(){
-    if(!dragSrc)return;
+    const src=dragSrc;
+    dragSrc=null;
+    if(!src||!didReorder){didReorder=false;return;}
+    didReorder=false;
+    const keepActive=_activeTrackerSheet;   // don't yank the user to tab 0
     const newOrder=[...bar.querySelectorAll('.fr-drag-tab')].map(function(el){return el.dataset.sheet;});
     const oldSheets=t.sheets||{};
     const newSheets={};
     newOrder.forEach(function(n){if(oldSheets[n])newSheets[n]=oldSheets[n];});
-    // Keep any sheets not in newOrder (shouldn't happen, but safety)
     Object.keys(oldSheets).forEach(function(n){if(!newSheets[n])newSheets[n]=oldSheets[n];});
     await fbSet('trackers/'+key+'/sheets',newSheets);
     await fbSet('trackers/'+key+'/tabOrder',newOrder);
     D.trackers[key].sheets=newSheets;
     D.trackers[key].tabOrder=newOrder;
-    _activeTrackerSheet=newOrder[0];
+    if(keepActive&&newSheets[keepActive])_activeTrackerSheet=keepActive;
     toast('Tab order saved!');
     renderLiveTrackers();
   },true);
