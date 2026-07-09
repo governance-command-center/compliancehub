@@ -5780,9 +5780,25 @@ function buildTrackerContent(key){
   if(t.category==='Finance'&&CU.isAdmin&&!isExitedTab&&_activeTrackerSheet&&_activeTrackerSheet!=='Exited'){
     const plat=_activeTrackerSheet;
     const offset=FR_WEEK_OFFSET[plat]||0;
-    const effDate=frEffectiveDate(plat);
-    const effLabel=effDate.toLocaleDateString('en-PH',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
-    const cwNum=getWeekNumber(effDate.toISOString().slice(0,10));
+    // Derive the reporting week from the ACTUAL active column the table highlights,
+    // not from an offset-shifted "effective date". This guarantees the CW shown here
+    // always matches the yellow-highlighted column (previously Lazada's -1 offset made
+    // the banner read CW26 while the highlighted column was CW27).
+    const _activeCi=frActiveColIdx(sh,plat);
+    let cwNum,effLabel;
+    if(_activeCi!==-1){
+      const _hr=sh.headerRows||(sh.row0?[sh.row0,sh.row1].filter(r=>r&&r.length):[[]]);
+      const _top=(_hr[0]||[])[_activeCi]!=null?String((_hr[0]||[])[_activeCi]).trim():'';
+      const _subs=[];for(let ri=1;ri<_hr.length;ri++){const _r=_hr[ri]||[];_subs.push(_r[_activeCi]!=null?String(_r[_activeCi]).trim():'');}
+      const _info=frParseHeaderInfo(plat,_top,_subs);
+      const _due=_info&&_info.dueDate?_info.dueDate:frEffectiveDate(plat);
+      cwNum=getWeekNumber(_due.toISOString().slice(0,10));
+      effLabel=_due.toLocaleDateString('en-PH',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
+    } else {
+      const effDate=frEffectiveDate(plat);
+      cwNum=getWeekNumber(effDate.toISOString().slice(0,10));
+      effLabel=effDate.toLocaleDateString('en-PH',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
+    }
     const offsetLabel=offset===0?'Current week (no offset)':offset===-1?'1 week behind (showing previous week)':offset<0?Math.abs(offset)+' weeks behind':'Ahead by '+offset+' week(s)';
     frWeekBannerHtml='<div style="display:flex;align-items:center;gap:10px;padding:7px 14px;border-bottom:1px solid var(--border);background:#f0f6ff;flex-wrap:wrap">'
       +'<span style="font-size:11px;font-weight:700;color:var(--blue)">📅 Reporting Week:</span>'
@@ -6879,7 +6895,7 @@ const FR_DOW={Lazada:2,Shopee:4,TikTok:4};
 
 // Platform → how many weeks behind the report is (negative = look back N weeks)
 // Lazada is 1 week behind by default. Configurable by admin via frConfig/weekOffsets in Firebase.
-let FR_WEEK_OFFSET={Lazada:-1,Shopee:0,TikTok:0};
+let FR_WEEK_OFFSET={Lazada:0,Shopee:0,TikTok:0};
 
 // Load FR config from Firebase on init
 function loadFRConfig(){
@@ -8327,6 +8343,52 @@ function frSelectAll(trackerKey,sheetKey,chkEl){
   }
 }
 
+// ── Shared active-column resolver ──────────────────────────────────────
+// Returns the sheet column index of the CURRENT (active) reporting column —
+// the exact same column buildFRTable highlights in yellow. Both the table and
+// the mass-update actions MUST use this so they never disagree.
+//
+// Rule (identical to buildFRTable): the active column is the one whose real
+// reporting deadline (dueDate, parsed straight from the header via
+// frParseHeaderInfo) is soonest without having already passed. Fallback: the
+// most recently passed deadline. This is header-driven and needs NO week
+// offset — which is why the old frParseDateHeader/frEffectiveDate logic here
+// (which picked a different, offset-shifted column) caused mass update to
+// write to the wrong week.
+function frActiveColIdx(sheet,platform){
+  if(!sheet)return -1;
+  const headerRows=sheet.headerRows||(sheet.row0?[sheet.row0,sheet.row1].filter(r=>r&&r.length):[[]]);
+  const row0=headerRows[0]||[];
+  const fixedCount=7; // Region, Platform, Account Status, Merchant ID, Brand, Exec, Team Lead
+  const groups=[];
+  for(let ci=fixedCount;ci<row0.length;ci++){
+    const topLabel=row0[ci]!=null?String(row0[ci]).trim():'';
+    const subLabels=[];
+    for(let ri=1;ri<headerRows.length;ri++){
+      const hr=headerRows[ri]||[];
+      subLabels.push(hr[ci]!=null?String(hr[ci]).trim():'');
+    }
+    const entry=frParseHeaderInfo(platform,topLabel,subLabels);
+    groups.push({ci,dueDate:entry&&entry.dueDate?entry.dueDate:null});
+  }
+  const todayMid=new Date(now().getFullYear(),now().getMonth(),now().getDate());
+  let activeIdx=-1,bestDiff=Infinity;
+  groups.forEach(function(dc,i){
+    if(!dc.dueDate)return;
+    const diff=dc.dueDate-todayMid;
+    if(diff>=0&&diff<bestDiff){bestDiff=diff;activeIdx=i;}
+  });
+  if(activeIdx===-1){
+    let minPast=Infinity;
+    groups.forEach(function(dc,i){
+      if(!dc.dueDate)return;
+      const diff=todayMid-dc.dueDate;
+      if(diff>=0&&diff<minPast){minPast=diff;activeIdx=i;}
+    });
+  }
+  return activeIdx===-1?-1:groups[activeIdx].ci;
+}
+
 async function frApplySelToDone(trackerKey,sheetKey){
   const k='_frSel_'+trackerKey+'_'+sheetKey;
   const sel=window[k];
@@ -8334,24 +8396,9 @@ async function frApplySelToDone(trackerKey,sheetKey){
   const t=D.trackers[trackerKey];if(!t)return;
   const sheet=(t.sheets||{})[sheetKey];if(!sheet||!sheet.rows)return;
   const rows=sheet.rows;
-  const headerRows=sheet.headerRows||(sheet.row0?[sheet.row0,sheet.row1].filter(r=>r&&r.length):[[]]);
-  const row0=headerRows[0]||[];
-  // Always use 7 fixed cols for known platforms — avoids blank-cell detection issues
-  let fixedCount=7;
-  // Find active col (same logic)
-  const platform=sheetKey;const todayD=frEffectiveDate(platform);
-  const dateColGroups=[];
-  for(let ci=fixedCount;ci<row0.length;ci++){
-    const topLabel=row0[ci]!=null?String(row0[ci]).trim():'';
-    let parsedDate=frParseDateHeader(topLabel);
-    if(!parsedDate){const allText=[topLabel,...((headerRows[1]||[])[ci]!=null?[String((headerRows[1]||[])[ci])]:[])].join(' ');const dm=allText.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i);if(dm){const MONTHS={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};const mIdx=MONTHS[dm[2].toLowerCase()];if(mIdx!==undefined){const yr=now().getFullYear();parsedDate=new Date(yr,mIdx,parseInt(dm[1]));if(parsedDate-now()>183*86400000)parsedDate=new Date(yr-1,mIdx,parseInt(dm[1]));}}};
-    dateColGroups.push({ci,parsedDate});
-  }
-  let activeIdx=-1,bestDiff=Infinity;
-  dateColGroups.forEach(function(dc,i){if(!dc.parsedDate)return;const diff=todayD-dc.parsedDate;if(diff>=0&&diff<bestDiff){bestDiff=diff;activeIdx=i;}});
-  if(activeIdx===-1){let minF=Infinity;dateColGroups.forEach(function(dc,i){if(!dc.parsedDate)return;const diff=dc.parsedDate-todayD;if(diff>=0&&diff<minF){minF=diff;activeIdx=i;}});}
-  if(activeIdx===-1){toast('Could not determine active column.');return;}
-  const activeColIdx=dateColGroups[activeIdx].ci;
+  // Use the SAME active column the table highlights (see frActiveColIdx).
+  const activeColIdx=frActiveColIdx(sheet,sheetKey);
+  if(activeColIdx===-1){toast('Could not determine active column.');return;}
   const firstName=(CU.name||'').split(' ')[0]||'';
   const ts=ltStamp();
   const path='trackers/'+trackerKey+'/sheets/'+sheetKey;
@@ -8375,28 +8422,9 @@ async function frMassResetToDone(trackerKey,sheetKey,brandFilter){
   const t=D.trackers[trackerKey];if(!t)return;
   const sheet=(t.sheets||{})[sheetKey];if(!sheet||!sheet.rows)return;
   const rows=sheet.rows;
-  const headerRows=sheet.headerRows||(sheet.row0?[sheet.row0,sheet.row1].filter(r=>r&&r.length):[[]]);
-  const row0=headerRows[0]||[];
-  let fixedCount=7; // always 7 fixed cols for Lazada/Shopee/TikTok
-  // Find active date col (same logic as buildFRTable)
-  const platform=sheetKey;
-  const todayD=frEffectiveDate(platform);
-  const dateColGroups=[];
-  for(let ci=fixedCount;ci<row0.length;ci++){
-    const topLabel=row0[ci]!=null?String(row0[ci]).trim():'';
-    let parsedDate=frParseDateHeader(topLabel);
-    if(!parsedDate){
-      const allText=[topLabel,...((headerRows[1]||[])[ci]!=null?[String((headerRows[1]||[])[ci])]:[])].join(' ');
-      const dm=allText.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i);
-      if(dm){const MONTHS={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};const mIdx=MONTHS[dm[2].toLowerCase()];if(mIdx!==undefined){const yr=now().getFullYear();parsedDate=new Date(yr,mIdx,parseInt(dm[1]));if(parsedDate-now()>183*86400000)parsedDate=new Date(yr-1,mIdx,parseInt(dm[1]));}}
-    }
-    dateColGroups.push({ci,parsedDate});
-  }
-  let activeIdx=-1,bestDiff=Infinity;
-  dateColGroups.forEach(function(dc,i){if(!dc.parsedDate)return;const diff=todayD-dc.parsedDate;if(diff>=0&&diff<bestDiff){bestDiff=diff;activeIdx=i;}});
-  if(activeIdx===-1){let minF=Infinity;dateColGroups.forEach(function(dc,i){if(!dc.parsedDate)return;const diff=dc.parsedDate-todayD;if(diff>=0&&diff<minF){minF=diff;activeIdx=i;}});}
-  if(activeIdx===-1){toast('Could not determine active column.');return;}
-  const activeColIdx=dateColGroups[activeIdx].ci;
+  // Use the SAME active column the table highlights (see frActiveColIdx).
+  const activeColIdx=frActiveColIdx(sheet,sheetKey);
+  if(activeColIdx===-1){toast('Could not determine active column.');return;}
   const firstName=(CU.name||'').split(' ')[0]||'';
   const ts=ltStamp();
   const path='trackers/'+trackerKey+'/sheets/'+sheetKey;
