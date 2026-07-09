@@ -6509,7 +6509,9 @@ async function ltUpdateCell(trackerKey,sheetKey,ri,ci,val){
   if(!localSheet.rows[ri])localSheet.rows[ri]=[];
   localSheet.rows[ri][ci]=parsed;
   if(!localSheet.timestamps)localSheet.timestamps={};
-  localSheet.timestamps[ri+'_'+ci]=ts;
+  // Cleared field: drop the timestamp so it reads as a fresh, blank cell (no lingering record)
+  if(parsed===null)delete localSheet.timestamps[ri+'_'+ci];
+  else localSheet.timestamps[ri+'_'+ci]=ts;
 
   // 2. Recompute total row in local data
   const rows=localSheet.rows;
@@ -6541,9 +6543,12 @@ async function ltUpdateCell(trackerKey,sheetKey,ri,ci,val){
     if(td){
       td.style.background=cellBg;
       inp.style.color=cellCol;
-      // Update or add timestamp label
+      // Update, add, or remove timestamp label
       let tsDiv=td.querySelector('.ao-ts');
-      if(ts){
+      if(parsed===null){
+        // Cleared cell → no record should remain
+        if(tsDiv)tsDiv.remove();
+      } else if(ts){
         if(!tsDiv){tsDiv=document.createElement('div');tsDiv.className='ao-ts';tsDiv.style.cssText='font-size:9px;color:var(--text4);line-height:1.2';td.appendChild(tsDiv);}
         tsDiv.textContent=ts;
       }
@@ -6558,7 +6563,7 @@ async function ltUpdateCell(trackerKey,sheetKey,ri,ci,val){
   // 4. Write to Firebase in one update call
   const updates={};
   updates['rows/'+ri+'/'+ci]=parsed;
-  updates['timestamps/'+ri+'_'+ci]=ts;
+  updates['timestamps/'+ri+'_'+ci]=parsed===null?null:ts;
   if(totalRowIdx>=0)updates['rows/'+totalRowIdx+'/'+ci]=colSum;
   await fbUpd(path,updates);
 
@@ -7389,7 +7394,11 @@ function frIsDone(v){
 // Compute completion for one platform sheet
 function frGetSheetCompletion(sheet,platform){
   if(!sheet)return{done:0,total:0,pct:0,regions:{}};
-  const colIdx=frFindActiveCol(sheet,platform);
+  // Use the SAME active-column resolver the Live Tracker table and the mass-update
+  // ("Set Selected to Done") use, so the dashboard reads the exact column that writes
+  // land in. The old frFindActiveCol expected "Apr-21" headers and returned -1 for the
+  // real "Order Report: 02 Jul - 08 Jul" style headers, so Done never registered here.
+  const colIdx=frActiveColIdx(sheet,platform);
   if(colIdx===-1)return{done:0,total:0,pct:0,regions:{}};
   const dataRows=(sheet.rows||[]).filter(function(r){
     if(!r||r[0]==null||!String(r[0]).trim())return false;
@@ -8475,9 +8484,17 @@ async function frUpdateCell(trackerKey,sheetKey,rowIdx,colIdx,val){
   if(!_frLocalSheet.rows[rowIdx])_frLocalSheet.rows[rowIdx]=[];
   _frLocalSheet.rows[rowIdx][colIdx]=parsed;
   if(!_frLocalSheet.frTimestamps)_frLocalSheet.frTimestamps={};
-  _frLocalSheet.frTimestamps[rowIdx+'_'+colIdx]=ts;
-  await fbSet(path+'/rows/'+rowIdx+'/'+colIdx,parsed);
-  await fbSet(path+'/frTimestamps/'+rowIdx+'_'+colIdx,ts);
+  const _frTsKey=rowIdx+'_'+colIdx;
+  if(parsed===null){
+    // Cleared field: remove any prior value + timestamp so it reads as a fresh, blank cell
+    delete _frLocalSheet.frTimestamps[_frTsKey];
+    await fbSet(path+'/rows/'+rowIdx+'/'+colIdx,null);
+    await fbSet(path+'/frTimestamps/'+_frTsKey,null);
+  } else {
+    _frLocalSheet.frTimestamps[_frTsKey]=ts;
+    await fbSet(path+'/rows/'+rowIdx+'/'+colIdx,parsed);
+    await fbSet(path+'/frTimestamps/'+_frTsKey,ts);
+  }
   if(_curPage==='live-trackers'){
     renderLiveTrackers();
     // Restore scroll after re-render
