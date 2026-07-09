@@ -5791,9 +5791,23 @@ function buildTrackerContent(key){
       const _top=(_hr[0]||[])[_activeCi]!=null?String((_hr[0]||[])[_activeCi]).trim():'';
       const _subs=[];for(let ri=1;ri<_hr.length;ri++){const _r=_hr[ri]||[];_subs.push(_r[_activeCi]!=null?String(_r[_activeCi]).trim():'');}
       const _info=frParseHeaderInfo(plat,_top,_subs);
-      const _due=_info&&_info.dueDate?_info.dueDate:frEffectiveDate(plat);
-      cwNum=getWeekNumber(_due.toISOString().slice(0,10));
-      effLabel=_due.toLocaleDateString('en-PH',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
+      // Derive the reporting week from the START of the active column's coverage period
+      // (the earliest date in the header, e.g. Lazada "29 Jun" for the 29 Jun–05 Jul week),
+      // so the CW label matches the week actually being worked rather than the deadline.
+      const _allTxt=[_top,..._subs].join(' ');
+      const _M={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+      let _earliest=null,_mm;
+      const _reRange=/(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/gi;
+      while((_mm=_reRange.exec(_allTxt))){
+        const _mi=_M[_mm[2].toLowerCase().slice(0,3)];
+        if(_mi===undefined)continue;
+        let _d=new Date(now().getFullYear(),_mi,parseInt(_mm[1]));
+        if(_d-now()>183*86400000)_d=new Date(now().getFullYear()-1,_mi,parseInt(_mm[1]));
+        if(!_earliest||_d<_earliest)_earliest=_d;
+      }
+      const _ref=_earliest||(_info&&_info.dueDate?_info.dueDate:frEffectiveDate(plat));
+      cwNum=getWeekNumber(_ref.toISOString().slice(0,10));
+      effLabel=(_info&&_info.shortLabel)?_info.shortLabel:_ref.toLocaleDateString('en-PH',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
     } else {
       const effDate=frEffectiveDate(plat);
       cwNum=getWeekNumber(effDate.toISOString().slice(0,10));
@@ -5803,7 +5817,7 @@ function buildTrackerContent(key){
     frWeekBannerHtml='<div style="display:flex;align-items:center;gap:10px;padding:7px 14px;border-bottom:1px solid var(--border);background:#f0f6ff;flex-wrap:wrap">'
       +'<span style="font-size:11px;font-weight:700;color:var(--blue)">📅 Reporting Week:</span>'
       +'<span style="font-size:13px;font-weight:800;color:var(--blue);background:var(--blue-light);padding:2px 10px;border-radius:20px;border:1px solid var(--blue-mid)">CW'+cwNum+'</span>'
-      +'<span style="font-size:11px;color:var(--text2)">Active column = <b>'+plat+'</b> due date on or before <b>'+effLabel+'</b></span>'
+      +'<span style="font-size:11px;color:var(--text2)">Active column = <b>'+plat+'</b> — coverage <b>'+effLabel+'</b></span>'
       +'<span style="font-size:10px;color:var(--text3);padding:2px 8px;border-radius:20px;background:#dbeafe">'+offsetLabel+'</span>'
       +'<div style="margin-left:auto;display:flex;align-items:center;gap:6px">'
         +'<span style="font-size:11px;color:var(--text3)">Week offset (admin):</span>'
@@ -6895,7 +6909,7 @@ const FR_DOW={Lazada:2,Shopee:4,TikTok:4};
 
 // Platform → how many weeks behind the report is (negative = look back N weeks)
 // Lazada is 1 week behind by default. Configurable by admin via frConfig/weekOffsets in Firebase.
-let FR_WEEK_OFFSET={Lazada:0,Shopee:0,TikTok:0};
+let FR_WEEK_OFFSET={Lazada:-1,Shopee:0,TikTok:0};
 
 // Load FR config from Firebase on init
 function loadFRConfig(){
@@ -7602,27 +7616,12 @@ function buildFRTable(trackerKey,sheetKey,sheet){
   }
 
   // ── Mark active/past/future ──
-  // The active column is the one whose real deadline (dueDate, parsed straight
-  // from the header) is soonest without having already passed — i.e. today's
-  // or the next upcoming due date. This naturally gives Lazada (reports on a
-  // 1-week lag) last week's column when it's due today, while giving
-  // Shopee/TikTok (no lag) this week's column ahead of Thursday's due date —
-  // all without needing a manually-maintained week-offset setting.
-  const todayMid=new Date(now().getFullYear(),now().getMonth(),now().getDate());
-  let activeIdx=-1,bestDiff=Infinity;
-  dateColGroups.forEach(function(dc,i){
-    if(!dc.dueDate)return;
-    const diff=dc.dueDate-todayMid;
-    if(diff>=0&&diff<bestDiff){bestDiff=diff;activeIdx=i;}
-  });
-  if(activeIdx===-1){
-    let minPast=Infinity;
-    dateColGroups.forEach(function(dc,i){
-      if(!dc.dueDate)return;
-      const diff=todayMid-dc.dueDate;
-      if(diff>=0&&diff<minPast){minPast=diff;activeIdx=i;}
-    });
-  }
+  // Use the shared resolver so the highlighted column, the reporting-week banner,
+  // and the mass-update actions always agree. frActiveColIdx applies the platform's
+  // week offset (Lazada = -1, reporting on a one-week lag; Shopee/TikTok = 0).
+  const _activeCiTbl=frActiveColIdx(sheet,platform);
+  let activeIdx=-1;
+  dateColGroups.forEach(function(dc,i){if(dc.ci===_activeCiTbl)activeIdx=i;});
   dateColGroups.forEach(function(dc,i){
     if(i===activeIdx)dc.isActive=true;
     else if(activeIdx>=0&&i<activeIdx)dc.isPast=true;
@@ -8371,7 +8370,16 @@ function frActiveColIdx(sheet,platform){
     const entry=frParseHeaderInfo(platform,topLabel,subLabels);
     groups.push({ci,dueDate:entry&&entry.dueDate?entry.dueDate:null});
   }
-  const todayMid=new Date(now().getFullYear(),now().getMonth(),now().getDate());
+  // Reference date = today shifted by the platform's week offset. Shopee/TikTok use 0
+  // (they report the current week, whose deadline is this Thursday). Lazada reports on a
+  // one-week lag: the week actively being worked (e.g. 29 Jun–05 Jul) already has a past
+  // deadline (06 Jul) by the time it's being filled, so a pure "soonest deadline ≥ today"
+  // rule would skip ahead to next week. The -1 offset pulls the reference back one week so
+  // the lagged current column is selected. This keeps the highlight, the banner, and the
+  // mass-update all landing on the same column.
+  const _off=(typeof FR_WEEK_OFFSET!=='undefined'&&FR_WEEK_OFFSET[platform])?FR_WEEK_OFFSET[platform]:0;
+  const _ref=new Date(now());_ref.setDate(_ref.getDate()+_off*7);
+  const todayMid=new Date(_ref.getFullYear(),_ref.getMonth(),_ref.getDate());
   let activeIdx=-1,bestDiff=Infinity;
   groups.forEach(function(dc,i){
     if(!dc.dueDate)return;
