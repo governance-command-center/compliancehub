@@ -8423,23 +8423,32 @@ function frActiveColIdx(sheet,platform){
     const entry=frParseHeaderInfo(platform,topLabel,subLabels);
     groups.push({ci,dueDate:entry&&entry.dueDate?entry.dueDate:null});
   }
-  // Reference date = today shifted by the platform's week offset. Shopee/TikTok use 0
-  // (they report the current week, whose deadline is this Thursday). Lazada reports on a
-  // one-week lag: the week actively being worked (e.g. 29 Jun–05 Jul) already has a past
-  // deadline (06 Jul) by the time it's being filled, so a pure "soonest deadline ≥ today"
-  // rule would skip ahead to next week. The -1 offset pulls the reference back one week so
-  // the lagged current column is selected. This keeps the highlight, the banner, and the
-  // mass-update all landing on the same column.
-  const _off=(typeof FR_WEEK_OFFSET!=='undefined'&&FR_WEEK_OFFSET[platform])?FR_WEEK_OFFSET[platform]:0;
-  const _ref=new Date(now());_ref.setDate(_ref.getDate()+_off*7);
-  const todayMid=new Date(_ref.getFullYear(),_ref.getMonth(),_ref.getDate());
+  const todayMid=new Date(now().getFullYear(),now().getMonth(),now().getDate());
+  // ── Reporting grace window ──
+  // A reporting week does NOT stop being "active" the instant its deadline day ends. People
+  // keep filling in that week's column for the days between its deadline and the next deadline.
+  // The old rule ("soonest due date >= today") flipped the active column to the next, still-empty
+  // week the day AFTER the deadline — so the dashboard read 0/N while the FR tracker page still
+  // showed the just-completed week's real numbers (the dashboard 0/3 vs table 1/3 discrepancy on
+  // Shopee/TikTok). Selecting the soonest due date that is >= (today - grace) instead keeps the
+  // current working column active through its whole reporting cycle. A 6-day grace spans one
+  // weekly cycle, so the just-passed column stays active right up until the next deadline arrives.
+  // This is applied UNIFORMLY to every platform, so the previous per-platform FR_WEEK_OFFSET hack
+  // (Lazada -1) is no longer needed to keep the current column selected — every platform now stays
+  // on its current column all week. FR_WEEK_OFFSET is still used elsewhere purely for CW/date
+  // LABELS (see frEffectiveDate); only the active-column selection is decoupled from it here.
+  const FR_GRACE_DAYS=6;
+  const graceMid=new Date(todayMid.getFullYear(),todayMid.getMonth(),todayMid.getDate()-FR_GRACE_DAYS);
   let activeIdx=-1,bestDiff=Infinity;
   groups.forEach(function(dc,i){
     if(!dc.dueDate)return;
-    const diff=dc.dueDate-todayMid;
+    // Eligible = deadline at/after the start of the current cycle (today - grace). Among those,
+    // pick the SOONEST deadline — i.e. the just-passed or upcoming deadline for this cycle.
+    const diff=dc.dueDate-graceMid;
     if(diff>=0&&diff<bestDiff){bestDiff=diff;activeIdx=i;}
   });
   if(activeIdx===-1){
+    // Nothing at/after the cycle start — fall back to the most recent past deadline.
     let minPast=Infinity;
     groups.forEach(function(dc,i){
       if(!dc.dueDate)return;
