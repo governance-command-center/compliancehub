@@ -4625,11 +4625,92 @@ function checkOverdueAndBroadcast(){
 // Auto-log a non-compliance incident once a task (including AO/FR-linked live tracker tasks)
 // passes its admin-set deadline without being completed. Skipped entirely if an approved
 // extension is currently covering this task/date — extended tasks are never non-compliance.
+// Returns the specific AO tracker rows that were NOT filled in for a given date.
+// Each entry carries the brand, region (sheet key), CDM and Team Lead straight from
+// the tracker row, so a non-compliance incident can name exactly what was missed.
+// Col 0 = Brand, col 2 = CDM, col 3 = Team Lead (see buildAOTable).
+function aoGetUnfilledRows(date){
+  const out=[];
+  const linkedEntry=Object.entries(D.trackers||{}).find(function(e){return e[1]&&e[1].aoLinked;});
+  if(!linkedEntry)return out;
+  const trackerKey=linkedEntry[0],linked=linkedEntry[1];
+  const AO_SHEETS=['MY','SG','TH','VN'];
+  AO_SHEETS.forEach(function(key){
+    const sh=linked.sheets&&linked.sheets[key];
+    if(!sh)return;
+    const row0=sh.row0||[];
+    const row1=sh.row1||[];
+    const dateCols=aoFindDateCols(row0,date,row1);
+    if(!dateCols.length)return;
+    const liveSheet=(D.trackers[trackerKey]||{}).sheets;
+    const liveRows=liveSheet&&liveSheet[key]&&liveSheet[key].rows?liveSheet[key].rows:(sh.rows||[]);
+    liveRows.forEach(function(row,ri){
+      if(!row||row[0]==null||!String(row[0]).trim())return;
+      if(String(row[0]).toUpperCase()==='TOTAL')return;
+      const filled=dateCols.some(function(ci){
+        const v=row[ci];
+        return v!==null&&v!==undefined&&String(v).trim()!==''&&String(v).toUpperCase()!=='OFF';
+      });
+      if(filled)return;
+      out.push({
+        brand:String(row[0]).trim(),
+        region:key,
+        cdm:row[2]!=null?String(row[2]).trim():'',
+        cdmTL:row[3]!=null?String(row[3]).trim():'',
+        rowIndex:ri
+      });
+    });
+  });
+  return out;
+}
+
 function logNonComplianceIncident(t,date){
   if(getApprovedExt(t.id,date))return;
+  const platform=t.aoLinked?'Abnormal Orders':t.frLinked?(frGetPlatform(t)||'Finance Report'):'';
+
+  // AO-linked tasks: log one incident per tracker row left unfilled, so the
+  // incident names the exact brand/region/CDM instead of a blanket member list.
+  if(t.aoLinked){
+    const missed=aoGetUnfilledRows(date);
+    missed.forEach(function(r){
+      const ncKey='gh_nc_'+t.id+'_'+date+'_'+r.region+'_'+r.rowIndex;
+      if(localStorage.getItem(ncKey))return;
+      localStorage.setItem(ncKey,'1');
+      const m=(D.members||[]).find(function(x){return x.name===r.cdm;})||{};
+      const tagged=m.username?[m.username]:[];
+      const responses={};tagged.forEach(function(u){responses[u]={action:'Pending'};});
+      fbPush('incidents',{
+        title:'Non-Compliance: '+t.title,
+        incidentType:'Compliance',
+        classification:'Non-Compliance',
+        category:'Compliance',
+        incidentDate:date,
+        date:date,
+        severity:'Medium',
+        region:r.region,
+        brand:r.brand,
+        platform:platform,
+        cdm:r.cdm,
+        cdmTL:r.cdmTL||(m.reportsTo?getMN(m.reportsTo):''),
+        issue:'Non-compliance — failure to update the Abnormal Orders tracker for '+r.brand+' ('+r.region+') on time.',
+        description:'"'+t.title+'" was not updated for '+r.brand+' ('+r.region+') by the '+t.deadline+' deadline.',
+        remarks:'Auto-logged by system after '+t.deadline+' deadline.',
+        reportedBy:'System',
+        tagged:tagged,
+        assignees:tagged,
+        responses:responses,
+        status:'Open',
+        _autoNonCompliance:true,
+        _taskId:t.id,
+        ts:Date.now()
+      });
+    });
+    return;
+  }
+
+  // Non-AO tasks: fall back to one incident per pending assignee.
   const pending=(t.assignees||[]).filter(function(u){return(getMemberStatus(t.id,date,u)||'Pending')!=='Done';});
-  const kind=t.aoLinked?'Abnormal Orders (AO) tracking'
-           :t.frLinked?'Finance Report (FR) submission':t.title;
+  const kind=t.frLinked?'Finance Report (FR) submission':t.title;
   pending.forEach(function(u){
     const ncKey='gh_nc_'+t.id+'_'+date+'_'+u;
     if(localStorage.getItem(ncKey))return;
@@ -4644,12 +4725,13 @@ function logNonComplianceIncident(t,date){
       incidentDate:date,
       date:date,
       severity:'Medium',
+      region:m.region||'',
+      platform:platform,
       cdm:getMN(u),
       cdmTL:m.reportsTo?getMN(m.reportsTo):'',
-      region:m.region||'',
-      issue:'Non-compliance — '+kind+' not completed by deadline ('+t.deadline+').',
-      description:'"'+t.title+'" was not marked Done by '+t.deadline+'.',
-      remarks:'Auto-logged by system at '+t.deadline+'.',
+      issue:'Non-compliance — failure to complete '+kind+' on time.',
+      description:'"'+t.title+'" was not marked Done by the '+t.deadline+' deadline.',
+      remarks:'Auto-logged by system after '+t.deadline+' deadline.',
       reportedBy:'System',
       tagged:[u],
       assignees:[u],
@@ -4689,10 +4771,10 @@ function checkLeadTaskOverdue(){
           incidentDate:date,
           date:date,
           severity:'Medium',
+          region:m.region||'',
           cdm:getMN(u),
           cdmTL:CU.name,
-          region:m.region||'',
-          issue:'Non-compliance — "'+t.title+'" not completed by deadline ('+t.deadline+').',
+          issue:'Non-compliance — failure to complete "'+t.title+'" on time.',
           description:'Task "'+t.title+'" passed its deadline ('+t.deadline+') without completion.',
           remarks:'Auto-escalated by '+CU.name+'.',
           reportedBy:CU.name,
