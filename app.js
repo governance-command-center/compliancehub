@@ -1747,6 +1747,10 @@ function renderTasks(){
         actionCell='<span style="color:var(--teal);font-weight:600;font-size:11px">&#10003; Extended to '+extRec.proposedDate+' '+extRec.proposedTime+'</span>';
       } else if(extRec&&extRec.status==='Pending'){
         actionCell='<span style="color:var(--text3);font-size:11px">&#9203; Extension Pending</span>';
+      } else if(isOv){
+        // Deadline passed with no approved extension — requests are closed and the
+        // miss is auto-flagged, so don't offer a button that will just be rejected.
+        actionCell='<span style="color:var(--red);font-size:11px;font-weight:600">Extension window closed</span>';
       } else {
         actionCell='<button class="btn sm teal" onclick="openExtRequestModal('+t.id+',\''+todayDate+'\')">Request Extension</button>';
       }
@@ -2303,6 +2307,12 @@ function openExtRequestModal(tid,date){
   if(myStat==='Done'){toast('This task is already marked Done — no extension needed');return;}
   const existing=Object.values(D.extRequests||{}).find(function(r){return r.taskId==tid&&r.date===date&&r.memberUsername===CU.username&&r.status==='Pending';});
   if(existing){toast('You already have a pending extension request for this task');return;}
+  // Extensions must be requested ON OR BEFORE the deadline. Once the deadline has passed
+  // the task is auto-flagged as non-compliance, so a late request cannot undo it.
+  if(isOverdue(task,date)){
+    toast('Deadline has already passed — extensions must be requested before the deadline. This is now auto-flagged as non-compliance.');
+    return;
+  }
   document.getElementById('mne-body').innerHTML=`
     <p style="font-size:13px;font-weight:600;margin-bottom:2px">${task.title}</p>
     <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Current deadline: ${task.deadline||'—'}</p>
@@ -2319,7 +2329,24 @@ function openExtRequestModal(tid,date){
 async function submitExtRequest(tid,date,u){
   const reason=document.getElementById('ne-reason')?.value.trim();if(!reason){toast('Reason required');return;}
   const task=(D.tasks.find(t=>t.id==tid))||(D.leadTasks||[]).find(t=>t.id==tid)||{};
-  await fbPush('extRequests',{taskId:tid,taskTitle:task?.title||'',memberUsername:u,memberName:getMN(u),reason,proposedDate:document.getElementById('ne-date')?.value,proposedTime:document.getElementById('ne-time')?.value.trim(),date,status:'Pending',ts:Date.now()});
+  // Enforce the before-deadline rule here too — this covers the status-modal entry point
+  // and guards against the modal being left open until after the deadline passes.
+  if(task.id&&isOverdue(task,date)){
+    toast('Deadline has already passed — extensions must be requested before the deadline.');
+    closeModal('modal-ne');
+    return;
+  }
+  // The proposed new deadline must be in the future, otherwise the extension grants nothing.
+  const _pd=document.getElementById('ne-date')?.value;
+  const _pt=document.getElementById('ne-time')?.value.trim();
+  if(!_pd){toast('Proposed date required');return;}
+  const _hm=parseTimeStr(_pt);
+  if(_pt&&!_hm){toast('Proposed time not recognised — use a format like 7:00 PM');return;}
+  const _n=now();
+  const _propose=new Date(_pd+'T00:00:00');
+  _propose.setHours(_hm?_hm[0]:23,_hm?_hm[1]:59,0,0);
+  if(_propose<=_n){toast('Proposed new deadline must be later than right now');return;}
+  await fbPush('extRequests',{taskId:tid,taskTitle:task?.title||'',memberUsername:u,memberName:getMN(u),reason,proposedDate:_pd,proposedTime:_pt,date,status:'Pending',ts:Date.now()});
   const k=sKey(tid,date),cur=D.statuses[k]||{};
   const mems={...(cur.members||{}),[u]:'Needs Extension'};
   const task2=(D.tasks.find(t=>t.id==tid))||(D.leadTasks||[]).find(t=>t.id==tid);
@@ -4676,8 +4703,19 @@ function logNonComplianceIncident(t,date){
       const ncKey='gh_nc_'+t.id+'_'+date+'_'+r.region+'_'+r.rowIndex;
       if(localStorage.getItem(ncKey))return;
       localStorage.setItem(ncKey,'1');
-      const m=(D.members||[]).find(function(x){return x.name===r.cdm;})||{};
-      const tagged=m.username?[m.username]:[];
+      const m=(D.members||[]).find(function(x){return x.name===r.cdm;});
+      // If the tracker's CDM name doesn't match a registered member (blank cell, typo,
+      // ex-member), fall back to the task's own assignees so the incident still notifies
+      // someone instead of logging untagged and reaching nobody.
+      let tagged,cdmName,unmatched=false;
+      if(m&&m.username){
+        tagged=[m.username];
+        cdmName=m.name;
+      } else {
+        unmatched=true;
+        tagged=(t.assignees||[]).slice();
+        cdmName=r.cdm||(tagged.map(getMN).join(', ')||'Unassigned');
+      }
       const responses={};tagged.forEach(function(u){responses[u]={action:'Pending'};});
       fbPush('incidents',{
         title:'Non-Compliance: '+t.title,
@@ -4690,11 +4728,13 @@ function logNonComplianceIncident(t,date){
         region:r.region,
         brand:r.brand,
         platform:platform,
-        cdm:r.cdm,
-        cdmTL:r.cdmTL||(m.reportsTo?getMN(m.reportsTo):''),
+        cdm:cdmName,
+        cdmTL:r.cdmTL||(m&&m.reportsTo?getMN(m.reportsTo):''),
         issue:'Non-compliance — failure to update the Abnormal Orders tracker for '+r.brand+' ('+r.region+') on time.',
         description:'"'+t.title+'" was not updated for '+r.brand+' ('+r.region+') by the '+t.deadline+' deadline.',
-        remarks:'Auto-logged by system after '+t.deadline+' deadline.',
+        remarks:unmatched
+          ?('Auto-logged by system after '+t.deadline+' deadline. Tracker CDM "'+(r.cdm||'blank')+'" did not match a registered member — tagged to task assignees.')
+          :('Auto-logged by system after '+t.deadline+' deadline.'),
         reportedBy:'System',
         tagged:tagged,
         assignees:tagged,
@@ -7879,7 +7919,13 @@ function buildFRTable(trackerKey,sheetKey,sheet){
       var _platLag = (typeof FR_WEEK_OFFSET !== 'undefined' && FR_WEEK_OFFSET[platform]) ? FR_WEEK_OFFSET[platform] : 0;
       var _anchor = new Date(now().getFullYear(), now().getMonth(), now().getDate());
       _anchor.setDate(_anchor.getDate() + _platLag*7);
-      for (var _g=0; _g<7; _g++){ if(_anchor.getDay()===_dueDow) break; _anchor.setDate(_anchor.getDate()+1); }
+      // Snap to THIS week's due day. The week is treated as Mon–Sun, so we step back to
+      // Monday and then forward to the due day-of-week. Snapping forward only (the old
+      // behaviour) skipped to next week's date as soon as the due day had passed — e.g. on
+      // Fri Jul 24 a Thursday-due platform showed Jul 30 instead of the current week's Jul 23.
+      var _dowMon = (_anchor.getDay() + 6) % 7;                 // Mon=0 … Sun=6
+      _anchor.setDate(_anchor.getDate() - _dowMon);             // back to Monday of this week
+      _anchor.setDate(_anchor.getDate() + ((_dueDow + 6) % 7)); // forward to due day, same week
       _anchor.setDate(_anchor.getDate() + dc.weekOffset*7);
       reportDateStr = MONTHS_STR[_anchor.getMonth()] + ' ' + _anchor.getDate();
     } else if (entry && entry.rows) {
