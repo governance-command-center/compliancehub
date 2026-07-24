@@ -4627,27 +4627,38 @@ function checkOverdueAndBroadcast(){
 // extension is currently covering this task/date — extended tasks are never non-compliance.
 function logNonComplianceIncident(t,date){
   if(getApprovedExt(t.id,date))return;
-  const ncKey='gh_nc_'+t.id+'_'+date;
-  if(localStorage.getItem(ncKey))return;
-  localStorage.setItem(ncKey,'1');
   const pending=(t.assignees||[]).filter(function(u){return(getMemberStatus(t.id,date,u)||'Pending')!=='Done';});
-  const kind=t.aoLinked?'Abnormal Orders (AO) tracker':t.frLinked?'Finance Report (FR) tracker':'task';
-  fbPush('incidents',{
-    title:'⏱ Non-Compliance: '+t.title,
-    incidentType:'Compliance',
-    incidentDate:date,date,
-    severity:'Medium',
-    category:'Compliance',
-    description:'The "'+t.title+'" '+kind+' was not completed by its deadline ('+t.deadline+').',
-    issue:'Pending: '+(pending.map(getMN).join(', ')||'Not yet completed'),
-    reportedBy:'System',
-    tagged:pending,
-    assignees:t.assignees||[],
-    responses:{},
-    status:'Open',
-    _autoNonCompliance:true,
-    _taskId:t.id,
-    ts:Date.now()
+  const kind=t.aoLinked?'Abnormal Orders (AO) tracking'
+           :t.frLinked?'Finance Report (FR) submission':t.title;
+  pending.forEach(function(u){
+    const ncKey='gh_nc_'+t.id+'_'+date+'_'+u;
+    if(localStorage.getItem(ncKey))return;
+    localStorage.setItem(ncKey,'1');
+    const m=(D.members||[]).find(function(x){return x.username===u;})||{};
+    const responses={};responses[u]={action:'Pending'};
+    fbPush('incidents',{
+      title:'Non-Compliance: '+t.title,
+      incidentType:'Compliance',
+      classification:'Non-Compliance',
+      category:'Compliance',
+      incidentDate:date,
+      date:date,
+      severity:'Medium',
+      cdm:getMN(u),
+      cdmTL:m.reportsTo?getMN(m.reportsTo):'',
+      region:m.region||'',
+      issue:'Non-compliance — '+kind+' not completed by deadline ('+t.deadline+').',
+      description:'"'+t.title+'" was not marked Done by '+t.deadline+'.',
+      remarks:'Auto-logged by system at '+t.deadline+'.',
+      reportedBy:'System',
+      tagged:[u],
+      assignees:[u],
+      responses:responses,
+      status:'Open',
+      _autoNonCompliance:true,
+      _taskId:t.id,
+      ts:Date.now()
+    });
   });
 }
 
@@ -4661,31 +4672,40 @@ function checkLeadTaskOverdue(){
     if(ov==='Done')return;
     // Not late yet, or an approved extension has moved the deadline — no non-compliance
     if(isOverdue(t,date)){
-      const escKey='gh_ltesc_'+t.id+'_'+date;
-      if(localStorage.getItem(escKey))return;
-      localStorage.setItem(escKey,'1');
-      // Push a lead-task-escalation incident into the shared incidents path
-      // but flagged as _leadTaskEsc so only the lead sees it by default
+      // Push one lead-task-escalation incident per pending member into the shared
+      // incidents path, flagged as _leadTaskEsc so only the lead sees it by default
       const pending=(t.assignees||[]).filter(u=>(getMemberStatus(t.id,date,u)||'Pending')!=='Done');
-      fbPush('incidents',{
-        title:'⏱ Overdue Task: '+t.title,
-        incidentType:'Lead Task Non-Compliance',
-        incidentDate:date,date,
-        severity:'Medium',
-        category:'Others',
-        description:'Task "'+t.title+'" passed its deadline ('+t.deadline+') without full completion.',
-        issue:'Pending members: '+(pending.map(getMN).join(', ')||'Unknown'),
-        reportedBy:CU.name,
-        cdmTL:CU.name,
-        tagged:pending,          // members who are pending = notified
-        assignees:t.assignees||[], // all assignees of the task
-        responses:{},
-        status:'Open',
-        _leadTaskEsc:true,         // marks this as a lead-private escalation
-        _leadOwner:CU.username,    // only visible to this lead by default
-        _govEscalated:false,       // becomes true when lead hits "Escalate to Governance"
-        _taskId:t.id,
-        ts:Date.now()
+      pending.forEach(function(u){
+        const escKey='gh_ltesc_'+t.id+'_'+date+'_'+u;
+        if(localStorage.getItem(escKey))return;
+        localStorage.setItem(escKey,'1');
+        const m=(D.members||[]).find(function(x){return x.username===u;})||{};
+        const responses={};responses[u]={action:'Pending'};
+        fbPush('incidents',{
+          title:'Overdue Task: '+t.title,
+          incidentType:'Lead Task Non-Compliance',
+          classification:'Non-Compliance',
+          category:'Others',
+          incidentDate:date,
+          date:date,
+          severity:'Medium',
+          cdm:getMN(u),
+          cdmTL:CU.name,
+          region:m.region||'',
+          issue:'Non-compliance — "'+t.title+'" not completed by deadline ('+t.deadline+').',
+          description:'Task "'+t.title+'" passed its deadline ('+t.deadline+') without completion.',
+          remarks:'Auto-escalated by '+CU.name+'.',
+          reportedBy:CU.name,
+          tagged:[u],
+          assignees:[u],
+          responses:responses,
+          status:'Open',
+          _leadTaskEsc:true,         // marks this as a lead-private escalation
+          _leadOwner:CU.username,    // only visible to this lead by default
+          _govEscalated:false,       // becomes true when lead hits "Escalate to Governance"
+          _taskId:t.id,
+          ts:Date.now()
+        });
       });
     }
   });
