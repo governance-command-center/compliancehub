@@ -7814,21 +7814,45 @@ function buildFRTable(trackerKey,sheetKey,sheet){
     }
   })();
 
-  // ── Limit visible columns: show from May 1 monthly report onward + all future ──
-  // Columns before May 1 of the current year are hidden (those are the "old dates" to remove).
-  // Past columns from May 1 onward are all kept so the full history is visible.
+  // ── Limit visible columns: rolling window anchored on the active (current) week ──
+  // The Finance tab shows exactly the weeks that matter right now, keyed off each column's
+  // own Report Date via the weekOffset computed above (0 = current/active week, -1 = last
+  // week, +1..+3 = the next three weeks). That yields five weekly columns in view:
+  //   last week + current week + next 3 weeks.
+  // Older weeks (offset <= -2) and anything further out than +3 are hidden — they still exist
+  // in the data and simply scroll back into view as time advances and the active column rolls
+  // forward. Monthly columns (weekOffset === null) don't consume a weekly slot; a monthly
+  // column is kept only when its own date falls inside the date span of the visible weekly
+  // window, so e.g. an Aug-1 monthly report shows alongside the late-July/early-Aug weeks.
+  const FR_WIN_PAST=1;    // how many past weeks to show (1 = last week)
+  const FR_WIN_FUTURE=3;  // how many future weeks to show (next 3)
   (function(){
     if(activeIdx===-1)return; // no active col found — show all
-    const MAY1=new Date(now().getFullYear(),4,1); // May 1 current year
-    const futureCols=dateColGroups.filter(function(dc){return dc.isFuture;});
-    // Keep all past/active cols whose parsed date is >= May 1 (or has no parsed date = keep it)
-    const visibleSet=new Set(
-      dateColGroups
-        .filter(function(dc){ return !dc.parsedDate || dc.parsedDate >= MAY1; })
-        .map(function(dc){return dc.ci;})
-    );
-    // Always include future cols
-    futureCols.forEach(function(dc){visibleSet.add(dc.ci);});
+    // Weekly columns inside the window.
+    const weeklyKept=dateColGroups.filter(function(dc){
+      return dc.weekOffset!==null && dc.weekOffset!==undefined
+        && dc.weekOffset>=-FR_WIN_PAST && dc.weekOffset<=FR_WIN_FUTURE;
+    });
+    const visibleSet=new Set(weeklyKept.map(function(dc){return dc.ci;}));
+    // Date span covered by the visible weekly columns (used to place monthly columns).
+    let spanMin=null,spanMax=null;
+    weeklyKept.forEach(function(dc){
+      if(!dc.parsedDate)return;
+      if(spanMin===null||dc.parsedDate<spanMin)spanMin=dc.parsedDate;
+      if(spanMax===null||dc.parsedDate>spanMax)spanMax=dc.parsedDate;
+    });
+    // Keep a monthly column when its date sits within the visible weekly span (inclusive),
+    // so the headline monthly report rides along with the weeks it belongs to.
+    dateColGroups.forEach(function(dc){
+      if(!(dc.weekOffset===null||dc.weekOffset===undefined))return; // weekly cols handled above
+      if(!dc.isMonthlyCol)return;
+      if(!dc.parsedDate){ if(dc.isActive)visibleSet.add(dc.ci); return; }
+      if(spanMin!==null&&spanMax!==null&&dc.parsedDate>=spanMin&&dc.parsedDate<=spanMax){
+        visibleSet.add(dc.ci);
+      }
+    });
+    // Always keep the active column itself, whatever its type.
+    dateColGroups.forEach(function(dc){ if(dc.isActive)visibleSet.add(dc.ci); });
     for(let i=dateColGroups.length-1;i>=0;i--){
       if(!visibleSet.has(dateColGroups[i].ci))dateColGroups.splice(i,1);
     }
