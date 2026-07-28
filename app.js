@@ -5861,11 +5861,19 @@ function buildTrackerContent(key){
   const allNames=Object.keys(sheets);
   // Respect saved tab order if present
   const savedOrder=t.tabOrder&&Array.isArray(t.tabOrder)?t.tabOrder:[];
-  const names=savedOrder.length
+  let names=savedOrder.length
     ?[...savedOrder.filter(n=>sheets[n]),...allNames.filter(n=>!savedOrder.includes(n))]
-    :allNames;
+    :allNames.slice();
+  // Finance trackers always show the "Exited" tab, even before any brand has exited,
+  // so users always know where exited/inactive brands are listed. It is pinned last.
+  if(t.category==='Finance'){
+    names=names.filter(n=>n!=='Exited');
+    names.push('Exited');
+  }
   if(!names.length)return'<div class="empty-state" style="padding:40px">No sheets in this tracker.</div>';
-  if(!_activeTrackerSheet||!sheets[_activeTrackerSheet])_activeTrackerSheet=names[0];
+  // "Exited" is a valid tab for Finance trackers even when its backing sheet does not exist yet.
+  const _exitedVirtual=t.category==='Finance'&&_activeTrackerSheet==='Exited';
+  if(!_activeTrackerSheet||(!sheets[_activeTrackerSheet]&&!_exitedVirtual))_activeTrackerSheet=names[0];
   const sh=sheets[_activeTrackerSheet];
   const isFin=t.category==='Finance';
   const isAdm=CU.isAdmin;
@@ -7916,18 +7924,35 @@ function buildFRTable(trackerKey,sheetKey,sheet){
         reportDateStr = MONTHS_STR[_md.getMonth()] + ' ' + _md.getDate();
       }
     } else if (dc.weekOffset !== null && dc.weekOffset !== undefined) {
-      var _platLag = (typeof FR_WEEK_OFFSET !== 'undefined' && FR_WEEK_OFFSET[platform]) ? FR_WEEK_OFFSET[platform] : 0;
-      var _anchor = new Date(now().getFullYear(), now().getMonth(), now().getDate());
-      _anchor.setDate(_anchor.getDate() + _platLag*7);
-      // Snap to THIS week's due day. The week is treated as Mon–Sun, so we step back to
-      // Monday and then forward to the due day-of-week. Snapping forward only (the old
-      // behaviour) skipped to next week's date as soon as the due day had passed — e.g. on
-      // Fri Jul 24 a Thursday-due platform showed Jul 30 instead of the current week's Jul 23.
-      var _dowMon = (_anchor.getDay() + 6) % 7;                 // Mon=0 … Sun=6
-      _anchor.setDate(_anchor.getDate() - _dowMon);             // back to Monday of this week
-      _anchor.setDate(_anchor.getDate() + ((_dueDow + 6) % 7)); // forward to due day, same week
-      _anchor.setDate(_anchor.getDate() + dc.weekOffset*7);
-      reportDateStr = MONTHS_STR[_anchor.getMonth()] + ' ' + _anchor.getDate();
+      // ── Report Date is derived from THIS column's own coverage window ──
+      // The report is due on the platform's due day-of-week (Lazada=Tue, Shopee/TikTok=Thu)
+      // on or immediately after the latest date the column covers. Reading the date straight
+      // from each column (instead of anchoring on "today" and counting week slots) makes every
+      // column self-correct and stay aligned to its real coverage:
+      //   • Lazada  Transaction 20–26 Jul (Withdrawal 27 Jul) → Tue 28 Jul
+      //   • Lazada  Transaction 27 Jul–02 Aug (Withdrawal 03 Aug) → Tue 04 Aug
+      //   • Shopee  Income 22–28 Jul / SW & Order 23–29 Jul → Thu 30 Jul
+      var _snapOnOrAfter = function (date, dow) {
+        var d = new Date(date.getTime());
+        for (var i = 0; i < 8; i++) { if (d.getDay() === dow) return d; d.setDate(d.getDate() + 1); }
+        return d;
+      };
+      var _cov = (dc.entry && dc.entry.latestDate) ? dc.entry.latestDate
+               : (entry && entry.latestDate) ? entry.latestDate : null;
+      if (_cov) {
+        var _rd = _snapOnOrAfter(new Date(_cov.getFullYear(), _cov.getMonth(), _cov.getDate()), _dueDow);
+        reportDateStr = MONTHS_STR[_rd.getMonth()] + ' ' + _rd.getDate();
+      } else {
+        // Fallback: no parseable coverage date on this column — anchor on today + week slot.
+        var _platLag = (typeof FR_WEEK_OFFSET !== 'undefined' && FR_WEEK_OFFSET[platform]) ? FR_WEEK_OFFSET[platform] : 0;
+        var _anchor = new Date(now().getFullYear(), now().getMonth(), now().getDate());
+        _anchor.setDate(_anchor.getDate() + _platLag*7);
+        var _dowMon = (_anchor.getDay() + 6) % 7;                 // Mon=0 … Sun=6
+        _anchor.setDate(_anchor.getDate() - _dowMon);             // back to Monday of this week
+        _anchor.setDate(_anchor.getDate() + ((_dueDow + 6) % 7)); // forward to due day, same week
+        _anchor.setDate(_anchor.getDate() + dc.weekOffset*7);
+        reportDateStr = MONTHS_STR[_anchor.getMonth()] + ' ' + _anchor.getDate();
+      }
     } else if (entry && entry.rows) {
       // Fallback: no active column resolved — derive from the column's own header text.
       function _parseFirstDate(str) {
@@ -8359,6 +8384,7 @@ function buildExitedTable(trackerKey,sheetKey,sheet){
     {label:'Platform',idx:1,w:100},
     {label:'Merchant ID',idx:3,w:120},
     {label:'Store Name',idx:4,w:180},
+    {label:'Status',idx:2,w:90},
     {label:'Offboarding Date',idx:7,w:130},
   ];
   const isAdmin=CU.isAdmin;
@@ -8370,6 +8396,14 @@ function buildExitedTable(trackerKey,sheetKey,sheet){
   const body=deduped.length?deduped.map(function(row,ri){
     const cells=COLS.map(function(c){
       const v=row[c.idx]!=null?String(row[c.idx]).trim():'—';
+      if(c.idx===2){
+        const _sv=(v&&v!=='—')?v:'Exited';
+        const _isInact=_sv.toLowerCase()==='inactive';
+        const _bg=_isInact?'var(--yellow-light)':'var(--red-light)';
+        const _fg=_isInact?'#92400e':'var(--red)';
+        const _bd=_isInact?'var(--yellow)':'var(--red)';
+        return'<td style="padding:5px 10px;border:1px solid var(--border);background:#fff8f8;white-space:nowrap"><span style="display:inline-block;padding:2px 9px;border-radius:20px;font-size:10px;font-weight:700;background:'+_bg+';color:'+_fg+';border:1px solid '+_bd+'">'+escHtml(_sv)+'</span></td>';
+      }
       if(c.idx===7){
         if(isAdmin){return'<td style="padding:4px 8px;border:1px solid var(--border);background:#fff8f8;white-space:nowrap"><input type="date" value="'+escHtml(v==='—'?'':v)+'" style="border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;color:var(--red);font-family:inherit;width:120px" onchange="frUpdateExitDate(\''+trackerKey+'\',\''+sheetKey+'\','+ri+',this.value)"/></td>';}
         return'<td style="padding:5px 10px;border:1px solid var(--border);background:#fff8f8;font-size:12px;color:var(--red);font-weight:600;white-space:nowrap">'+escHtml(v)+'</td>';
@@ -8486,7 +8520,29 @@ async function frInlineStatusChange(trackerKey,sheetKey,rowIdx,newStatus,selectE
     return;
   }
 
-  // Direct save for Active / Inactive
+  // If changing to Inactive, confirm first — on confirm the brand is also listed in the Exited tab.
+  if(newStatus==='Inactive'){
+    document.getElementById('mlt-body').innerHTML=`
+      <div style="margin-bottom:12px;font-size:14px;font-weight:600">${escHtml(brand)}</div>
+      <div class="fg" style="margin-bottom:12px">
+        <div style="display:inline-block;padding:3px 12px;border-radius:20px;border:1px solid var(--yellow);background:var(--yellow-light);color:#92400e;font-size:12px;font-weight:700">Inactive</div>
+      </div>
+      <div style="padding:12px;background:var(--yellow-light);border:1px solid var(--yellow);border-radius:var(--radius)">
+        <div style="font-size:12px;font-weight:700;color:#92400e;margin-bottom:6px">⚠️ Confirm Status Change</div>
+        <div style="font-size:12px;color:#92400e">Set this account as <b>Inactive</b>? It will be removed from the active report view and listed in the <b>Exited</b> tab.</div>
+      </div>
+      <div class="form-actions" style="margin-top:14px">
+        <button class="btn primary" onclick="frSaveAccountStatus('${trackerKey}','${sheetKey}',${rowIdx})">Confirm</button>
+        <button class="btn" onclick="closeModal('modal-lt-upload');renderLiveTrackers()">Cancel</button>
+      </div>`;
+    document.getElementById('modal-lt-upload').querySelector('h3').textContent='Set Account as Inactive';
+    document.getElementById('mlt-body').dataset.newStatus='Inactive';
+    openModal('modal-lt-upload');
+    if(selectEl)selectEl.value=String(row[_aIdx]||'Active');
+    return;
+  }
+
+  // Direct save for Active
   const frTblId='fr-tbl-'+trackerKey+'-'+sheetKey;
   const frWrap=document.getElementById(frTblId);
   const _sl=frWrap?frWrap.scrollLeft:0,_st=frWrap?frWrap.scrollTop:0;
@@ -9426,7 +9482,8 @@ function frStatusSelectChange(){
 
 async function frSaveAccountStatus(trackerKey,sheetKey,rowIdx){
   const newStatus=document.getElementById('fr-new-status')?.value
-    || document.getElementById('fr-exit-date')?.dataset?.newStatus;
+    || document.getElementById('fr-exit-date')?.dataset?.newStatus
+    || document.getElementById('mlt-body')?.dataset?.newStatus;
   const exitDate=document.getElementById('fr-exit-date')?.value||'';
   if(!newStatus)return;
   const t=D.trackers[trackerKey];if(!t)return;
@@ -9446,8 +9503,8 @@ async function frSaveAccountStatus(trackerKey,sheetKey,rowIdx){
     await fbSet('trackers/'+trackerKey+'/sheets/'+sheetKey+'/rows/'+rowIdx+'/'+_xIdx,newStatus==='Exited'?exitDate:'');
   }
 
-  // If Exited or Inactive, also copy row to Exited sheet
-  if(newStatus==='Exited'){
+  // If Exited or Inactive, also list the brand in the Exited tab.
+  if(newStatus==='Exited'||newStatus==='Inactive'){
     const existingSheets=t.sheets||{};
     let exitedSheet=existingSheets['Exited'];
     if(!exitedSheet){
@@ -9456,13 +9513,25 @@ async function frSaveAccountStatus(trackerKey,sheetKey,rowIdx){
       exitedSheet={headerRows:srcHeaderRows.map(r=>[...r]),row0:[...(sheet.row0||[])],row1:[...(sheet.row1||[])],rows:[]};
     }
     const exitedRows=[...(exitedSheet.rows||[])];
+    // Dedup on Merchant ID + Store Name so re-toggling status doesn't create duplicates.
+    const _key=String(row[3]||'').trim()+'||'+String(row[4]||'').trim();
+    const _existingIdx=exitedRows.findIndex(function(r){return (String(r[3]||'').trim()+'||'+String(r[4]||'').trim())===_key;});
     const updatedRow=[...row];
-    updatedRow[_aIdx]='Exited';
-    updatedRow[_xIdx]=exitDate;
-    exitedRows.push(updatedRow);
+    updatedRow[_aIdx]=newStatus;
+    updatedRow[_xIdx]=newStatus==='Exited'?exitDate:'';
+    if(_existingIdx>=0)exitedRows[_existingIdx]=updatedRow;else exitedRows.push(updatedRow);
     await fbSet('trackers/'+trackerKey+'/sheets/Exited',{...exitedSheet,rows:exitedRows});
-    toast('Account marked as Exited and moved to Exited tab.');
+    toast('Account marked as '+newStatus+' and listed in the Exited tab.');
   } else {
+    // Reverting to Active — remove any matching entry from the Exited tab.
+    const exitedSheet=(t.sheets||{})['Exited'];
+    if(exitedSheet&&exitedSheet.rows&&exitedSheet.rows.length){
+      const _key=String(row[3]||'').trim()+'||'+String(row[4]||'').trim();
+      const _filtered=exitedSheet.rows.filter(function(r){return (String(r[3]||'').trim()+'||'+String(r[4]||'').trim())!==_key;});
+      if(_filtered.length!==exitedSheet.rows.length){
+        await fbSet('trackers/'+trackerKey+'/sheets/Exited',{...exitedSheet,rows:_filtered});
+      }
+    }
     toast('Status updated to '+newStatus);
   }
   closeModal('modal-lt-upload');
