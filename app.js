@@ -7534,11 +7534,15 @@ function frFindActiveCol(sheet,platform){
   return bestColIdx;
 }
 
-// "Done" = cell value starts with "done" (case-insensitive)
-// Covers: "Done", "Done (No Data)", "Done (No Withdrawal)", etc.
+// A cell counts as "done" once the member has typed ANYTHING into it.
+// Members fill the active column with freetext, and any status they enter — "Done",
+// "Done (No Data)", "No Data", "No Withdrawal", a note, etc. — means they have handled
+// that brand for the week. So completion is driven purely by whether the cell is non-empty,
+// not by whether it literally starts with the word "done". (Previously only values starting
+// with "done" counted, so a member who typed "No Data" filled the cell yet still showed as
+// incomplete — which is why reports looked unfinished even after everything was entered.)
 function frIsDone(v){
-  if(v===null||v===undefined||String(v).trim()==='')return false;
-  return String(v).trim().toLowerCase().startsWith('done');
+  return !(v===null||v===undefined||String(v).trim()==='');
 }
 
 // Compute completion for one platform sheet
@@ -7594,6 +7598,35 @@ function getFRCompletionForTask(platform){
   if(!sheet)return{done:0,total:0,pct:0};
   const c=frGetSheetCompletion(sheet,platform);
   return{done:c.done,total:c.total,pct:c.pct};
+}
+
+// ── Per-member section completion (for the "confirm my section" prompt) ──
+// Returns how many of THE CURRENT USER's own assigned brands (matched by Exec or Team Lead
+// name, without the admin-sees-all override) in the active reporting column are filled.
+// A brand is "filled" as soon as its active-column cell has any freetext (see frIsDone).
+// Inactive/exited brands are excluded, mirroring the completion math.
+function frGetMySectionCompletion(sheet,platform){
+  const empty={done:0,total:0,complete:false};
+  if(!sheet||!CU||!CU.name)return empty;
+  const colIdx=frActiveColIdx(sheet,platform);
+  if(colIdx===-1)return empty;
+  const headerRows=(sheet.headerRows)||(sheet.row0?[sheet.row0]:[[]]);
+  const hr0=headerRows[0]||[];
+  const execCol=(function(){const i=hr0.findIndex(function(l){return/exec/i.test(String(l||''));});return i>=0?i:5;})();
+  const tlCol=(function(){const i=hr0.findIndex(function(l){return/team.?lead|^tl$/i.test(String(l||''));});return i>=0?i:6;})();
+  const nm=String(CU.name||'').trim().toLowerCase();
+  let done=0,total=0;
+  (sheet.rows||[]).forEach(function(r){
+    if(!r||r[0]==null||!String(r[0]).trim())return;
+    const st=String(r[2]||'').trim().toLowerCase();
+    if(st==='inactive'||st==='exited')return;
+    const ex=String(r[execCol]||'').trim().toLowerCase();
+    const tl=String(r[tlCol]||'').trim().toLowerCase();
+    if(!((ex&&ex===nm)||(tl&&tl===nm)))return; // not this member's brand
+    total++;
+    if(frIsDone(r[colIdx]))done++;
+  });
+  return{done,total,complete:total>0&&done>=total};
 }
 
 // Build inline region chips for dashboard (hover shows pending brands)
@@ -8120,6 +8153,11 @@ function buildFRTable(trackerKey,sheetKey,sheet){
   // ── Data rows ──
   const dataRows=rows.filter(function(r){
     if(!r||r[0]==null||!String(r[0]).trim())return false;
+    // Exited / Inactive brands never appear in the active platform view — they live exclusively
+    // in the Exited roll-up tab. (Previously they were rendered here greyed-out, which is what
+    // left an exited Lazada brand lingering in the active tab.)
+    const _st=String(r[acctStatusCol]||'').trim().toLowerCase();
+    if(_st==='exited'||_st==='inactive')return false;
     // Apply text filters
     if(_frFilter.region&&!String(r[0]||'').toLowerCase().includes(_frFilter.region.toLowerCase()))return false;
     if(_frFilter.brand&&!String(r[brandCol]||'').toLowerCase().includes(_frFilter.brand.toLowerCase()))return false;
@@ -8399,8 +8437,6 @@ async function frSaveNewBrand(trackerKey,sheetKey,fixedCount){
 }
 
 function buildExitedTable(trackerKey,sheetKey,sheet){
-  if(!sheet)return'<div class="empty-state" style="padding:32px">No exited accounts yet.</div>';
-  const rows=sheet.rows||[];
   const COLS=[
     {label:'Region',idx:0,w:80},
     {label:'Team Lead',idx:6,w:130},
@@ -8412,12 +8448,58 @@ function buildExitedTable(trackerKey,sheetKey,sheet){
     {label:'Offboarding Date',idx:7,w:130},
   ];
   const isAdmin=CU.isAdmin;
-  const seen=new Set();const deduped=[];
-  for(let i=rows.length-1;i>=0;i--){const r=rows[i];if(!r)continue;const k=String(r[3]||'').trim()+'||'+String(r[4]||'').trim();if(!seen.has(k)){seen.add(k);deduped.unshift(r);}}
+  const t=D.trackers[trackerKey]||{};
+  const allSheets=t.sheets||{};
+  // ── Aggregate every Exited / Inactive brand across ALL platform tabs ──
+  // The Exited tab is a single roll-up of all offboarded/inactive accounts, no matter which
+  // platform sheet they physically live in and no matter HOW their status was set — whether
+  // through the in-app status toggle (which also copies them into the dedicated "Exited" sheet)
+  // or imported already-exited from Excel (which does NOT). Scanning the live platform sheets
+  // here — rather than reading only the separate "Exited" sheet — means a brand marked Exited/
+  // Inactive anywhere shows up here automatically, self-healing rows the old copy-based flow
+  // missed (e.g. a Lazada brand imported as Exited that stayed stuck in the active tab).
+  // Each collected row remembers its SOURCE sheet + row index so admin edits (offboarding date,
+  // delete) act on the real record, not on a detached copy.
+  function _statusOf(r){
+    // Account Status lives in col 2 by default; detect dynamically from that sheet's header.
+    return r? String(r[2]||'').trim().toLowerCase() : '';
+  }
+  const collected=[];
+  const seen=new Set();
+  Object.keys(allSheets).forEach(function(sk){
+    if(sk==='Exited')return; // handled below as a fallback source
+    const s=allSheets[sk];if(!s||!s.rows)return;
+    s.rows.forEach(function(r,ri){
+      if(!r)return;
+      const st=_statusOf(r);
+      if(st!=='exited'&&st!=='inactive')return;
+      const idKey=String(r[3]||'').trim()+'||'+String(r[4]||'').trim();
+      if(seen.has(idKey))return;
+      seen.add(idKey);
+      collected.push({row:r,srcSheet:sk,srcRowIdx:ri});
+    });
+  });
+  // Also fold in the dedicated "Exited" sheet for any records whose original platform row was
+  // already deleted but which should still appear in the roll-up (deduped against live rows).
+  const exitedSheet=allSheets['Exited'];
+  if(exitedSheet&&exitedSheet.rows){
+    exitedSheet.rows.forEach(function(r,ri){
+      if(!r)return;
+      const idKey=String(r[3]||'').trim()+'||'+String(r[4]||'').trim();
+      if(seen.has(idKey))return;
+      seen.add(idKey);
+      collected.push({row:r,srcSheet:'Exited',srcRowIdx:ri});
+    });
+  }
+  const deduped=collected;
   const colSpan=COLS.length+(isAdmin?1:0);
   const hdrCells=COLS.map(c=>'<th style="padding:5px 10px;background:#ffeaea;border:1px solid var(--border);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#b91c1c;text-align:left;white-space:nowrap;min-width:'+c.w+'px">'+c.label+'</th>').join('');
   const hdr='<tr>'+hdrCells+(isAdmin?'<th style="padding:5px 10px;background:#ffeaea;border:1px solid var(--border);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#b91c1c;text-align:center;white-space:nowrap;min-width:80px">Actions</th>':'')+'</tr>';
-  const body=deduped.length?deduped.map(function(row,ri){
+  const _sheetEsc=function(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");};
+  const body=deduped.length?deduped.map(function(item){
+    const row=item.row;
+    const _src=_sheetEsc(item.srcSheet);
+    const _sri=item.srcRowIdx;
     const cells=COLS.map(function(c){
       const v=row[c.idx]!=null?String(row[c.idx]).trim():'—';
       if(c.idx===2){
@@ -8426,15 +8508,17 @@ function buildExitedTable(trackerKey,sheetKey,sheet){
         const _bg=_isInact?'var(--yellow-light)':'var(--red-light)';
         const _fg=_isInact?'#92400e':'var(--red)';
         const _bd=_isInact?'var(--yellow)':'var(--red)';
-        return'<td style="padding:5px 10px;border:1px solid var(--border);background:#fff8f8;white-space:nowrap"><span style="display:inline-block;padding:2px 9px;border-radius:20px;font-size:10px;font-weight:700;background:'+_bg+';color:'+_fg+';border:1px solid '+_bd+'">'+escHtml(_sv)+'</span></td>';
+        // Show which platform tab the brand came from, so the roll-up stays traceable.
+        const _srcTag=(item.srcSheet&&item.srcSheet!=='Exited')?'<div style="font-size:8px;color:var(--text4);margin-top:2px">from '+escHtml(item.srcSheet)+'</div>':'';
+        return'<td style="padding:5px 10px;border:1px solid var(--border);background:#fff8f8;white-space:nowrap"><span style="display:inline-block;padding:2px 9px;border-radius:20px;font-size:10px;font-weight:700;background:'+_bg+';color:'+_fg+';border:1px solid '+_bd+'">'+escHtml(_sv)+'</span>'+_srcTag+'</td>';
       }
       if(c.idx===7){
-        if(isAdmin){return'<td style="padding:4px 8px;border:1px solid var(--border);background:#fff8f8;white-space:nowrap"><input type="date" value="'+escHtml(v==='—'?'':v)+'" style="border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;color:var(--red);font-family:inherit;width:120px" onchange="frUpdateExitDate(\''+trackerKey+'\',\''+sheetKey+'\','+ri+',this.value)"/></td>';}
+        if(isAdmin){return'<td style="padding:4px 8px;border:1px solid var(--border);background:#fff8f8;white-space:nowrap"><input type="date" value="'+escHtml(v==='—'?'':v)+'" style="border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;color:var(--red);font-family:inherit;width:120px" onchange="frUpdateExitDate(\''+trackerKey+'\',\''+_src+'\','+_sri+',this.value)"/></td>';}
         return'<td style="padding:5px 10px;border:1px solid var(--border);background:#fff8f8;font-size:12px;color:var(--red);font-weight:600;white-space:nowrap">'+escHtml(v)+'</td>';
       }
       return'<td style="padding:5px 10px;border:1px solid var(--border);font-size:12px;color:var(--text2);white-space:nowrap">'+escHtml(v)+'</td>';
     }).join('');
-    const deleteBtn=isAdmin?'<td style="padding:4px 8px;border:1px solid var(--border);background:#fff8f8;text-align:center;white-space:nowrap"><button onclick="frDeleteExitedRow(\''+trackerKey+'\',\''+sheetKey+'\','+ri+')" style="padding:2px 8px;border-radius:4px;border:1px solid var(--red);background:var(--red-light);color:var(--red);font-size:11px;font-weight:700;cursor:pointer" title="Delete this entry">\ud83d\uddd1 Delete</button></td>':'';
+    const deleteBtn=isAdmin?'<td style="padding:4px 8px;border:1px solid var(--border);background:#fff8f8;text-align:center;white-space:nowrap"><button onclick="frDeleteExitedRow(\''+trackerKey+'\',\''+_src+'\','+_sri+')" style="padding:2px 8px;border-radius:4px;border:1px solid var(--red);background:var(--red-light);color:var(--red);font-size:11px;font-weight:700;cursor:pointer" title="Remove this brand from the tracker">\ud83d\uddd1 Delete</button></td>':'';
     return'<tr style="background:#fff8f8">'+cells+deleteBtn+'</tr>';
   }).join(''):'<tr><td colspan="'+colSpan+'" class="empty-state" style="padding:32px;text-align:center;color:var(--text4)">No exited accounts.</td></tr>';
   const info='<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:#fef2f2;border-bottom:1px solid var(--red-mid);font-size:11px;color:var(--red)"><span>\u26a0\ufe0f</span><span>Exited accounts \u2014 <strong>'+deduped.length+' record'+(deduped.length!==1?'s':'')+'</strong>. These brands are no longer active.</span></div>';
@@ -8452,7 +8536,15 @@ async function frDeleteExitedRow(trackerKey,sheetKey,rowIdx){
   renderLiveTrackers();
 }
 async function frUpdateExitDate(trackerKey,sheetKey,rowIdx,val){
-  await fbSet('trackers/'+trackerKey+'/sheets/'+sheetKey+'/rows/'+rowIdx+'/7',val||'');
+  const t=D.trackers[trackerKey];
+  const sheet=t&&t.sheets?t.sheets[sheetKey]:null;
+  let xIdx=7;
+  if(sheet){
+    const _hr0=(sheet.headerRows&&sheet.headerRows[0])||sheet.row0||[];
+    const _exitI=_hr0.findIndex(function(l){return/exit|offboard/i.test(String(l||''));});
+    if(_exitI>=0)xIdx=_exitI;
+  }
+  await fbSet('trackers/'+trackerKey+'/sheets/'+sheetKey+'/rows/'+rowIdx+'/'+xIdx,val||'');
   toast('Offboarding date updated.');
 }
 
@@ -8652,27 +8744,27 @@ function frActiveColIdx(sheet,platform){
     groups.push({ci,dueDate:entry&&entry.dueDate?entry.dueDate:null});
   }
   const todayMid=new Date(now().getFullYear(),now().getMonth(),now().getDate());
-  // ── Reporting grace window ──
-  // A reporting week does NOT stop being "active" the instant its deadline day ends. People
-  // keep filling in that week's column for the days between its deadline and the next deadline.
-  // The old rule ("soonest due date >= today") flipped the active column to the next, still-empty
-  // week the day AFTER the deadline — so the dashboard read 0/N while the FR tracker page still
-  // showed the just-completed week's real numbers (the dashboard 0/3 vs table 1/3 discrepancy on
-  // Shopee/TikTok). Selecting the soonest due date that is >= (today - grace) instead keeps the
-  // current working column active through its whole reporting cycle. A 6-day grace spans one
-  // weekly cycle, so the just-passed column stays active right up until the next deadline arrives.
-  // This is applied UNIFORMLY to every platform, so the previous per-platform FR_WEEK_OFFSET hack
-  // (Lazada -1) is no longer needed to keep the current column selected — every platform now stays
-  // on its current column all week. FR_WEEK_OFFSET is still used elsewhere purely for CW/date
-  // LABELS (see frEffectiveDate); only the active-column selection is decoupled from it here.
-  const FR_GRACE_DAYS=6;
-  const graceMid=new Date(todayMid.getFullYear(),todayMid.getMonth(),todayMid.getDate()-FR_GRACE_DAYS);
+  // ── Active column = the week currently being reported ──
+  // The active column is the one whose reporting deadline (dueDate, parsed straight from the
+  // header — the day after the latest date the column covers) is the SOONEST one that has not
+  // yet passed, i.e. the nearest deadline that is today or still upcoming. Because dueDate is
+  // the real coverage-end + 1, this keeps a week active through its entire coverage period AND
+  // through its deadline day itself (so late entries on the deadline day still land on the right
+  // column), then rolls forward to the next week the day after the deadline — which by then is
+  // the genuinely current week.
+  //
+  // Example (TikTok/Shopee, Thursday deadline):
+  //   • today Tue Jul 28 → week 23–29 Jul is active (deadline Thu Jul 30). Report Date = Jul 30.
+  //   • today Thu Jul 30 → still 23–29 Jul (deadline is today; entries still land here).
+  //   • today Fri Jul 31 → rolls to 30 Jul–05 Aug (deadline Aug 6).
+  //
+  // This replaces the earlier 6-day "grace window", which pinned the active column one full week
+  // behind (e.g. holding 16–22 Jul active on Jul 28) and made the current week read as last week.
   let activeIdx=-1,bestDiff=Infinity;
   groups.forEach(function(dc,i){
     if(!dc.dueDate)return;
-    // Eligible = deadline at/after the start of the current cycle (today - grace). Among those,
-    // pick the SOONEST deadline — i.e. the just-passed or upcoming deadline for this cycle.
-    const diff=dc.dueDate-graceMid;
+    // Soonest deadline that is today or still upcoming.
+    const diff=dc.dueDate-todayMid;
     if(diff>=0&&diff<bestDiff){bestDiff=diff;activeIdx=i;}
   });
   if(activeIdx===-1){
@@ -8788,8 +8880,68 @@ async function frUpdateCell(trackerKey,sheetKey,rowIdx,colIdx,val){
   } else if(_curPage==='my-tasks'){
     renderMyTasks();
   }
+  // ── "Confirm my section is done" prompt ──
+  // Once a member has filled every one of their own assigned brands in the active column,
+  // surface a one-tap confirmation right here in the tracker — no separate dashboard step.
+  // Completion already auto-reflects to the dashboard (it reads the same filled cells), so this
+  // is an explicit accountability sign-off, not a gate. We only fire it on the transition into
+  // "all my rows filled" (not on every later keystroke) and only for the active column, for a
+  // non-admin member editing their own section.
+  if(!CU.isAdmin && parsed!==null){
+    const _sheetNow=D.trackers[trackerKey].sheets[sheetKey];
+    const _activeCi=frActiveColIdx(_sheetNow,sheetKey);
+    if(_activeCi===colIdx){
+      const _mine=frGetMySectionCompletion(_sheetNow,sheetKey);
+      const _flagKey='_frSectionPrompted_'+trackerKey+'_'+sheetKey;
+      if(_mine.complete && _mine.total>0){
+        if(!window[_flagKey]){
+          window[_flagKey]=true;
+          frShowSectionConfirm(trackerKey,sheetKey,_mine.total);
+        }
+      } else {
+        // Not complete anymore (e.g. a cell was cleared) — allow the prompt to fire again later.
+        window[_flagKey]=false;
+      }
+    }
+  }
   // Always patch FR inline regions on dashboard regardless of current page
   ltPatchFRDashboard();
+}
+
+// Show the in-tracker confirmation once a member's whole section is filled.
+function frShowSectionConfirm(trackerKey,sheetKey,total){
+  const body=document.getElementById('mlt-body');
+  if(!body){
+    // Modal not available for some reason — fall back to a toast.
+    toast('\u2705 All '+total+' of your '+sheetKey+' brands are filled in. Nice work!');
+    return;
+  }
+  body.innerHTML=''
+    +'<div style="text-align:center;padding:4px 0 8px">'
+    +'<div style="font-size:34px;line-height:1;margin-bottom:8px">\u2705</div>'
+    +'<div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px">Section complete</div>'
+    +'<div style="font-size:12px;color:var(--text3);margin-bottom:14px">You\u2019ve filled in all <strong>'+total+'</strong> of your '+escHtml(sheetKey)+' brand'+(total!==1?'s':'')+' for this reporting week. Confirm your section is done \u2014 this reflects to the dashboard automatically.</div>'
+    +'<div style="display:flex;gap:8px;justify-content:center">'
+    +'<button class="btn primary" onclick="frConfirmSectionDone(\''+String(trackerKey).replace(/'/g,"\\'")+'\',\''+String(sheetKey).replace(/'/g,"\\'")+'\')">Confirm Done</button>'
+    +'<button class="btn" onclick="closeModal(\'modal-lt-upload\')">Not yet</button>'
+    +'</div>'
+    +'</div>';
+  const h3=document.getElementById('modal-lt-upload').querySelector('h3');
+  if(h3)h3.textContent='Confirm Completion';
+  openModal('modal-lt-upload');
+}
+
+// Record a member's explicit section sign-off (accountability trail; dashboard completion is
+// already driven by the filled cells themselves).
+async function frConfirmSectionDone(trackerKey,sheetKey){
+  const ts=ltStamp();
+  const who=(CU&&CU.username)||'';
+  try{
+    await fbSet('trackers/'+trackerKey+'/sheets/'+sheetKey+'/frConfirmations/'+who,{name:(CU&&CU.name)||who,at:ts});
+  }catch(e){/* non-fatal — the sign-off is a convenience record */}
+  closeModal('modal-lt-upload');
+  toast('\u2705 Section confirmed \u2014 thanks! It\u2019s reflected on the dashboard.');
+  if(_curPage==='live-trackers')renderLiveTrackers();
 }
 
 // Patch just the FR region chips on the dashboard without full re-render
