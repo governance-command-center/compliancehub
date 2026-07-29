@@ -7255,8 +7255,8 @@ const FR_HEADER_MAP = {
     { shortLabel:'23–29 Jul', rows:[{l:'Payment Report',v:'23 Jul – 29 Jul'},{l:'Order Report',v:'23 Jul – 29 Jul'},{l:'Payment Report - Screenshots',v:''}] },
   'Payment Report: 30 Jul - 05 Aug  Order Report: 30 Jul - 05 Aug  Payment Report - Screenshots':
     { shortLabel:'30 Jul–05 Aug', rows:[{l:'Payment Report',v:'30 Jul – 05 Aug'},{l:'Order Report',v:'30 Jul – 05 Aug'},{l:'Payment Report - Screenshots',v:''}] },
-  'Monthly Report  July  01 - 31  Transaction Report  MY Withdrawal Report  SG Withdrawal Report  Withdrawal - Screenshots':
-    { shortLabel:'Jul 01–31 (Monthly)', rows:[{l:'Monthly Report',v:'Jul 01 - 31'},{l:'Transaction Report',v:'MY'},{l:'Withdrawal Report',v:'SG'},{l:'Withdrawal - Screenshots',v:''}] },
+  'Monthly Payment Report: July 01 - 31  Order Report: July 01 - 31  Payment Report - Screenshots':
+    { shortLabel:'Jul 01–31 (Monthly)', rows:[{l:'Monthly Payment Report',v:'Jul 01 - 31'},{l:'Order Report',v:'Jul 01 - 31'},{l:'Payment Report - Screenshots',v:''}] },
   'Payment Report: 06 Aug - 12 Aug  Order Report: 06 Aug - 12 Aug  Payment Report - Screenshots':
     { shortLabel:'06–12 Aug', rows:[{l:'Payment Report',v:'06 Aug – 12 Aug'},{l:'Order Report',v:'06 Aug – 12 Aug'},{l:'Payment Report - Screenshots',v:''}] },
   'Payment Report: 13 Aug - 19 Aug  Order Report: 13 Aug - 19 Aug  Payment Report - Screenshots':
@@ -7265,8 +7265,8 @@ const FR_HEADER_MAP = {
     { shortLabel:'20–26 Aug', rows:[{l:'Payment Report',v:'20 Aug – 26 Aug'},{l:'Order Report',v:'20 Aug – 26 Aug'},{l:'Payment Report - Screenshots',v:''}] },
   'Payment Report: 27 Aug - 02 Sep  Order Report: 27 Aug - 02 Sep  Payment Report - Screenshots':
     { shortLabel:'27 Aug–02 Sep', rows:[{l:'Payment Report',v:'27 Aug – 02 Sep'},{l:'Order Report',v:'27 Aug – 02 Sep'},{l:'Payment Report - Screenshots',v:''}] },
-  'Monthly Report  Aug 01 - 31  Transaction Report  MY Withdrawal Report  SG Withdrawal Report  Withdrawal - Screenshots':
-    { shortLabel:'Aug 01–31 (Monthly)', rows:[{l:'Monthly Report',v:'Aug 01 - 31'},{l:'Transaction Report',v:'MY'},{l:'Withdrawal Report',v:'SG'},{l:'Withdrawal - Screenshots',v:''}] },
+  'Monthly Payment Report: Aug 01 - 31  Order Report: Aug 01 - 31  Payment Report - Screenshots':
+    { shortLabel:'Aug 01–31 (Monthly)', rows:[{l:'Monthly Payment Report',v:'Aug 01 - 31'},{l:'Order Report',v:'Aug 01 - 31'},{l:'Payment Report - Screenshots',v:''}] },
   'Payment Report: 03 Sep - 09 Sep  Order Report: 03 Sep - 09 Sep  Payment Report - Screenshots':
     { shortLabel:'03–09 Sep', rows:[{l:'Payment Report',v:'03 Sep – 09 Sep'},{l:'Order Report',v:'03 Sep – 09 Sep'},{l:'Payment Report - Screenshots',v:''}] },
   'Payment Report: 10 Sep - 16 Sep  Order Report: 10 Sep - 16 Sep  Payment Report - Screenshots':
@@ -7275,8 +7275,8 @@ const FR_HEADER_MAP = {
     { shortLabel:'17–23 Sep', rows:[{l:'Payment Report',v:'17 Sep – 23 Sep'},{l:'Order Report',v:'17 Sep – 23 Sep'},{l:'Payment Report - Screenshots',v:''}] },
   'Payment Report: 24 Sep - 30 Sep  Order Report: 24 Sep - 30 Sep  Payment Report - Screenshots':
     { shortLabel:'24–30 Sep', rows:[{l:'Payment Report',v:'24 Sep – 30 Sep'},{l:'Order Report',v:'24 Sep – 30 Sep'},{l:'Payment Report - Screenshots',v:''}] },
-  'Monthly Report  Sept 01 - 30  Transaction Report  MY Withdrawal Report  SG Withdrawal Report  Withdrawal - Screenshots':
-    { shortLabel:'Sep 01–30 (Monthly)', rows:[{l:'Monthly Report',v:'Sep 01 - 30'},{l:'Transaction Report',v:'MY'},{l:'Withdrawal Report',v:'SG'},{l:'Withdrawal - Screenshots',v:''}] },
+  'Monthly Payment Report: Sept 01 - 30  Order Report: Sept 01 - 30  Payment Report - Screenshots':
+    { shortLabel:'Sep 01–30 (Monthly)', rows:[{l:'Monthly Payment Report',v:'Sep 01 - 30'},{l:'Order Report',v:'Sep 01 - 30'},{l:'Payment Report - Screenshots',v:''}] },
   'Payment Report: 01 Oct - 07 Oct  Order Report: 01 Oct - 07 Oct  Payment Report - Screenshots':
     { shortLabel:'01–07 Oct', rows:[{l:'Payment Report',v:'01 Oct – 07 Oct'},{l:'Order Report',v:'01 Oct – 07 Oct'},{l:'Payment Report - Screenshots',v:''}] },
   'Payment Report: 08 Oct - 14 Oct  Order Report: 08 Oct - 14 Oct  Payment Report - Screenshots':
@@ -7287,8 +7287,8 @@ const FR_HEADER_MAP = {
     { shortLabel:'22–28 Oct', rows:[{l:'Payment Report',v:'22 Oct – 28 Oct'},{l:'Order Report',v:'22 Oct – 28 Oct'},{l:'Payment Report - Screenshots',v:''}] },
   'Payment Report: 29 Oct - 04 Nov  Order Report: 29 Oct - 04 Nov  Payment Report - Screenshots':
     { shortLabel:'29 Oct–04 Nov', rows:[{l:'Payment Report',v:'29 Oct – 04 Nov'},{l:'Order Report',v:'29 Oct – 04 Nov'},{l:'Payment Report - Screenshots',v:''}] },
-  'Monthly Report  Oct 01 - 31  Transaction Report  MY Withdrawal Report  SG Withdrawal Report  Withdrawal - Screenshots':
-    { shortLabel:'Oct 01–31 (Monthly)', rows:[{l:'Monthly Report',v:'Oct 01 - 31'},{l:'Transaction Report',v:'MY'},{l:'Withdrawal Report',v:'SG'},{l:'Withdrawal - Screenshots',v:''}] },
+  'Monthly Payment Report: Oct 01 - 31  Order Report: Oct 01 - 31  Payment Report - Screenshots':
+    { shortLabel:'Oct 01–31 (Monthly)', rows:[{l:'Monthly Payment Report',v:'Oct 01 - 31'},{l:'Order Report',v:'Oct 01 - 31'},{l:'Payment Report - Screenshots',v:''}] },
   'Payment Report: 05 Nov - 11 Nov  Order Report: 05 Nov - 11 Nov  Payment Report - Screenshots':
     { shortLabel:'05–11 Nov', rows:[{l:'Payment Report',v:'05 Nov – 11 Nov'},{l:'Order Report',v:'05 Nov – 11 Nov'},{l:'Payment Report - Screenshots',v:''}] },
   'Payment Report: 12 Nov - 18 Nov  Order Report: 12 Nov - 18 Nov  Payment Report - Screenshots':
@@ -7297,8 +7297,8 @@ const FR_HEADER_MAP = {
     { shortLabel:'19–25 Nov', rows:[{l:'Payment Report',v:'19 Nov – 25 Nov'},{l:'Order Report',v:'19 Nov – 25 Nov'},{l:'Payment Report - Screenshots',v:''}] },
   'Payment Report: 26 Nov - 02 Dec  Order Report: 26 Nov - 02 Dec  Payment Report - Screenshots':
     { shortLabel:'26 Nov–02 Dec', rows:[{l:'Payment Report',v:'26 Nov – 02 Dec'},{l:'Order Report',v:'26 Nov – 02 Dec'},{l:'Payment Report - Screenshots',v:''}] },
-  'Monthly Report  Nov 01 - 30  Transaction Report  MY Withdrawal Report  SG Withdrawal Report  Withdrawal - Screenshots':
-    { shortLabel:'Nov 01–30 (Monthly)', rows:[{l:'Monthly Report',v:'Nov 01 - 30'},{l:'Transaction Report',v:'MY'},{l:'Withdrawal Report',v:'SG'},{l:'Withdrawal - Screenshots',v:''}] },
+  'Monthly Payment Report: Nov 01 - 30  Order Report: Nov 01 - 30  Payment Report - Screenshots':
+    { shortLabel:'Nov 01–30 (Monthly)', rows:[{l:'Monthly Payment Report',v:'Nov 01 - 30'},{l:'Order Report',v:'Nov 01 - 30'},{l:'Payment Report - Screenshots',v:''}] },
   'Payment Report: 03 Dec - 09 Dec  Order Report: 03 Dec - 09 Dec  Payment Report - Screenshots':
     { shortLabel:'03–09 Dec', rows:[{l:'Payment Report',v:'03 Dec – 09 Dec'},{l:'Order Report',v:'03 Dec – 09 Dec'},{l:'Payment Report - Screenshots',v:''}] },
   'Payment Report: 10 Dec - 16 Dec  Order Report: 10 Dec - 16 Dec  Payment Report - Screenshots':
@@ -7309,8 +7309,8 @@ const FR_HEADER_MAP = {
     { shortLabel:'24–30 Dec', rows:[{l:'Payment Report',v:'24 Dec – 30 Dec'},{l:'Order Report',v:'24 Dec – 30 Dec'},{l:'Payment Report - Screenshots',v:''}] },
   'Payment Report: 31 Dec - 06 Jan  Order Report: 31 Dec - 06 Jan  Payment Report - Screenshots':
     { shortLabel:'31 Dec–06 Jan', rows:[{l:'Payment Report',v:'31 Dec – 06 Jan'},{l:'Order Report',v:'31 Dec – 06 Jan'},{l:'Payment Report - Screenshots',v:''}] },
-  'Monthly Report  Dec 01 - 31  Transaction Report  MY Withdrawal Report  SG Withdrawal Report  Withdrawal - Screenshots':
-    { shortLabel:'Dec 01–31 (Monthly)', rows:[{l:'Monthly Report',v:'Dec 01 - 31'},{l:'Transaction Report',v:'MY'},{l:'Withdrawal Report',v:'SG'},{l:'Withdrawal - Screenshots',v:''}] },
+  'Monthly Payment Report: Dec 01 - 31  Order Report: Dec 01 - 31  Payment Report - Screenshots':
+    { shortLabel:'Dec 01–31 (Monthly)', rows:[{l:'Monthly Payment Report',v:'Dec 01 - 31'},{l:'Order Report',v:'Dec 01 - 31'},{l:'Payment Report - Screenshots',v:''}] },
 };
 
 // ── Generic header parser ──────────────────────────────────────────────
@@ -7811,7 +7811,8 @@ function buildFRTable(trackerKey,sheetKey,sheet){
   // Use the shared resolver so the highlighted column, the reporting-week banner,
   // and the mass-update actions always agree. frActiveColIdx applies the platform's
   // week offset (Lazada = -1, reporting on a one-week lag; Shopee/TikTok = 0).
-  const _activeCiTbl=frActiveColIdx(sheet,platform);
+  const _activeCiTbl=frActiveColIdx(sheet,platform);          // current WEEKLY column (yellow)
+  const _activeMonthlyCiTbl=frActiveMonthlyColIdx(sheet,platform); // current MONTHLY column (green)
   let activeIdx=-1;
   dateColGroups.forEach(function(dc,i){if(dc.ci===_activeCiTbl)activeIdx=i;});
   // Flag which columns are monthly reports (e.g. Lazada's "Monthly Report: June 01 - 30").
@@ -7821,9 +7822,16 @@ function buildFRTable(trackerKey,sheetKey,sheet){
   dateColGroups.forEach(function(dc){
     const _e=dc.entry||frParseHeaderInfo(platform,dc.topLabel,dc.subLabels);
     dc.isMonthlyCol=!!(_e&&_e.isMonthly);
+    // The current monthly column gets its own independent "active" flag → green highlight.
+    // Resolved separately from the weekly one so both can be current in the same view.
+    dc.isActiveMonthly=(dc.ci===_activeMonthlyCiTbl);
   });
+  // isActive = current WEEKLY column (yellow). Past/future greying is driven off the weekly
+  // active index, but the current MONTHLY column is exempt: it's neither past nor future, it
+  // carries its own green "active" state so it never renders greyed-out alongside the weekly.
   dateColGroups.forEach(function(dc,i){
     if(i===activeIdx)dc.isActive=true;
+    else if(dc.isActiveMonthly){/* current monthly — highlighted green, not past/future */}
     else if(activeIdx>=0&&i<activeIdx)dc.isPast=true;
     else dc.isFuture=true;
   });
@@ -7884,8 +7892,10 @@ function buildFRTable(trackerKey,sheetKey,sheet){
         visibleSet.add(dc.ci);
       }
     });
-    // Always keep the active column itself, whatever its type.
-    dateColGroups.forEach(function(dc){ if(dc.isActive)visibleSet.add(dc.ci); });
+    // Always keep the current weekly AND current monthly columns, whatever their date —
+    // the current monthly's coverage can start before the visible weekly span (e.g. a
+    // Jul 01–31 monthly whose window begins Jul 20), so keep it by its active flag, not its date.
+    dateColGroups.forEach(function(dc){ if(dc.isActive||dc.isActiveMonthly)visibleSet.add(dc.ci); });
     for(let i=dateColGroups.length-1;i>=0;i--){
       if(!visibleSet.has(dateColGroups[i].ci))dateColGroups.splice(i,1);
     }
@@ -8066,7 +8076,9 @@ function buildFRTable(trackerKey,sheetKey,sheet){
     }).join('');
 
     // ── Build Report Date / Input Date row ──
-    var reportDateLabel = dc.isFuture ? 'Input Date :' : 'Report Date :';
+    // Current columns (weekly yellow or monthly green) always read "Report Date"; only genuinely
+    // future columns read "Input Date".
+    var reportDateLabel = (dc.isFuture && !dc.isActiveMonthly) ? 'Input Date :' : 'Report Date :';
     var reportRowHtml = reportDateStr
       ? '<div style="margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,.2);display:flex;justify-content:space-between;align-items:baseline;gap:8px;white-space:nowrap">'
           + '<span style="color:rgba(255,255,255,.65);font-size:9px;font-weight:600">' + reportDateLabel + '</span>'
@@ -8087,7 +8099,10 @@ function buildFRTable(trackerKey,sheetKey,sheet){
           : '')
       + '</div>';
 
-    hdr+='<th ' + (dc.isActive?'data-active="1" ':'') + ' class="fr-cw-th-cell" style="text-align:left;padding:8px 10px;background:' + bg + ';border:1px solid #1e3a5f;color:' + fg + ';min-width:160px;white-space:normal;line-height:1.4;vertical-align:top;position:relative">'
+    // Header accent: current weekly → amber top border, current monthly → green top border,
+    // so the two current columns are distinguishable at a glance even in the dark header.
+    const _hdrAccent=dc.isActive?'border-top:3px solid #fbbf24;':(dc.isActiveMonthly?'border-top:3px solid #22c55e;':'');
+    hdr+='<th ' + (dc.isActive?'data-active="1" ':'') + (dc.isActiveMonthly?'data-active-monthly="1" ':'') + ' class="fr-cw-th-cell" style="text-align:left;padding:8px 10px;background:' + bg + ';border:1px solid #1e3a5f;'+_hdrAccent+'color:' + fg + ';min-width:160px;white-space:normal;line-height:1.4;vertical-align:top;position:relative">'
       + cellContent
     + '</th>';
   });
@@ -8264,8 +8279,10 @@ function buildFRTable(trackerKey,sheetKey,sheet){
       const notOwnerLocked=!rowOwner&&!pastLockedForUser&&!dc.isFuture;
       if(!canEdit||pastLockedForUser||notOwnerLocked){
         // TOD, non-admin viewing a past column, or not this row's assigned Exec/Team Lead: read-only
-        const bg=isDone?'#e8f5e9':dc.isPast?'#fafafa':dc.isActive?'#fffde7':'#f5f7ff';
-        const col=isDone?'#388e3c':dc.isPast?'#9ca3af':dc.isActive?'var(--text3)':'#c7d2fe';
+        // Highlight priority: Done (green fill) → current monthly (mint/green) → current weekly (yellow)
+        // → past (grey) → future (indigo tint).
+        const bg=isDone?'#e8f5e9':dc.isActiveMonthly?'#e7f7ec':dc.isPast?'#fafafa':dc.isActive?'#fffde7':'#f5f7ff';
+        const col=isDone?'#388e3c':dc.isActiveMonthly?'#15803d':dc.isPast?'#9ca3af':dc.isActive?'var(--text3)':'#c7d2fe';
         const frTs=((sheet.frTimestamps||{})[rowIdx+'_'+dc.ci])||'';
         const lockTitle=pastLockedForUser?' title="Past dates can only be edited by an admin"':(notOwnerLocked?' title="View only — this brand is assigned to another Exec/Team Lead"':'');
         cells+='<td style="padding:5px 8px;border:1px solid var(--border);text-align:center;background:'+bg+'"'+lockTitle+'>'
@@ -8274,11 +8291,13 @@ function buildFRTable(trackerKey,sheetKey,sheet){
         +'</td>';
       } else {
         // Editable input for active & future columns (and past, for admins)
-        const bg=isDone?'var(--green-light)':dc.isActive?'#fffde7':dc.isPast?'#fafafa':'#f5f7ff';
-        const col=isDone?'var(--green)':dc.isActive?'var(--text)':dc.isPast?'#6b7280':'#6366f1';
-        const placeholderTxt=dc.isActive?'e.g. Done, No Data\u2026':'Done / No Data\u2026';
+        // Current monthly column → green tint + green outline; current weekly → yellow + blue outline.
+        const bg=isDone?'var(--green-light)':dc.isActiveMonthly?'#e7f7ec':dc.isActive?'#fffde7':dc.isPast?'#fafafa':'#f5f7ff';
+        const col=isDone?'var(--green)':dc.isActiveMonthly?'#15803d':dc.isActive?'var(--text)':dc.isPast?'#6b7280':'#6366f1';
+        const placeholderTxt=(dc.isActive||dc.isActiveMonthly)?'e.g. Done, No Data\u2026':'Done / No Data\u2026';
         const frTs=((sheet.frTimestamps||{})[rowIdx+'_'+dc.ci])||'';
-        cells+='<td style="padding:3px 4px;border:1px solid var(--border);text-align:center;background:'+bg+(dc.isActive?';outline:1px solid #bfdbfe;outline-offset:-1px':'')+'">'
+        const _outline=dc.isActiveMonthly?';outline:1px solid #86efac;outline-offset:-1px':(dc.isActive?';outline:1px solid #bfdbfe;outline-offset:-1px':'');
+        cells+='<td style="padding:3px 4px;border:1px solid var(--border);text-align:center;background:'+bg+_outline+'">'
           +'<input type="text" value="'+vS.replace(/"/g,'&quot;')+'" placeholder="'+placeholderTxt+'"'
           +' style="width:150px;padding:4px 6px;border:1px solid transparent;border-radius:4px;font-size:11px;text-align:center;background:transparent;color:'+col+'"'
           +' onchange="frUpdateCell(\''+trackerKey+'\',\''+sheetKey+'\','+rowIdx+','+dc.ci+',this.value)"'
@@ -8333,7 +8352,8 @@ function buildFRTable(trackerKey,sheetKey,sheet){
 
   const legend='<div style="display:flex;gap:14px;padding:8px 12px;border-bottom:1px solid var(--border);background:#fafafa;font-size:11px;color:var(--text3);flex-wrap:wrap;align-items:center">'
     +'<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:var(--green-light);border-radius:2px;display:inline-block"></span>Done</span>'
-    +'<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#fffde7;border:1px solid #fde68a;border-radius:2px;display:inline-block"></span>Current / active column</span>'
+    +'<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#fffde7;border:1px solid #fde68a;border-radius:2px;display:inline-block"></span>Current weekly column</span>'
+    +'<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#e7f7ec;border:1px solid #86efac;border-radius:2px;display:inline-block"></span>Current monthly column</span>'
     +'<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#fafafa;border:1px solid #ddd;border-radius:2px;display:inline-block"></span>Past — still editable</span>'
     +'<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#f5f7ff;border:1px solid #c7d2fe;border-radius:2px;display:inline-block"></span>Future — still editable</span>'
     +(isAdmin?'<span style="font-size:10px;color:var(--blue);font-weight:600">✏️ Hover CW headers to see dates · Click sub-rows to rename</span>':'')
@@ -8727,8 +8747,12 @@ function frSelectAll(trackerKey,sheetKey,chkEl){
 // offset — which is why the old frParseDateHeader/frEffectiveDate logic here
 // (which picked a different, offset-shifted column) caused mass update to
 // write to the wrong week.
-function frActiveColIdx(sheet,platform){
-  if(!sheet)return -1;
+// ── Shared column scanner: read every date column's Report Date + cadence ──
+// Returns [{ci, dueDate, isMonthly}] for all non-fixed columns, using the header
+// parser so each column's Report Date (dueDate = coverage-end + 1) and its cadence
+// (weekly vs monthly) come straight from the sheet — nothing to keep configured.
+function _frScanDateCols(sheet,platform){
+  if(!sheet)return [];
   const headerRows=sheet.headerRows||(sheet.row0?[sheet.row0,sheet.row1].filter(r=>r&&r.length):[[]]);
   const row0=headerRows[0]||[];
   const fixedCount=7; // Region, Platform, Account Status, Merchant ID, Brand, Exec, Team Lead
@@ -8741,42 +8765,60 @@ function frActiveColIdx(sheet,platform){
       subLabels.push(hr[ci]!=null?String(hr[ci]).trim():'');
     }
     const entry=frParseHeaderInfo(platform,topLabel,subLabels);
-    groups.push({ci,dueDate:entry&&entry.dueDate?entry.dueDate:null});
+    groups.push({ci,dueDate:entry&&entry.dueDate?entry.dueDate:null,isMonthly:!!(entry&&entry.isMonthly)});
   }
+  return groups;
+}
+
+// ── Core cadence-aware resolver (Rule B) ──
+// Among columns of ONE cadence (weekly OR monthly), the current column is the one
+// whose Report Date is the NEAREST one on-or-before today — i.e. the report whose
+// deadline has most recently arrived, the one currently being worked/finalised. It
+// stays current through its whole reporting week and rolls forward only when the
+// NEXT column of the same cadence reaches its own Report Date. If none has come due
+// yet (start of history), fall back to the nearest upcoming Report Date.
+//
+// Weekly and monthly are resolved SEPARATELY so a monthly column can never steal the
+// weekly highlight (the old bug: on Jul 29 the Aug-1 monthly out-competed the Jul-28
+// weekly). Example, Lazada weekly (Tue deadline), today Wed Jul 29:
+//   • weekly 20–26 Jul → Report Date Tue Jul 28 (yesterday) → CURRENT weekly (yellow)
+//   • weekly 27 Jul–02 Aug → Report Date Tue Aug 4 (upcoming) → not yet
+//   • monthly Jul 01–31 → Report Date Aug 1 → resolved on the MONTHLY track (green), not here
+function _frResolveColByCadence(sheet,platform,wantMonthly){
+  const groups=_frScanDateCols(sheet,platform).filter(function(g){return g.isMonthly===wantMonthly;});
   const todayMid=new Date(now().getFullYear(),now().getMonth(),now().getDate());
-  // ── Active column = the week currently being reported ──
-  // The active column is the one whose reporting deadline (dueDate, parsed straight from the
-  // header — the day after the latest date the column covers) is the SOONEST one that has not
-  // yet passed, i.e. the nearest deadline that is today or still upcoming. Because dueDate is
-  // the real coverage-end + 1, this keeps a week active through its entire coverage period AND
-  // through its deadline day itself (so late entries on the deadline day still land on the right
-  // column), then rolls forward to the next week the day after the deadline — which by then is
-  // the genuinely current week.
-  //
-  // Example (TikTok/Shopee, Thursday deadline):
-  //   • today Tue Jul 28 → week 23–29 Jul is active (deadline Thu Jul 30). Report Date = Jul 30.
-  //   • today Thu Jul 30 → still 23–29 Jul (deadline is today; entries still land here).
-  //   • today Fri Jul 31 → rolls to 30 Jul–05 Aug (deadline Aug 6).
-  //
-  // This replaces the earlier 6-day "grace window", which pinned the active column one full week
-  // behind (e.g. holding 16–22 Jul active on Jul 28) and made the current week read as last week.
-  let activeIdx=-1,bestDiff=Infinity;
-  groups.forEach(function(dc,i){
-    if(!dc.dueDate)return;
-    // Soonest deadline that is today or still upcoming.
-    const diff=dc.dueDate-todayMid;
-    if(diff>=0&&diff<bestDiff){bestDiff=diff;activeIdx=i;}
+  // Nearest Report Date on-or-before today.
+  let idx=-1,bestPast=Infinity;
+  groups.forEach(function(g,i){
+    if(!g.dueDate)return;
+    const diff=todayMid-g.dueDate;               // >=0 → due today or already passed
+    if(diff>=0&&diff<bestPast){bestPast=diff;idx=i;}
   });
-  if(activeIdx===-1){
-    // Nothing at/after the cycle start — fall back to the most recent past deadline.
-    let minPast=Infinity;
-    groups.forEach(function(dc,i){
-      if(!dc.dueDate)return;
-      const diff=todayMid-dc.dueDate;
-      if(diff>=0&&diff<minPast){minPast=diff;activeIdx=i;}
+  if(idx===-1){
+    // Nothing due yet — fall back to the soonest upcoming Report Date.
+    let bestFuture=Infinity;
+    groups.forEach(function(g,i){
+      if(!g.dueDate)return;
+      const diff=g.dueDate-todayMid;
+      if(diff>=0&&diff<bestFuture){bestFuture=diff;idx=i;}
     });
   }
-  return activeIdx===-1?-1:groups[activeIdx].ci;
+  return idx===-1?-1:groups[idx].ci;
+}
+
+// Current WEEKLY column (yellow highlight). Used everywhere the "active column" is
+// read: the table highlight, the reporting-week banner, edit-locking, the visible-week
+// window, and the completion dashboard — all of which track the weekly cadence.
+function frActiveColIdx(sheet,platform){
+  if(!sheet)return -1;
+  return _frResolveColByCadence(sheet,platform,false);
+}
+
+// Current MONTHLY column (green highlight). Independent of the weekly resolver so both
+// can be current in the same view (e.g. a Jul-28 weekly and an Aug-1 monthly both shown).
+function frActiveMonthlyColIdx(sheet,platform){
+  if(!sheet)return -1;
+  return _frResolveColByCadence(sheet,platform,true);
 }
 
 async function frApplySelToDone(trackerKey,sheetKey){
