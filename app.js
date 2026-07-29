@@ -7876,21 +7876,32 @@ function buildFRTable(trackerKey,sheetKey,sheet){
     });
     const visibleSet=new Set(weeklyKept.map(function(dc){return dc.ci;}));
     // Date span covered by the visible weekly columns (used to place monthly columns).
+    // parsedDate is each weekly column's coverage-START, so extend spanMax by 6 days to reach
+    // the last visible week's coverage-END — this keeps a month-end monthly (e.g. Jul 31) in
+    // view even when it lands in the final days of the last visible week.
     let spanMin=null,spanMax=null;
     weeklyKept.forEach(function(dc){
       if(!dc.parsedDate)return;
       if(spanMin===null||dc.parsedDate<spanMin)spanMin=dc.parsedDate;
       if(spanMax===null||dc.parsedDate>spanMax)spanMax=dc.parsedDate;
     });
-    // Keep a monthly column when its date sits within the visible weekly span (inclusive),
-    // so the headline monthly report rides along with the weeks it belongs to.
+    if(spanMax){ spanMax=new Date(spanMax.getFullYear(),spanMax.getMonth(),spanMax.getDate()+6); }
+    // Keep a monthly column when the week it BELONGS TO is on screen. A monthly's coverage
+    // starts on the 1st (dc.parsedDate = e.g. Jul 1), which sits far before the visible weekly
+    // span, so testing coverage-start wrongly hides it. Instead test the monthly's month-END —
+    // its latestDate (last day of the covered month) and its Report Date (month-end + 1) — since
+    // the monthly is meant to appear right after the week that crosses that month boundary. This
+    // is what makes the monthly show up exactly "when switching months".
     dateColGroups.forEach(function(dc){
       if(!(dc.weekOffset===null||dc.weekOffset===undefined))return; // weekly cols handled above
       if(!dc.isMonthlyCol)return;
-      if(!dc.parsedDate){ if(dc.isActive)visibleSet.add(dc.ci); return; }
-      if(spanMin!==null&&spanMax!==null&&dc.parsedDate>=spanMin&&dc.parsedDate<=spanMax){
-        visibleSet.add(dc.ci);
-      }
+      // Anchor dates that place the monthly next to its month-end week.
+      const _e=dc.entry||frParseHeaderInfo(platform,dc.topLabel,dc.subLabels);
+      const monthEnd=(_e&&_e.latestDate)?_e.latestDate:null;      // e.g. Jul 31
+      const reportDate=(_e&&_e.dueDate)?_e.dueDate:null;          // e.g. Aug 1
+      const inSpan=function(d){ return d&&spanMin!==null&&spanMax!==null&&d>=spanMin&&d<=spanMax; };
+      if(inSpan(monthEnd)||inSpan(reportDate)){ visibleSet.add(dc.ci); return; }
+      if(!monthEnd&&!reportDate&&dc.isActive){ visibleSet.add(dc.ci); }
     });
     // Always keep the current weekly AND current monthly columns, whatever their date —
     // the current monthly's coverage can start before the visible weekly span (e.g. a
@@ -8075,10 +8086,10 @@ function buildFRTable(trackerKey,sheetKey,sheet){
         + '</div>';
     }).join('');
 
-    // ── Build Report Date / Input Date row ──
-    // Current columns (weekly yellow or monthly green) always read "Report Date"; only genuinely
-    // future columns read "Input Date".
-    var reportDateLabel = (dc.isFuture && !dc.isActiveMonthly) ? 'Input Date :' : 'Report Date :';
+    // ── Build Input Date row ──
+    // Standardized label across every column (weekly, monthly, past, current, future):
+    // always "Input Date :" — the date shown is the day the report is input/submitted.
+    var reportDateLabel = 'Input Date :';
     var reportRowHtml = reportDateStr
       ? '<div style="margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,.2);display:flex;justify-content:space-between;align-items:baseline;gap:8px;white-space:nowrap">'
           + '<span style="color:rgba(255,255,255,.65);font-size:9px;font-weight:600">' + reportDateLabel + '</span>'
