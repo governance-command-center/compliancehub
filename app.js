@@ -61,6 +61,10 @@ const DOWF=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturda
 
 let CU=null;
 let D={tasks:[],members:[],statuses:{},actLog:[],calEntries:{},broadcast:null,incidents:[],extRequests:{},groups:[],trackers:{},todAttendance:{},auditLog:[],leaves:[],leadTasks:[],weeklyReports:[],personalTasks:[],_tLoaded:false,_mLoaded:false};
+// FR_WEEK_OFFSET declared early: Finance-tracker render helpers reference it well before its
+// former mid-file declaration, which threw "Cannot access 'FR_WEEK_OFFSET' before initialization".
+// Defaults live here; loadFRConfig() later merges admin overrides from Firebase into this same object.
+let FR_WEEK_OFFSET={Lazada:-1,Shopee:0,TikTok:0};
 let _extListenerInit=false;
 let _activeTracker=null,_activeTrackerSheet=null;
 
@@ -1580,7 +1584,8 @@ function buildDashboardOthers(byS,date){
 function buildDashboardLeaveSummary(){
   if(!CU.isAdmin)return'';
   const now_=now();
-  const curMonth=LV_MONTHS[now_.getMonth()]+' '+now_.getFullYear();
+  const LV_MONTHS_LOCAL=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const curMonth=LV_MONTHS_LOCAL[now_.getMonth()]+' '+now_.getFullYear();
   const rows=(D.leaves||[]).filter(e=>e&&e.month===curMonth);
   if(!rows.length)return'';
   // Resolve each CDM's standing buddy from the member record; fall back to the
@@ -7144,7 +7149,8 @@ const FR_DOW={Lazada:2,Shopee:4,TikTok:4};
 
 // Platform → how many weeks behind the report is (negative = look back N weeks)
 // Lazada is 1 week behind by default. Configurable by admin via frConfig/weekOffsets in Firebase.
-let FR_WEEK_OFFSET={Lazada:-1,Shopee:0,TikTok:0};
+// NOTE: the actual declaration lives near the top of the file (search "FR_WEEK_OFFSET declared early")
+// so it can't hit a temporal-dead-zone error when Finance render helpers reference it before this point.
 
 // Load FR config from Firebase on init
 function loadFRConfig(){
