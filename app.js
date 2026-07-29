@@ -251,7 +251,23 @@ function aoIsRowOwner(row){
   if(!nm)return false;
   const cdm=row[2]!=null?String(row[2]).trim().toLowerCase():'';
   const tl=row[3]!=null?String(row[3]).trim().toLowerCase():'';
-  return(cdm&&cdm===nm)||(tl&&tl===nm);
+  if((cdm&&cdm===nm)||(tl&&tl===nm))return true;
+  // Standing buddy system: if the current user is the assigned buddy of whoever owns
+  // this row (its CDM or Team Lead), they get the same edit access as that owner. The
+  // pairing lives on the member record (member.buddy = the buddy's username), so it's
+  // permanent and admin-auditable rather than derived from individual leave entries.
+  return aoIsBuddyOf(cdm)||aoIsBuddyOf(tl);
+}
+// True if the current user is the standing buddy of the member whose display name is
+// `ownerNameLc` (already lowercased). Resolves owner name -> member record -> that
+// member's buddy username, then compares to the current user's username.
+function aoIsBuddyOf(ownerNameLc){
+  if(!ownerNameLc)return false;
+  const me=(CU&&CU.username||'').trim().toLowerCase();
+  if(!me)return false;
+  const owner=(D.members||[]).find(function(m){return m&&m.name&&m.name.trim().toLowerCase()===ownerNameLc;});
+  if(!owner||!owner.buddy)return false;
+  return String(owner.buddy).trim().toLowerCase()===me;
 }
 // Admin-only: assign/reassign the CDM (colIdx=2) or Team Lead (colIdx=3) for a row,
 // picked from registered members so it always matches a real login name exactly.
@@ -283,7 +299,10 @@ function frIsRowOwner(row,execCol,tlCol){
   if(!nm)return false;
   const ex=row[execCol]!=null?String(row[execCol]).trim().toLowerCase():'';
   const tl=row[tlCol]!=null?String(row[tlCol]).trim().toLowerCase():'';
-  return(ex&&ex===nm)||(tl&&tl===nm);
+  if((ex&&ex===nm)||(tl&&tl===nm))return true;
+  // Same standing-buddy grant as the AO tracker (see aoIsRowOwner): a member's assigned
+  // buddy inherits the owner's edit access on Finance rows too.
+  return aoIsBuddyOf(ex)||aoIsBuddyOf(tl);
 }
 // Admin-only: edit any fixed-column cell (Region, Platform, Account Status text fallback,
 // Synagie Merchant ID, Brand/Store Name) on a Finance Report row. Exec/CDM and Team Lead use
@@ -1552,6 +1571,62 @@ function buildDashboardOthers(byS,date){
 }
 
 // ── DASHBOARD ──
+// ── Dashboard: On-Leave Summary ──────────────────────────────────────────────
+// Admin-only glance card: who has leave logged in the current month, their buddy
+// (coverage), and whether handover/briefing is still pending. Keyed on the leave's
+// structured `month` field ("July 2026") rather than the free-text date string,
+// which isn't machine-parseable (e.g. "Jan 2–5", "Jan 9 & 16"). The raw date text
+// is shown as-is so the admin can read the exact days.
+function buildDashboardLeaveSummary(){
+  if(!CU.isAdmin)return'';
+  const now_=now();
+  const curMonth=LV_MONTHS[now_.getMonth()]+' '+now_.getFullYear();
+  const rows=(D.leaves||[]).filter(e=>e&&e.month===curMonth);
+  if(!rows.length)return'';
+  // Resolve each CDM's standing buddy from the member record; fall back to the
+  // per-leave buddy field if no standing pairing is set.
+  function buddyDisplay(e){
+    const owner=(D.members||[]).find(m=>m&&m.name&&m.name.trim().toLowerCase()===String(e.cdm||'').trim().toLowerCase());
+    if(owner&&owner.buddy){
+      const b=(D.members||[]).find(m=>m&&m.username===owner.buddy);
+      if(b)return b.name;
+    }
+    return e.buddy||'';
+  }
+  // Sort so anyone with a pending handover/briefing (the ones to chase) floats up.
+  const enriched=rows.map(e=>{
+    const pending=(e.handover==='Pending')||(e.briefing==='Pending');
+    return{e,pending,buddy:buddyDisplay(e)};
+  }).sort((a,b)=>(b.pending?1:0)-(a.pending?1:0));
+  const chaseCount=enriched.filter(x=>x.pending).length;
+
+  const cards=enriched.map(({e,pending,buddy})=>{
+    const flag=pending
+      ?'<span style="font-size:10px;font-weight:700;color:var(--red);background:var(--red-light,#fee2e2);padding:2px 7px;border-radius:10px;white-space:nowrap">⚠ chase handover</span>'
+      :'<span style="font-size:10px;font-weight:600;color:var(--green);background:var(--green-light,#dcfce7);padding:2px 7px;border-radius:10px;white-space:nowrap">✓ covered</span>';
+    const buddyBit=buddy
+      ?`<span style="font-size:11px;color:var(--text2)">Buddy: <strong>${buddy}</strong></span>`
+      :'<span style="font-size:11px;color:var(--red)">No buddy assigned</span>';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:#fff;flex-wrap:wrap">
+      <span class="av" style="width:26px;height:26px;font-size:10px;flex-shrink:0">${ini(e.cdm||'?')}</span>
+      <div style="flex:1;min-width:120px">
+        <div style="font-size:12px;font-weight:700">${e.cdm||'—'} ${lvTypeBadge(e.type||'AL')}</div>
+        <div style="font-size:11px;color:var(--text3)">${e.date||'—'}${e.region?' · '+e.region:''}</div>
+      </div>
+      ${buddyBit}
+      ${flag}
+    </div>`;
+  }).join('');
+
+  return `<div class="panel" style="margin-bottom:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:6px">
+      <span style="font-size:12px;font-weight:700;color:var(--text2)">🌴 On Leave — ${curMonth}${chaseCount?` · <span style="color:var(--red)">${chaseCount} to chase</span>`:''}</span>
+      <button class="btn sm" onclick="showPage('leaves')" style="font-size:10px;padding:2px 10px">Open Leave Tracker →</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px">${cards}</div>
+  </div>`;
+}
+
 function renderDashboard(){
   const date=ds(viewDate);
   // Admin sees all admin tasks + all lead tasks so tasks tagged to others appear on dashboard
@@ -1697,6 +1772,7 @@ function renderDashboard(){
     ${buildDashboardOthers(byS,date)}
     ${adminPersonalSec}
     ${memberPersonalSec}
+    ${buildDashboardLeaveSummary()}
     ${buildActivityFeed()}`;
 }
 
@@ -2620,6 +2696,9 @@ async function addM(){
 function editMember(username){
   const m=D.members.find(x=>x.username===username);if(!m)return;
   const memberOpts=D.members.filter(x=>x.approved&&x.active!==false&&x.username!==username&&['HOD','Manager','Assist. Manager','Team Lead'].includes(x.role)).map(x=>`<option value="${x.username}"${m.reportsTo===x.username?' selected':''}>${x.name} (${x.role})</option>`).join('');
+  // Buddy can be any other active member (the coverage partner who inherits this member's
+  // tracker edit access). Standing pairing — independent of any logged leave.
+  const buddyOpts=D.members.filter(x=>x.approved&&x.active!==false&&x.username!==username).map(x=>`<option value="${x.username}"${m.buddy===x.username?' selected':''}>${x.name}</option>`).join('');
   document.getElementById('mt-title').textContent='Edit Member';
   document.getElementById('mt-body').innerHTML=`
     <div class="fg fg2">
@@ -2630,6 +2709,7 @@ function editMember(username){
       <div><label class="flabel">Region</label><select class="finput nb" id="em-region"><option value="">— None —</option><option${m.region==='MY'?' selected':''}>MY</option><option${m.region==='PH'?' selected':''}>PH</option><option${m.region==='TH'?' selected':''}>TH</option><option${m.region==='VN'?' selected':''}>VN</option><option${m.region==='ID'?' selected':''}>ID</option><option${m.region==='SG'?' selected':''}>SG</option><option${m.region==='EP'?' selected':''}>EP</option></select></div>
       <div><label class="flabel">Reports To</label><select class="finput nb" id="em-rt"><option value="">— None —</option>${memberOpts}</select></div>
     </div>
+    <div class="fg"><label class="flabel">Buddy <span style="font-weight:400;color:var(--text3);font-size:11px">(covers this member's trackers — can edit their brand rows)</span></label><select class="finput nb" id="em-buddy"><option value="">— None —</option>${buddyOpts}</select></div>
     <div class="fg"><label class="flabel">New Password (optional)</label><input class="finput nb" id="em-pass" type="password" placeholder="Leave blank to keep"/></div>
     <div class="form-actions"><button class="btn primary" onclick="saveMemberEdit('${username}')">Save</button><button class="btn" onclick="closeModal('modal-task')">Cancel</button></div>`;
   openModal('modal-task');
@@ -2638,7 +2718,7 @@ async function saveMemberEdit(username){
   const mems=await fbGet('members')||{};
   for(const[k,m]of Object.entries(mems)){
     if(m.username===username){
-      const upd={name:document.getElementById('em-name').value.trim(),role:document.getElementById('em-role').value,region:document.getElementById('em-region')?.value||'',reportsTo:document.getElementById('em-rt')?.value||''};
+      const upd={name:document.getElementById('em-name').value.trim(),role:document.getElementById('em-role').value,region:document.getElementById('em-region')?.value||'',reportsTo:document.getElementById('em-rt')?.value||'',buddy:document.getElementById('em-buddy')?.value||''};
       const np=document.getElementById('em-pass').value;if(np)upd.password=np;
       await fbUpd(`members/${k}`,upd);toast('Member updated');break;
     }
