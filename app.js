@@ -2492,12 +2492,13 @@ function exportSelectedMembers(){
       'Role':m.role||'',
       'Region':m.region||'',
       'Reports To':m.reportsTo?getMN(m.reportsTo):'',
+      'Buddy':m.buddy?getMN(m.buddy):'',
       'Working Hours':m.workingHours||'',
       'Status':m.active===false?'Inactive':'Active'
     };
   });
   const ws=XLSX.utils.json_to_sheet(rows);
-  ws['!cols']=[{wch:22},{wch:16},{wch:18},{wch:10},{wch:22},{wch:16},{wch:10}];
+  ws['!cols']=[{wch:22},{wch:16},{wch:18},{wch:10},{wch:22},{wch:22},{wch:16},{wch:10}];
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,'Selected Members');
   XLSX.writeFile(wb,'Members_Selected_'+ds(now())+'.xlsx');
@@ -2540,13 +2541,14 @@ function exportMembers(){
       'Role': m.role || '',
       'Region': m.region || '',
       'Reports To': m.reportsTo ? getMN(m.reportsTo) : '',
+      'Buddy': m.buddy ? getMN(m.buddy) : '',
       'Working Hours': m.workingHours || '',
       'Status': m.active === false ? 'Inactive' : 'Active'
     };
   });
   if(!rows.length){ toast('No members to export.'); return; }
   const ws = XLSX.utils.json_to_sheet(rows);
-  ws['!cols'] = [{wch:22},{wch:16},{wch:18},{wch:10},{wch:22},{wch:16},{wch:10}];
+  ws['!cols'] = [{wch:22},{wch:16},{wch:18},{wch:10},{wch:22},{wch:22},{wch:16},{wch:10}];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Members');
   XLSX.writeFile(wb, 'Members_' + ds(now()) + '.xlsx');
@@ -2576,13 +2578,14 @@ function renderMembers(){
     ROLE_ORDER.forEach(role=>{
       const list=grouped[role]||[];
       if(!list.length)return;
-      rows+=`<tr><td colspan="5" style="background:#f8fafc;padding:6px 12px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);border-bottom:1px solid var(--border)">${roleLabel(role)} (${list.length})</td></tr>`;
+      rows+=`<tr><td colspan="6" style="background:#f8fafc;padding:6px 12px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);border-bottom:1px solid var(--border)">${roleLabel(role)} (${list.length})</td></tr>`;
       rows+=list.map(m=>`<tr>
         <td><div style="display:flex;align-items:center;gap:7px"><span class="av" style="width:24px;height:24px;font-size:9px">${ini(m.name)}</span>${m.name}</div></td>
         <td style="color:var(--text3)">@${m.username}</td>
         <td><span class="role-badge" style="${roleBadgeStyle(m.role)}">${roleLabel(m.role)}</span></td>
         <td><span style="font-size:11px;font-weight:600;color:var(--blue)">${m.region||'—'}</span></td>
         <td style="font-size:12px;color:var(--text3)">${m.reportsTo?getMN(m.reportsTo):'—'}</td>
+        <td style="font-size:12px;color:var(--text3)">${m.buddy?getMN(m.buddy):'—'}</td>
       </tr>`).join('');
     });
     // Lead-private groups — stored under leadGroups/<username>
@@ -2590,8 +2593,8 @@ function renderMembers(){
     const myGroupCards=myLeadGroups.map(g=>`<div class="group-card"><div style="flex:1"><div style="font-weight:700;font-size:13px;margin-bottom:4px">${g.name} <span style="font-size:10px;background:var(--purple-light);color:var(--purple);padding:1px 6px;border-radius:20px">My Group</span></div><div style="display:flex;flex-wrap:wrap;gap:4px">${(g.members||[]).slice(0,6).map(u=>`<span class="m-chip" style="font-size:11px"><span class="av" style="width:16px;height:16px;font-size:7px">${ini(getMN(u))}</span>${getMN(u)}</span>`).join('')}${(g.members||[]).length>6?`<span style="font-size:11px;color:var(--text3)">+${g.members.length-6} more</span>`:''}</div></div><div style="display:flex;gap:6px"><button class="btn sm edit" onclick="openLeadGroupForm('${g._key}')">Edit</button><button class="btn sm del" onclick="deleteLeadGroup('${g._key}')">Delete</button></div></div>`).join('');
     document.getElementById('pg-members').innerHTML=`
       <div class="page-header"><div class="page-title">Members (${memberList.length})</div><span style="font-size:12px;color:var(--text3);padding:6px 10px;background:var(--blue-light);border-radius:var(--radius)">View only — member management is admin-only</span></div>
-      <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Region</th><th>Reports To</th></tr></thead>
-      <tbody>${rows||'<tr><td colspan="5" class="empty-state">No members yet</td></tr>'}</tbody></table></div>
+      <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Region</th><th>Reports To</th><th>Buddy</th></tr></thead>
+      <tbody>${rows||'<tr><td colspan="6" class="empty-state">No members yet</td></tr>'}</tbody></table></div>
       <div style="margin-top:20px">
         <div class="section-hdr sh-purple">My Groups <span style="font-size:11px;color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0">(only visible to you)</span> <button class="btn sm primary" onclick="openLeadGroupForm(null)" style="float:right">+ New Group</button></div>
         ${myGroupCards||'<div class="empty-state" style="padding:20px">No groups yet. Create one to quickly assign members to tasks.</div>'}
@@ -2612,7 +2615,7 @@ function renderMembers(){
   ROLE_ORDER.forEach(role=>{
     const list=grouped[role]||[];
     if(!list.length)return;
-    rows+=`<tr><td colspan="8" style="background:#f8fafc;padding:6px 12px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);border-bottom:1px solid var(--border)">${roleLabel(role)} (${list.length})</td></tr>`;
+    rows+=`<tr><td colspan="9" style="background:#f8fafc;padding:6px 12px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);border-bottom:1px solid var(--border)">${roleLabel(role)} (${list.length})</td></tr>`;
     rows+=list.map(m=>`<tr style="${m.active===false?'opacity:.5;background:#fafafa':''}">
       <td style="width:32px;text-align:center"><input type="checkbox" class="mem-cb" data-username="${m.username}" onchange="memToggleSel('${m.username}',this.checked)" style="cursor:pointer"/></td>
       <td><div style="display:flex;align-items:center;gap:7px"><span class="av" style="width:24px;height:24px;font-size:9px">${ini(m.name)}</span>${m.name}</div></td>
@@ -2620,6 +2623,7 @@ function renderMembers(){
       <td><span class="role-badge" style="${roleBadgeStyle(m.role)}">${roleLabel(m.role)}</span></td>
       <td><span style="font-size:11px;font-weight:600;color:var(--blue)">${m.region||'—'}</span></td>
       <td style="font-size:12px;color:var(--text3)">${m.reportsTo?getMN(m.reportsTo):'—'}</td>
+      <td style="font-size:12px;color:var(--text3)">${m.buddy?getMN(m.buddy):'—'}</td>
       <td>
         <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
           <div onclick="toggleMemberActive('${m.username}',${m.active!==false})" style="position:relative;width:34px;height:18px;border-radius:9px;background:${m.active!==false?'var(--green)':'#cbd5e1'};transition:background .2s;flex-shrink:0;cursor:pointer">
@@ -2677,10 +2681,11 @@ function renderMembers(){
       <th class="sh ${window._memSort&&_memSort.col==='role'?(_memSort.dir===1?'asc':'desc'):''}" style="padding:9px 12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);border-bottom:2px solid var(--border);background:#f8fafc" onclick="if(!window._memSort)window._memSort={col:'name',dir:1};_memSort.col==='role'?_memSort.dir*=-1:(_memSort.col='role',_memSort.dir=1);renderMembers()">Role</th>
       <th class="sh ${window._memSort&&_memSort.col==='region'?(_memSort.dir===1?'asc':'desc'):''}" style="padding:9px 12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);border-bottom:2px solid var(--border);background:#f8fafc" onclick="if(!window._memSort)window._memSort={col:'name',dir:1};_memSort.col==='region'?_memSort.dir*=-1:(_memSort.col='region',_memSort.dir=1);renderMembers()">Region</th>
       <th style="padding:9px 12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);border-bottom:2px solid var(--border);background:#f8fafc">Reports To</th>
+      <th style="padding:9px 12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);border-bottom:2px solid var(--border);background:#f8fafc">Buddy</th>
       <th style="padding:9px 12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);border-bottom:2px solid var(--border);background:#f8fafc">Active</th>
       <th style="padding:9px 12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);border-bottom:2px solid var(--border);background:#f8fafc">Actions</th>
     </tr></thead>
-    <tbody>${rows||'<tr><td colspan="8" class="empty-state">No members yet</td></tr>'}</tbody></table></div>
+    <tbody>${rows||'<tr><td colspan="9" class="empty-state">No members yet</td></tr>'}</tbody></table></div>
     <div style="margin-top:20px">
       <div class="section-hdr sh-purple">Assignment Groups <button class="btn sm primary" onclick="openGroupForm(null)" style="float:right">+ New Group</button></div>
       ${groupCards||'<div class="empty-state" style="padding:20px">No groups yet.</div>'}
