@@ -616,6 +616,19 @@ function carryProgressNote(t,viewStr){
   const r=taskCompletionRateCumulative(t,t._carryOrigin,viewStr);
   return '<div style="font-size:10px;color:var(--orange);font-weight:600;margin-top:2px">Running: '+r.done+'/'+r.total+' over '+(d+1)+' day'+(d+1!==1?'s':'')+' (since '+t._carryOrigin+')</div>';
 }
+// The actual scheduled DATE this task instance belongs to. For a carried-over task this is its
+// origin date (the day it was first due) so users can trace where it came from; otherwise it's
+// the day being viewed. Rendered as a chip in the "Task Date" dashboard column.
+function taskDateChip(t,viewStr){
+  const originStr=t._carryOrigin||viewStr;
+  const carried=!!t._carryOrigin;
+  const d=new Date(originStr+'T00:00:00');
+  const label=isNaN(d)?originStr:d.toLocaleDateString('en-PH',{weekday:'short',month:'short',day:'numeric'});
+  if(carried){
+    return '<span style="display:inline-block;font-size:11px;font-weight:700;color:var(--orange);background:var(--orange-light);border:1px solid #fed7aa;padding:2px 7px;border-radius:20px" title="Original due date — carried over since '+originStr+'">'+label+'</span>';
+  }
+  return '<span style="display:inline-block;font-size:11px;font-weight:600;color:var(--text3)" title="'+originStr+'">'+label+'</span>';
+}
 
 function statusBadge(ov,taskId,date){
   const task=D.tasks.find(t=>t.id==taskId)||(D.leadTasks||[]).find(t=>t.id==taskId);
@@ -1846,19 +1859,20 @@ function renderDashboard(){
       const ov=t._carryOrigin?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date),rate=t._carryOrigin?taskCompletionRateCumulative(t,t._carryOrigin,date):taskCompletionRate(t.id,date),isOv=isOverdue(t,date)&&ov!=='Done';
       const mAv=(t.assignees||[]).slice(0,4).map(u=>`<span class="av" title="${getMN(u)}" style="width:20px;height:20px;font-size:8px;margin-right:-2px">${ini(getMN(u))}</span>`).join('');
       return `<tr class="${isOv?'overdue-row':''}">
-        <td style="width:36%">
+        <td style="width:32%">
           <div style="font-weight:600">${t.title}${isOv?'&nbsp;<span style="color:var(--red);font-size:10px;font-weight:700">OVERDUE</span>':''}${carryBadge(t)}${t.aoLinked?'&nbsp;<span style="font-size:10px;background:var(--orange-light);color:var(--orange);padding:1px 6px;border-radius:20px;font-weight:700">📊 Abnormal Orders</span>':''}${t.frLinked?'&nbsp;<span style="font-size:10px;background:var(--blue-light);color:var(--blue);padding:1px 6px;border-radius:20px;font-weight:700">💰 Finance Report</span>':''}${t._isPersonal?'&nbsp;<span style="font-size:10px;background:var(--green-light);color:var(--green);padding:1px 6px;border-radius:20px;font-weight:700">✅ Personal</span>':''}</div>
           <span class="freq-chip fc-${t.freq||'other'}">${t.freq||'personal'}</span>
           ${t.aoLinked?buildAOInlineRegions(date):''}
           ${t.frLinked?`<div id="fr-inline-regions-${frGetPlatform(t)}">${buildFRInlineRegions(frGetPlatform(t))}</div>`:''}
         </td>
-        <td style="width:14%;text-align:center"><span class="dl-chip${isOv?' overdue':''}">${t.deadline||'—'}</span></td>
-        <td style="width:20%">${mAv}${(t.assignees||[]).length>4?`<span style="font-size:11px;color:var(--text3)"> +${t.assignees.length-4}</span>`:t._isPersonal?'<span style="font-size:11px;color:var(--text3)">Personal</span>':''}</td>
-        <td style="width:14%;text-align:center">${t._isPersonal?`<select class="finput nb" style="padding:4px 7px;font-size:12px;width:auto" onchange="updatePersonalTaskStatus('${t._key}',this.value)"><option${(t.status||'Pending')==='Pending'?' selected':''}>Pending</option><option${t.status==='Done'?' selected':''}>Done</option></select>`:t.aoLinked||t.frLinked?`<span class="sbadge ${sbc(ov)}" style="cursor:default"><span class="sdot ${sdc(ov)}"></span>${ov}</span>`:statusBadge(ov,t.id,date)}</td>
+        <td style="width:13%;text-align:center">${t._isPersonal?'<span style="font-size:11px;color:var(--text3)">—</span>':taskDateChip(t,date)}</td>
+        <td style="width:13%;text-align:center"><span class="dl-chip${isOv?' overdue':''}">${t.deadline||'—'}</span></td>
+        <td style="width:18%">${mAv}${(t.assignees||[]).length>4?`<span style="font-size:11px;color:var(--text3)"> +${t.assignees.length-4}</span>`:t._isPersonal?'<span style="font-size:11px;color:var(--text3)">Personal</span>':''}</td>
+        <td style="width:12%;text-align:center">${t._isPersonal?`<select class="finput nb" style="padding:4px 7px;font-size:12px;width:auto" onchange="updatePersonalTaskStatus('${t._key}',this.value)"><option${(t.status||'Pending')==='Pending'?' selected':''}>Pending</option><option${t.status==='Done'?' selected':''}>Done</option></select>`:t.aoLinked||t.frLinked?`<span class="sbadge ${sbc(ov)}" style="cursor:default"><span class="sdot ${sdc(ov)}"></span>${ov}</span>`:statusBadge(ov,t.id,date)}</td>
         <td style="width:16%">${t._isPersonal?`<button class="btn sm del" onclick="deletePersonalTask('${t._key}')" style="font-size:11px">Delete</button>`:t.frLinked?(()=>{const _fc=getFRCompletionForTask(frGetPlatform(t));const _col=_fc.pct>=100?'var(--green)':_fc.pct>0?'var(--blue)':'var(--red)';return`<div class="rate-bar-wrap"><div class="rate-bar"><div class="rate-bar-fill" style="width:${_fc.pct}%;background:${_col}"></div></div><div style="font-size:11px;font-weight:700;color:${_col};text-align:right">${_fc.pct}%</div></div><div style="font-size:10px;color:var(--text3)">${_fc.done}/${_fc.total} done</div>`;})():t.aoLinked?rateBarHtml(rate.pct)+'<div id="ao-dash-progress" style="font-size:10px;color:var(--text3)">'+rate.done+'/'+rate.total+' done</div>':rateBarHtml(rate.pct)+'<div style="font-size:10px;color:var(--text3)">'+rate.done+'/'+rate.total+' done</div>'+carryProgressNote(t,date)}</td>
       </tr>`;
     }).join('');
-    return `<div class="section-hdr ${sc.c}">${sc.l} <span style="opacity:.7">(${list.length})</span></div><div class="tbl-wrap"><table><thead><tr><th style="width:36%">Task</th><th style="width:14%;text-align:center">Deadline</th><th style="width:20%">Assigned</th><th style="width:14%;text-align:center">Status</th><th style="width:16%">Completion</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    return `<div class="section-hdr ${sc.c}">${sc.l} <span style="opacity:.7">(${list.length})</span></div><div class="tbl-wrap"><table><thead><tr><th style="width:32%">Task</th><th style="width:13%;text-align:center">Task Date</th><th style="width:13%;text-align:center">Deadline</th><th style="width:18%">Assigned</th><th style="width:12%;text-align:center">Status</th><th style="width:16%">Completion</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }).join(''):'';
 
   // Build the rest of the sections (Ongoing, Needs Extension, Done)
@@ -1868,19 +1882,20 @@ function renderDashboard(){
       const ov=t._carryOrigin?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date),rate=t._carryOrigin?taskCompletionRateCumulative(t,t._carryOrigin,date):taskCompletionRate(t.id,date),isOv=isOverdue(t,date)&&ov!=='Done';
       const mAv=(t.assignees||[]).slice(0,4).map(u=>`<span class="av" title="${getMN(u)}" style="width:20px;height:20px;font-size:8px;margin-right:-2px">${ini(getMN(u))}</span>`).join('');
       return `<tr class="${isOv?'overdue-row':''}">
-        <td style="width:36%">
+        <td style="width:32%">
           <div style="font-weight:600">${t.title}${isOv?'&nbsp;<span style="color:var(--red);font-size:10px;font-weight:700">OVERDUE</span>':''}${carryBadge(t)}${t.aoLinked?'&nbsp;<span style="font-size:10px;background:var(--orange-light);color:var(--orange);padding:1px 6px;border-radius:20px;font-weight:700">📊 Abnormal Orders</span>':''}${t.frLinked?'&nbsp;<span style="font-size:10px;background:var(--blue-light);color:var(--blue);padding:1px 6px;border-radius:20px;font-weight:700">💰 Finance Report</span>':''}${t._isPersonal?'&nbsp;<span style="font-size:10px;background:var(--green-light);color:var(--green);padding:1px 6px;border-radius:20px;font-weight:700">✅ Personal</span>':''}</div>
           <span class="freq-chip fc-${t.freq||'other'}">${t.freq||'personal'}</span>
           ${t.aoLinked?buildAOInlineRegions(date):''}
           ${t.frLinked?`<div id="fr-inline-regions-${frGetPlatform(t)}">${buildFRInlineRegions(frGetPlatform(t))}</div>`:''}
         </td>
-        <td style="width:14%;text-align:center"><span class="dl-chip${isOv?' overdue':''}">${t.deadline||'—'}</span></td>
-        <td style="width:20%">${mAv}${(t.assignees||[]).length>4?`<span style="font-size:11px;color:var(--text3)"> +${t.assignees.length-4}</span>`:t._isPersonal?'<span style="font-size:11px;color:var(--text3)">Personal</span>':''}</td>
-        <td style="width:14%;text-align:center">${t._isPersonal?`<select class="finput nb" style="padding:4px 7px;font-size:12px;width:auto" onchange="updatePersonalTaskStatus('${t._key}',this.value)"><option${(t.status||'Pending')==='Pending'?' selected':''}>Pending</option><option${t.status==='Done'?' selected':''}>Done</option></select>`:t.aoLinked||t.frLinked?`<span class="sbadge ${sbc(ov)}" style="cursor:default"><span class="sdot ${sdc(ov)}"></span>${ov}</span>`:statusBadge(ov,t.id,date)}</td>
+        <td style="width:13%;text-align:center">${t._isPersonal?'<span style="font-size:11px;color:var(--text3)">—</span>':taskDateChip(t,date)}</td>
+        <td style="width:13%;text-align:center"><span class="dl-chip${isOv?' overdue':''}">${t.deadline||'—'}</span></td>
+        <td style="width:18%">${mAv}${(t.assignees||[]).length>4?`<span style="font-size:11px;color:var(--text3)"> +${t.assignees.length-4}</span>`:t._isPersonal?'<span style="font-size:11px;color:var(--text3)">Personal</span>':''}</td>
+        <td style="width:12%;text-align:center">${t._isPersonal?`<select class="finput nb" style="padding:4px 7px;font-size:12px;width:auto" onchange="updatePersonalTaskStatus('${t._key}',this.value)"><option${(t.status||'Pending')==='Pending'?' selected':''}>Pending</option><option${t.status==='Done'?' selected':''}>Done</option></select>`:t.aoLinked||t.frLinked?`<span class="sbadge ${sbc(ov)}" style="cursor:default"><span class="sdot ${sdc(ov)}"></span>${ov}</span>`:statusBadge(ov,t.id,date)}</td>
         <td style="width:16%">${t._isPersonal?`<button class="btn sm del" onclick="deletePersonalTask('${t._key}')" style="font-size:11px">Delete</button>`:t.frLinked?(()=>{const _fc=getFRCompletionForTask(frGetPlatform(t));const _col=_fc.pct>=100?'var(--green)':_fc.pct>0?'var(--blue)':'var(--red)';return`<div class="rate-bar-wrap"><div class="rate-bar"><div class="rate-bar-fill" style="width:${_fc.pct}%;background:${_col}"></div></div><div style="font-size:11px;font-weight:700;color:${_col};text-align:right">${_fc.pct}%</div></div><div style="font-size:10px;color:var(--text3)">${_fc.done}/${_fc.total} done</div>`;})():rateBarHtml(rate.pct)+'<div style="font-size:10px;color:var(--text3)">'+rate.done+'/'+rate.total+' done</div>'+carryProgressNote(t,date)}</td>
       </tr>`;
     }).join('');
-    return `<div class="section-hdr ${sc.c}">${sc.l} <span style="opacity:.7">(${list.length})</span></div><div class="tbl-wrap"><table><thead><tr><th style="width:36%">Task</th><th style="width:14%;text-align:center">Deadline</th><th style="width:20%">Assigned</th><th style="width:14%;text-align:center">Status</th><th style="width:16%">Completion</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    return `<div class="section-hdr ${sc.c}">${sc.l} <span style="opacity:.7">(${list.length})</span></div><div class="tbl-wrap"><table><thead><tr><th style="width:32%">Task</th><th style="width:13%;text-align:center">Task Date</th><th style="width:13%;text-align:center">Deadline</th><th style="width:18%">Assigned</th><th style="width:12%;text-align:center">Status</th><th style="width:16%">Completion</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }).join('');
 
   // Include personal tasks in admin dashboard — show all users' personal tasks
