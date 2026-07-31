@@ -482,6 +482,27 @@ function hasAnyStatus(taskId,dateStr){
   return mems&&Object.keys(mems).length>0;
 }
 
+// Carry-over for TRACKER-LINKED tasks (Finance Report / Abnormal Orders). These don't store
+// per-day member statuses — their status comes live from the linked tracker (date-independent).
+// So the rule is simpler: if the task was scheduled on an earlier day and the tracker is still
+// not fully Done (100%), it keeps appearing until the tracker is complete. Returns the most
+// recent PAST scheduled occurrence date (the day it was originally due) if it's still open and
+// that occurrence is earlier than the view date; otherwise null (nothing to carry).
+function trackerCarryOrigin(t,viewD){
+  if(!(t.aoLinked||t.frLinked))return null;
+  const viewStr=ds(viewD);
+  // If it's scheduled today, it's a normal occurrence, not a carry.
+  if(isSched(t,viewD))return null;
+  // Live tracker status — if already Done, nothing carries.
+  if(computeTaskOverall(t.id,viewStr)==='Done')return null;
+  // Find the most recent scheduled occurrence strictly before the view date.
+  for(let i=1;i<=CARRYOVER_LOOKBACK_DAYS;i++){
+    const d=_addDays(viewD,-i);
+    if(isSched(t,d)&&!t.inactive)return ds(d);
+  }
+  return null;
+}
+
 // Cumulative member statuses across the carry window [originStr, viewStr]: a member is Done if
 // they were Done on any day in the window; else Ongoing if ever Ongoing; else their view-day status.
 function cumulativeMemberStatuses(t,originStr,viewStr){
@@ -534,6 +555,8 @@ function computeDashboardMetrics(tasks, date){
       if(ov==='Done')doneAssignments++;
       else if(ov==='Ongoing')ongoingAssignments++;
       else pendingAssignments++;
+      // A tracker task that carried over from an earlier day still counts toward ageing.
+      if(t._carryOrigin){const age=carryDaysOpen(t,date);carriedCount++;if(age>maxAgeDays)maxAgeDays=age;agingSumDays+=age;}
       return;
     }
     // Carried-over tasks: count each assignee by their CUMULATIVE status across the carry window
@@ -611,7 +634,7 @@ function carryBadge(t){
 // Small note under the completion bar showing the running/cumulative progress across the days
 // this task has stayed pending.
 function carryProgressNote(t,viewStr){
-  if(!t._carryOrigin)return '';
+  if(!t._carryOrigin||t._trackerCarry)return '';
   const d=carryDaysOpen(t,viewStr);
   const r=taskCompletionRateCumulative(t,t._carryOrigin,viewStr);
   return '<div style="font-size:10px;color:var(--orange);font-weight:600;margin-top:2px">Running: '+r.done+'/'+r.total+' over '+(d+1)+' day'+(d+1!==1?'s':'')+' (since '+t._carryOrigin+')</div>';
@@ -1698,7 +1721,8 @@ function buildDashboardResponseStatus(){
 // ── DASHBOARD SECTION BUILDERS ──
 function buildDashboardTaskRows(list, date){
   return list.map(t=>{
-    const ov=computeTaskOverall(t.id,date),rate=taskCompletionRate(t.id,date),isOv=isOverdue(t,date)&&ov!=='Done';
+    const _cc=t._carryOrigin&&!t._trackerCarry; // cumulative (member-status) carry
+    const ov=_cc?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date),rate=_cc?taskCompletionRateCumulative(t,t._carryOrigin,date):taskCompletionRate(t.id,date),isOv=isOverdue(t,date)&&ov!=='Done';
     const mAv=(t.assignees||[]).slice(0,4).map(u=>`<span class="av" title="${getMN(u)}" style="width:20px;height:20px;font-size:8px;margin-right:-2px">${ini(getMN(u))}</span>`).join('');
     // For FR-linked tasks, pull completion from the live tracker sheet instead of generic assignment rate
     let completionCell='';
@@ -1710,26 +1734,32 @@ function buildDashboardTaskRows(list, date){
       const _fcCol=_fc.pct>=100?'var(--green)':_fc.pct>0?'var(--blue)':'var(--red)';
       const _fcBar=`<div class="rate-bar-wrap"><div class="rate-bar"><div class="rate-bar-fill" style="width:${_fc.pct}%;background:${_fcCol}"></div></div><div style="font-size:11px;font-weight:700;color:${_fcCol};text-align:right">${_fc.pct}%</div></div>`;
       completionCell=_fcBar+`<div style="font-size:10px;color:var(--text3)">${_fc.done}/${_fc.total} done</div>`;
+    } else if(t.aoLinked){
+      completionCell=rateBarHtml(rate.pct)+`<div id="ao-dash-progress" style="font-size:10px;color:var(--text3)">${rate.done}/${rate.total} done</div>`;
     } else {
-      completionCell=rateBarHtml(rate.pct)+`<div style="font-size:10px;color:var(--text3)">${rate.done}/${rate.total} done</div>`;
+      completionCell=rateBarHtml(rate.pct)+`<div style="font-size:10px;color:var(--text3)">${rate.done}/${rate.total} done</div>`+carryProgressNote(t,date);
     }
     return `<tr class="${isOv?'overdue-row':''}">
-      <td style="width:36%">
-        <div style="font-weight:600">${t.title}${isOv?'&nbsp;<span style="color:var(--red);font-size:10px;font-weight:700">OVERDUE</span>':''}${t.aoLinked?'&nbsp;<span style="font-size:10px;background:var(--orange-light);color:var(--orange);padding:1px 6px;border-radius:20px;font-weight:700">📊 Abnormal Orders</span>':''}${t.frLinked?'&nbsp;<span style="font-size:10px;background:var(--blue-light);color:var(--blue);padding:1px 6px;border-radius:20px;font-weight:700">💰 Finance Report</span>':''}${t._isPersonal?'&nbsp;<span style="font-size:10px;background:var(--green-light);color:var(--green);padding:1px 6px;border-radius:20px;font-weight:700">✅ Personal</span>':''}</div>
+      <td style="width:32%">
+        <div style="font-weight:600">${t.title}${isOv?'&nbsp;<span style="color:var(--red);font-size:10px;font-weight:700">OVERDUE</span>':''}${carryBadge(t)}${t.aoLinked?'&nbsp;<span style="font-size:10px;background:var(--orange-light);color:var(--orange);padding:1px 6px;border-radius:20px;font-weight:700">📊 Abnormal Orders</span>':''}${t.frLinked?'&nbsp;<span style="font-size:10px;background:var(--blue-light);color:var(--blue);padding:1px 6px;border-radius:20px;font-weight:700">💰 Finance Report</span>':''}${t._isPersonal?'&nbsp;<span style="font-size:10px;background:var(--green-light);color:var(--green);padding:1px 6px;border-radius:20px;font-weight:700">✅ Personal</span>':''}</div>
         <span class="freq-chip fc-${t.freq||'other'}">${t.freq||'personal'}</span>
         ${t.aoLinked?buildAOInlineRegions(date):''}
         ${t.frLinked?`<div id="fr-inline-regions-${frGetPlatform(t)}">${buildFRInlineRegions(frGetPlatform(t))}</div>`:''}
       </td>
-      <td style="width:14%;text-align:center"><span class="dl-chip${isOv?' overdue':''}">${t.deadline||'—'}</span></td>
-      <td style="width:20%">${mAv}${(t.assignees||[]).length>4?`<span style="font-size:11px;color:var(--text3)"> +${t.assignees.length-4}</span>`:t._isPersonal?'<span style="font-size:11px;color:var(--text3)">Personal</span>':''}</td>
-      <td style="width:14%;text-align:center">${t._isPersonal?`<select class="finput nb" style="padding:4px 7px;font-size:12px;width:auto" onchange="updatePersonalTaskStatus('${t._key}',this.value)"><option${(t.status||'Pending')==='Pending'?' selected':''}>Pending</option><option${t.status==='Done'?' selected':''}>Done</option></select>`:t.aoLinked||t.frLinked?`<span class="sbadge ${sbc(ov)}" style="cursor:default"><span class="sdot ${sdc(ov)}"></span>${ov}</span>`:statusBadge(ov,t.id,date)}</td>
+      <td style="width:13%;text-align:center">${t._isPersonal?'<span style="font-size:11px;color:var(--text3)">—</span>':taskDateChip(t,date)}</td>
+      <td style="width:13%;text-align:center"><span class="dl-chip${isOv?' overdue':''}">${t.deadline||'—'}</span></td>
+      <td style="width:18%">${mAv}${(t.assignees||[]).length>4?`<span style="font-size:11px;color:var(--text3)"> +${t.assignees.length-4}</span>`:t._isPersonal?'<span style="font-size:11px;color:var(--text3)">Personal</span>':''}</td>
+      <td style="width:12%;text-align:center">${t._isPersonal?`<select class="finput nb" style="padding:4px 7px;font-size:12px;width:auto" onchange="updatePersonalTaskStatus('${t._key}',this.value)"><option${(t.status||'Pending')==='Pending'?' selected':''}>Pending</option><option${t.status==='Done'?' selected':''}>Done</option></select>`:t.aoLinked||t.frLinked?`<span class="sbadge ${sbc(ov)}" style="cursor:default"><span class="sdot ${sdc(ov)}"></span>${ov}</span>`:statusBadge(ov,t.id,date)}</td>
       <td style="width:16%">${completionCell}</td>
     </tr>`;
   }).join('');
 }
+function dashTaskTableHead(){
+  return '<thead><tr><th style="width:32%">Task</th><th style="width:13%;text-align:center">Task Date</th><th style="width:13%;text-align:center">Deadline</th><th style="width:18%">Assigned</th><th style="width:12%;text-align:center">Status</th><th style="width:16%">Completion</th></tr></thead>';
+}
 function buildDashboardOngoing(byS,date){
   const list=byS.Ongoing||[];if(!list.length)return'';
-  return `<div class="section-hdr sh-yellow">Ongoing <span style="opacity:.7">(${list.length})</span></div><div class="tbl-wrap"><table><thead><tr><th style="width:36%">Task</th><th style="width:14%;text-align:center">Deadline</th><th style="width:20%">Assigned</th><th style="width:14%;text-align:center">Status</th><th style="width:16%">Completion</th></tr></thead><tbody>${buildDashboardTaskRows(list,date)}</tbody></table></div>`;
+  return `<div class="section-hdr sh-yellow">Ongoing <span style="opacity:.7">(${list.length})</span></div><div class="tbl-wrap"><table>${dashTaskTableHead()}<tbody>${buildDashboardTaskRows(list,date)}</tbody></table></div>`;
 }
 function buildDashboardOthers(byS,date){
   const secs=['Needs Extension','Done'];
@@ -1737,7 +1767,7 @@ function buildDashboardOthers(byS,date){
     const list=byS[k]||[];if(!list.length)return'';
     const cfg={Done:{c:'sh-green',l:'Completed'},'Needs Extension':{c:'sh-teal',l:'Needs Extension'}};
     const s=cfg[k];
-    return `<div class="section-hdr ${s.c}">${s.l} <span style="opacity:.7">(${list.length})</span></div><div class="tbl-wrap"><table><thead><tr><th style="width:36%">Task</th><th style="width:14%;text-align:center">Deadline</th><th style="width:20%">Assigned</th><th style="width:14%;text-align:center">Status</th><th style="width:16%">Completion</th></tr></thead><tbody>${buildDashboardTaskRows(list,date)}</tbody></table></div>`;
+    return `<div class="section-hdr ${s.c}">${s.l} <span style="opacity:.7">(${list.length})</span></div><div class="tbl-wrap"><table>${dashTaskTableHead()}<tbody>${buildDashboardTaskRows(list,date)}</tbody></table></div>`;
   }).join('');
 }
 
@@ -1812,7 +1842,14 @@ function renderDashboard(){
   schedBase.forEach(t=>{
     if(t.inactive)return;
     if(schedIds.has(t.id))return;               // already showing as today's scheduled occurrence
-    if(t.aoLinked||t.frLinked)return;           // tracker-driven tasks manage their own state
+    // Tracker-driven tasks (Finance Report / Abnormal Orders): status is live from the tracker
+    // (date-independent). Carry them forward from their last scheduled day until the tracker is
+    // 100% complete, using the simpler tracker-carry rule.
+    if(t.aoLinked||t.frLinked){
+      const to=trackerCarryOrigin(t,viewDate);
+      if(to)carried.push({...t,_carryOrigin:to,_trackerCarry:true});
+      return;
+    }
     if(!(t.assignees||[]).length)return;
     const origin=carryOriginDate(t,viewDate);
     if(!origin||origin===date)return;           // nothing open from a prior day
@@ -1832,14 +1869,14 @@ function renderDashboard(){
   const metrics=computeDashboardMetrics(schedAll,date);
 
   const byS={Done:[],Ongoing:[],Pending:[],'Needs Extension':[]};
-  schedAll.forEach(t=>{const ov=t._carryOrigin?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date);if(!byS[ov])byS[ov]=[];byS[ov].push(t);});
+  schedAll.forEach(t=>{const ov=(t._carryOrigin&&!t._trackerCarry)?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date);if(!byS[ov])byS[ov]=[];byS[ov].push(t);});
   // Inject admin's own personal tasks into the dashboard buckets
   (D.personalTasks||[]).filter(t=>t._owner===CU.username).forEach(t=>{
     const bucket=(t.status==='Done')?'Done':'Pending';
     byS[bucket].push({...t,_isPersonal:true,freq:'personal',deadline:t.dueDate||''});
   });
 
-  const escalated=schedAll.filter(t=>{const ov=t._carryOrigin?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date);return ov!=='Done'&&isOverdue(t,date);});
+  const escalated=schedAll.filter(t=>{const ov=(t._carryOrigin&&!t._trackerCarry)?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date);return ov!=='Done'&&isOverdue(t,date);});
   let escBanner=escalated.length?`<div class="esc-banner"><span>⚠️</span><div><div style="font-weight:700;color:var(--orange);font-size:13px">${escalated.length} overdue task${escalated.length>1?'s':''}</div><div style="font-size:12px;color:var(--text3)">${escalated.map(t=>t.title).join(' · ')}</div></div></div>`:'';
 
   // Extension requests
@@ -1853,50 +1890,7 @@ function renderDashboard(){
   const secCfg=[{k:'Pending',l:'Pending',c:'sh-red'},{k:'Ongoing',l:'Ongoing',c:'sh-yellow'},{k:'Needs Extension',l:'Needs Extension',c:'sh-teal'},{k:'Done',l:'Completed',c:'sh-green'}];
 
   // Build pending section first (highest priority)
-  const pendingSec=(byS.Pending||[]).length?secCfg.filter(sc=>sc.k==='Pending').map(sc=>{
-    const list=byS[sc.k]||[];
-    const rows=list.map(t=>{
-      const ov=t._carryOrigin?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date),rate=t._carryOrigin?taskCompletionRateCumulative(t,t._carryOrigin,date):taskCompletionRate(t.id,date),isOv=isOverdue(t,date)&&ov!=='Done';
-      const mAv=(t.assignees||[]).slice(0,4).map(u=>`<span class="av" title="${getMN(u)}" style="width:20px;height:20px;font-size:8px;margin-right:-2px">${ini(getMN(u))}</span>`).join('');
-      return `<tr class="${isOv?'overdue-row':''}">
-        <td style="width:32%">
-          <div style="font-weight:600">${t.title}${isOv?'&nbsp;<span style="color:var(--red);font-size:10px;font-weight:700">OVERDUE</span>':''}${carryBadge(t)}${t.aoLinked?'&nbsp;<span style="font-size:10px;background:var(--orange-light);color:var(--orange);padding:1px 6px;border-radius:20px;font-weight:700">📊 Abnormal Orders</span>':''}${t.frLinked?'&nbsp;<span style="font-size:10px;background:var(--blue-light);color:var(--blue);padding:1px 6px;border-radius:20px;font-weight:700">💰 Finance Report</span>':''}${t._isPersonal?'&nbsp;<span style="font-size:10px;background:var(--green-light);color:var(--green);padding:1px 6px;border-radius:20px;font-weight:700">✅ Personal</span>':''}</div>
-          <span class="freq-chip fc-${t.freq||'other'}">${t.freq||'personal'}</span>
-          ${t.aoLinked?buildAOInlineRegions(date):''}
-          ${t.frLinked?`<div id="fr-inline-regions-${frGetPlatform(t)}">${buildFRInlineRegions(frGetPlatform(t))}</div>`:''}
-        </td>
-        <td style="width:13%;text-align:center">${t._isPersonal?'<span style="font-size:11px;color:var(--text3)">—</span>':taskDateChip(t,date)}</td>
-        <td style="width:13%;text-align:center"><span class="dl-chip${isOv?' overdue':''}">${t.deadline||'—'}</span></td>
-        <td style="width:18%">${mAv}${(t.assignees||[]).length>4?`<span style="font-size:11px;color:var(--text3)"> +${t.assignees.length-4}</span>`:t._isPersonal?'<span style="font-size:11px;color:var(--text3)">Personal</span>':''}</td>
-        <td style="width:12%;text-align:center">${t._isPersonal?`<select class="finput nb" style="padding:4px 7px;font-size:12px;width:auto" onchange="updatePersonalTaskStatus('${t._key}',this.value)"><option${(t.status||'Pending')==='Pending'?' selected':''}>Pending</option><option${t.status==='Done'?' selected':''}>Done</option></select>`:t.aoLinked||t.frLinked?`<span class="sbadge ${sbc(ov)}" style="cursor:default"><span class="sdot ${sdc(ov)}"></span>${ov}</span>`:statusBadge(ov,t.id,date)}</td>
-        <td style="width:16%">${t._isPersonal?`<button class="btn sm del" onclick="deletePersonalTask('${t._key}')" style="font-size:11px">Delete</button>`:t.frLinked?(()=>{const _fc=getFRCompletionForTask(frGetPlatform(t));const _col=_fc.pct>=100?'var(--green)':_fc.pct>0?'var(--blue)':'var(--red)';return`<div class="rate-bar-wrap"><div class="rate-bar"><div class="rate-bar-fill" style="width:${_fc.pct}%;background:${_col}"></div></div><div style="font-size:11px;font-weight:700;color:${_col};text-align:right">${_fc.pct}%</div></div><div style="font-size:10px;color:var(--text3)">${_fc.done}/${_fc.total} done</div>`;})():t.aoLinked?rateBarHtml(rate.pct)+'<div id="ao-dash-progress" style="font-size:10px;color:var(--text3)">'+rate.done+'/'+rate.total+' done</div>':rateBarHtml(rate.pct)+'<div style="font-size:10px;color:var(--text3)">'+rate.done+'/'+rate.total+' done</div>'+carryProgressNote(t,date)}</td>
-      </tr>`;
-    }).join('');
-    return `<div class="section-hdr ${sc.c}">${sc.l} <span style="opacity:.7">(${list.length})</span></div><div class="tbl-wrap"><table><thead><tr><th style="width:32%">Task</th><th style="width:13%;text-align:center">Task Date</th><th style="width:13%;text-align:center">Deadline</th><th style="width:18%">Assigned</th><th style="width:12%;text-align:center">Status</th><th style="width:16%">Completion</th></tr></thead><tbody>${rows}</tbody></table></div>`;
-  }).join(''):'';
-
-  // Build the rest of the sections (Ongoing, Needs Extension, Done)
-  const otherSecs=secCfg.filter(sc=>sc.k!=='Pending').map(sc=>{
-    const list=byS[sc.k]||[];if(!list.length)return'';
-    const rows=list.map(t=>{
-      const ov=t._carryOrigin?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date),rate=t._carryOrigin?taskCompletionRateCumulative(t,t._carryOrigin,date):taskCompletionRate(t.id,date),isOv=isOverdue(t,date)&&ov!=='Done';
-      const mAv=(t.assignees||[]).slice(0,4).map(u=>`<span class="av" title="${getMN(u)}" style="width:20px;height:20px;font-size:8px;margin-right:-2px">${ini(getMN(u))}</span>`).join('');
-      return `<tr class="${isOv?'overdue-row':''}">
-        <td style="width:32%">
-          <div style="font-weight:600">${t.title}${isOv?'&nbsp;<span style="color:var(--red);font-size:10px;font-weight:700">OVERDUE</span>':''}${carryBadge(t)}${t.aoLinked?'&nbsp;<span style="font-size:10px;background:var(--orange-light);color:var(--orange);padding:1px 6px;border-radius:20px;font-weight:700">📊 Abnormal Orders</span>':''}${t.frLinked?'&nbsp;<span style="font-size:10px;background:var(--blue-light);color:var(--blue);padding:1px 6px;border-radius:20px;font-weight:700">💰 Finance Report</span>':''}${t._isPersonal?'&nbsp;<span style="font-size:10px;background:var(--green-light);color:var(--green);padding:1px 6px;border-radius:20px;font-weight:700">✅ Personal</span>':''}</div>
-          <span class="freq-chip fc-${t.freq||'other'}">${t.freq||'personal'}</span>
-          ${t.aoLinked?buildAOInlineRegions(date):''}
-          ${t.frLinked?`<div id="fr-inline-regions-${frGetPlatform(t)}">${buildFRInlineRegions(frGetPlatform(t))}</div>`:''}
-        </td>
-        <td style="width:13%;text-align:center">${t._isPersonal?'<span style="font-size:11px;color:var(--text3)">—</span>':taskDateChip(t,date)}</td>
-        <td style="width:13%;text-align:center"><span class="dl-chip${isOv?' overdue':''}">${t.deadline||'—'}</span></td>
-        <td style="width:18%">${mAv}${(t.assignees||[]).length>4?`<span style="font-size:11px;color:var(--text3)"> +${t.assignees.length-4}</span>`:t._isPersonal?'<span style="font-size:11px;color:var(--text3)">Personal</span>':''}</td>
-        <td style="width:12%;text-align:center">${t._isPersonal?`<select class="finput nb" style="padding:4px 7px;font-size:12px;width:auto" onchange="updatePersonalTaskStatus('${t._key}',this.value)"><option${(t.status||'Pending')==='Pending'?' selected':''}>Pending</option><option${t.status==='Done'?' selected':''}>Done</option></select>`:t.aoLinked||t.frLinked?`<span class="sbadge ${sbc(ov)}" style="cursor:default"><span class="sdot ${sdc(ov)}"></span>${ov}</span>`:statusBadge(ov,t.id,date)}</td>
-        <td style="width:16%">${t._isPersonal?`<button class="btn sm del" onclick="deletePersonalTask('${t._key}')" style="font-size:11px">Delete</button>`:t.frLinked?(()=>{const _fc=getFRCompletionForTask(frGetPlatform(t));const _col=_fc.pct>=100?'var(--green)':_fc.pct>0?'var(--blue)':'var(--red)';return`<div class="rate-bar-wrap"><div class="rate-bar"><div class="rate-bar-fill" style="width:${_fc.pct}%;background:${_col}"></div></div><div style="font-size:11px;font-weight:700;color:${_col};text-align:right">${_fc.pct}%</div></div><div style="font-size:10px;color:var(--text3)">${_fc.done}/${_fc.total} done</div>`;})():rateBarHtml(rate.pct)+'<div style="font-size:10px;color:var(--text3)">'+rate.done+'/'+rate.total+' done</div>'+carryProgressNote(t,date)}</td>
-      </tr>`;
-    }).join('');
-    return `<div class="section-hdr ${sc.c}">${sc.l} <span style="opacity:.7">(${list.length})</span></div><div class="tbl-wrap"><table><thead><tr><th style="width:32%">Task</th><th style="width:13%;text-align:center">Task Date</th><th style="width:13%;text-align:center">Deadline</th><th style="width:18%">Assigned</th><th style="width:12%;text-align:center">Status</th><th style="width:16%">Completion</th></tr></thead><tbody>${rows}</tbody></table></div>`;
-  }).join('');
+  const pendingSec=(byS.Pending||[]).length?`<div class="section-hdr sh-red">Pending <span style="opacity:.7">(${(byS.Pending||[]).length})</span></div><div class="tbl-wrap"><table>${dashTaskTableHead()}<tbody>${buildDashboardTaskRows(byS.Pending||[],date)}</tbody></table></div>`:'';
 
   // Include personal tasks in admin dashboard — show all users' personal tasks
   const adminPersonal=(D.personalTasks||[]).filter(t=>t._owner===CU.username);
