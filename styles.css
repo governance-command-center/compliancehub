@@ -158,7 +158,7 @@ textarea.finput{resize:vertical;min-height:64px;margin-bottom:0}
 .date-nav{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .nav-arrow{width:30px;height:30px;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface);cursor:pointer;font-size:14px;color:var(--text2);display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .15s}
 .nav-arrow:hover{background:var(--blue-light);border-color:var(--blue);color:var(--blue)}
-.metrics-row{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;margin-bottom:24px}
+.metrics-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:24px}
 .metric-card{background:var(--surface);border-radius:var(--radius-lg);border:1px solid var(--border);padding:20px 20px 16px;box-shadow:var(--shadow-card);transition:transform .18s,box-shadow .18s;border-left:4px solid transparent;position:relative;overflow:hidden}
 .metric-card:hover{transform:translateY(-3px);box-shadow:0 12px 28px rgba(0,0,0,.12)}
 .metric-card::after{content:'';position:absolute;top:0;right:0;width:80px;height:80px;border-radius:50%;opacity:.07;transform:translate(24px,-24px)}
@@ -168,6 +168,7 @@ textarea.finput{resize:vertical;min-height:64px;margin-bottom:0}
 .mc-green{border-left-color:var(--green)}.mc-green::after{background:var(--green)}.mc-green .mc-label,.mc-green .mc-val{color:var(--green)}
 .mc-yellow{border-left-color:var(--yellow)}.mc-yellow::after{background:var(--yellow)}.mc-yellow .mc-label,.mc-yellow .mc-val{color:var(--yellow)}
 .mc-red{border-left-color:var(--red)}.mc-red::after{background:var(--red)}.mc-red .mc-label,.mc-red .mc-val{color:var(--red)}
+.mc-orange{border-left-color:var(--orange)}.mc-orange::after{background:var(--orange)}.mc-orange .mc-label,.mc-orange .mc-val{color:var(--orange)}
 .mc-black{border-left-color:#64748b}.mc-black::after{background:#64748b}.mc-black .mc-label{color:var(--text3)}.mc-black .mc-val{color:var(--text)}
 .prog-row{display:flex;align-items:center;gap:10px;margin-bottom:18px}
 .prog-bar{flex:1;height:9px;background:var(--border);border-radius:6px;overflow:hidden}

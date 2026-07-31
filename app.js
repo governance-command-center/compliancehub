@@ -58,6 +58,8 @@ const DEFAULT_TASKS=[
 ];
 const DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const DOWF=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+// How far back the dashboard looks when rolling forward still-pending recurring tasks.
+const CARRYOVER_LOOKBACK_DAYS=120;
 
 let CU=null;
 let D={tasks:[],members:[],statuses:{},actLog:[],calEntries:{},broadcast:null,incidents:[],extRequests:{},groups:[],trackers:{},todAttendance:{},auditLog:[],leaves:[],leadTasks:[],weeklyReports:[],personalTasks:[],_tLoaded:false,_mLoaded:false};
@@ -411,8 +413,118 @@ function taskCompletionRate(taskId, date){
   return {done,total,pct:total?Math.round(done/total*100):0};
 }
 
+// ── CARRY-OVER (pending tasks roll to the next day until completed) ──
+// A recurring task that was scheduled on an earlier day and never fully completed keeps
+// appearing on later days until every assignee is Done. Progress accumulates across all the
+// days it stayed open: a member counts as done if they completed it on ANY day in that window.
+const _dateStrToObj=s=>new Date(s+'T00:00:00');
+const _addDays=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x;};
+
+// Most recent day on-or-before `viewD` that this task was actually scheduled. null if none.
+function lastScheduledOnOrBefore(t,viewD){
+  for(let i=0;i<400;i++){
+    const d=_addDays(viewD,-i);
+    if(isSched(t,d))return d;
+  }
+  return null;
+}
+
+// Origin date of the CURRENT open carry-chain: walk backward over this task's scheduled
+// occurrences starting from the view date. Each occurrence day that was NOT completed (overall
+// Done) on its own day extends the chain further back. The walk stops as soon as it hits an
+// occurrence day that WAS Done — that day closed any earlier chain. Returns the earliest
+// still-open occurrence date, or null if the view-date occurrence itself is already Done.
+//
+// Rationale: an unfinished recurring task keeps rolling forward as ONE running item that
+// accumulates progress across every day it stayed open, until the day it's finally completed.
+function carryOriginDate(t,viewD){
+  // The chain must be live on the view date. If the task's own view-date occurrence is Done,
+  // there is nothing carrying (it was completed today / on this occurrence).
+  // Find the most recent scheduled occurrence on-or-before the view date.
+  let cur=null;
+  for(let i=0;i<=CARRYOVER_LOOKBACK_DAYS;i++){
+    const d=_addDays(viewD,-i);
+    if(isSched(t,d)&&!t.inactive){cur=d;break;}
+  }
+  if(!cur)return null;
+  const curStr=ds(cur);
+  if(computeTaskOverall(t.id,curStr)==='Done')return null; // finished on its current occurrence
+  // Walk further back while each earlier occurrence was also not Done — they're part of the
+  // same open chain. Stop at the first Done occurrence (exclusive).
+  // Walk backward over earlier scheduled occurrences. The most recent occurrence that reached
+  // Done is a hard barrier — anything before it belongs to an already-closed run. Within the
+  // still-open run (everything after that barrier), the origin is the EARLIEST occurrence that
+  // had real activity (any recorded member status). Blank days in between don't break the chain;
+  // they're just days the task sat open. A run that never had any activity doesn't carry — the
+  // task simply shows on its current day as normal.
+  let origin=cur;
+  let d=_addDays(cur,-1);
+  for(let i=0;i<CARRYOVER_LOOKBACK_DAYS;i++){
+    let prev=null;
+    for(let j=0;j<=CARRYOVER_LOOKBACK_DAYS;j++){
+      const dd=_addDays(d,-j);
+      if(_addDays(viewD,-CARRYOVER_LOOKBACK_DAYS)>dd)break;
+      if(isSched(t,dd)&&!t.inactive){prev=dd;break;}
+    }
+    if(!prev)break;
+    const prevStr=ds(prev);
+    if(computeTaskOverall(t.id,prevStr)==='Done')break; // barrier: earlier run already closed
+    if(hasAnyStatus(t.id,prevStr))origin=prev;          // extend origin to this engaged day
+    d=_addDays(prev,-1);
+  }
+  // If nothing before the current day was ever engaged, there's no real carry — return the
+  // current occurrence date (caller treats origin===viewDate as "not carried").
+  return ds(origin);
+}
+// True if any member status was ever recorded for this task on this date.
+function hasAnyStatus(taskId,dateStr){
+  const mems=getMemberStatuses(taskId,dateStr);
+  return mems&&Object.keys(mems).length>0;
+}
+
+// Cumulative member statuses across the carry window [originStr, viewStr]: a member is Done if
+// they were Done on any day in the window; else Ongoing if ever Ongoing; else their view-day status.
+function cumulativeMemberStatuses(t,originStr,viewStr){
+  const out={};
+  (t.assignees||[]).forEach(u=>{out[u]='Pending';});
+  let d=_dateStrToObj(originStr);
+  const end=_dateStrToObj(viewStr);
+  for(let i=0;i<CARRYOVER_LOOKBACK_DAYS+2&&d<=end;i++){
+    const mems=getMemberStatuses(t.id,ds(d));
+    (t.assignees||[]).forEach(u=>{
+      const s=mems[u];
+      if(s==='Done')out[u]='Done';
+      else if(s==='Ongoing'&&out[u]!=='Done')out[u]='Ongoing';
+      else if(s==='Needs Extension'&&out[u]==='Pending')out[u]='Needs Extension';
+    });
+    d=_addDays(d,1);
+  }
+  return out;
+}
+
+// Overall + rate computed cumulatively over the carry window.
+function computeTaskOverallCumulative(t,originStr,viewStr){
+  if(t.aoLinked||t.frLinked)return computeTaskOverall(t.id,viewStr);
+  if((t.assignees||[]).length===0)return 'Pending';
+  const cm=cumulativeMemberStatuses(t,originStr,viewStr);
+  const vals=(t.assignees||[]).map(u=>cm[u]||'Pending');
+  if(vals.every(v=>v==='Done'))return 'Done';
+  if(vals.some(v=>v==='Ongoing'||v==='Done'))return 'Ongoing';
+  if(vals.some(v=>v==='Needs Extension'))return 'Needs Extension';
+  return 'Pending';
+}
+function taskCompletionRateCumulative(t,originStr,viewStr){
+  if(t.aoLinked||t.frLinked)return taskCompletionRate(t.id,viewStr);
+  const cm=cumulativeMemberStatuses(t,originStr,viewStr);
+  const total=(t.assignees||[]).length;
+  const done=(t.assignees||[]).filter(u=>(cm[u]||'Pending')==='Done').length;
+  return {done,total,pct:total?Math.round(done/total*100):0};
+}
+
 function computeDashboardMetrics(tasks, date){
   let totalAssignments=0,doneAssignments=0,ongoingAssignments=0,pendingAssignments=0;
+  // Ageing: how many carried-over tasks there are and the oldest age (in days) among them.
+  let carriedCount=0,maxAgeDays=0,agingSumDays=0;
   tasks.forEach(t=>{
     // frLinked and aoLinked tasks have no per-member statuses — use computeTaskOverall
     // so the assignment-level counters reflect actual tracker data instead of always "Pending"
@@ -424,6 +536,23 @@ function computeDashboardMetrics(tasks, date){
       else pendingAssignments++;
       return;
     }
+    // Carried-over tasks: count each assignee by their CUMULATIVE status across the carry window
+    // so the top counters match what the task rows show, and tally the task's ageing.
+    if(t._carryOrigin){
+      const age=carryDaysOpen(t,date); // full days open since origin (0 = same day)
+      carriedCount++;
+      if(age>maxAgeDays)maxAgeDays=age;
+      agingSumDays+=age;
+      const cm=cumulativeMemberStatuses(t,t._carryOrigin,date);
+      (t.assignees||[]).forEach(u=>{
+        const st=cm[u]||'Pending';
+        totalAssignments++;
+        if(st==='Done')doneAssignments++;
+        else if(st==='Ongoing')ongoingAssignments++;
+        else pendingAssignments++;
+      });
+      return;
+    }
     const mems=getMemberStatuses(t.id,date);
     (t.assignees||[]).forEach(u=>{
       const st=mems[u]||'Pending';
@@ -433,16 +562,16 @@ function computeDashboardMetrics(tasks, date){
       else pendingAssignments++;
     });
   });
-  // Task-level counts
+  // Task-level counts — cumulative overall for carried tasks
   let taskDone=0,taskOngoing=0,taskPending=0;
   tasks.forEach(t=>{
-    const ov=computeTaskOverall(t.id,date);
+    const ov=t._carryOrigin?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date);
     if(ov==='Done')taskDone++;
     else if(ov==='Ongoing')taskOngoing++;
     else taskPending++;
   });
   const pct=totalAssignments?Math.round(doneAssignments/totalAssignments*100):0;
-  return{totalAssignments,doneAssignments,ongoingAssignments,pendingAssignments,taskDone,taskOngoing,taskPending,pct,taskTotal:tasks.length};
+  return{totalAssignments,doneAssignments,ongoingAssignments,pendingAssignments,taskDone,taskOngoing,taskPending,pct,taskTotal:tasks.length,carriedCount,maxAgeDays,agingSumDays};
 }
 
 const getMN=u=>u===ADMIN_UN?ADMIN_NAME:(D.members.find(m=>m.username===u)?.name||u);
@@ -462,6 +591,30 @@ function loadSession(){try{return JSON.parse(localStorage.getItem(SESSION_KEY)||
 function rateBarHtml(pct){
   const col=pct>=80?'var(--green)':pct>=50?'var(--yellow)':'var(--red)';
   return `<div class="rate-bar-wrap"><div class="rate-bar"><div class="rate-bar-fill" style="width:${pct}%;background:${col}"></div></div><div style="font-size:11px;font-weight:700;color:${col};text-align:right">${pct}%</div></div>`;
+}
+
+// Days a carried-over task has been open (origin → view date), inclusive of the origin day.
+function carryDaysOpen(t,viewStr){
+  if(!t._carryOrigin)return 0;
+  const a=new Date(t._carryOrigin+'T00:00:00'),b=new Date(viewStr+'T00:00:00');
+  return Math.max(0,Math.round((b-a)/86400000));
+}
+// Amber "Carried over" pill showing how many days the task has been ageing (open since its
+// origin day). Shown on the task title when it rolled in from an earlier day.
+function carryBadge(t){
+  if(!t._carryOrigin)return '';
+  const age=carryDaysOpen(t,ds(viewDate));
+  const label=age>0?'↻ Carried over · '+age+'d ageing':'↻ Carried over';
+  const strong=age>=3; // 3+ days open — flag more urgently
+  return '&nbsp;<span style="font-size:10px;background:'+(strong?'#fee2e2':'var(--orange-light)')+';color:'+(strong?'var(--red)':'var(--orange)')+';padding:1px 6px;border-radius:20px;font-weight:700" title="Open since '+t._carryOrigin+' — '+age+' day'+(age!==1?'s':'')+' ageing">'+label+'</span>';
+}
+// Small note under the completion bar showing the running/cumulative progress across the days
+// this task has stayed pending.
+function carryProgressNote(t,viewStr){
+  if(!t._carryOrigin)return '';
+  const d=carryDaysOpen(t,viewStr);
+  const r=taskCompletionRateCumulative(t,t._carryOrigin,viewStr);
+  return '<div style="font-size:10px;color:var(--orange);font-weight:600;margin-top:2px">Running: '+r.done+'/'+r.total+' over '+(d+1)+' day'+(d+1!==1?'s':'')+' (since '+t._carryOrigin+')</div>';
 }
 
 function statusBadge(ov,taskId,date){
@@ -524,6 +677,7 @@ function metricsHTML(metrics){
     <div class="metric-card mc-green"><div class="mc-label">Completed</div><div class="mc-val">${metrics.taskDone}</div>${sparkSVG(hDone,'#16a34a')}</div>
     <div class="metric-card mc-yellow"><div class="mc-label">Ongoing</div><div class="mc-val">${metrics.taskOngoing}</div>${sparkSVG(hOng,'#ca8a04')}</div>
     <div class="metric-card mc-red"><div class="mc-label">Pending</div><div class="mc-val">${metrics.taskPending}</div>${sparkSVG(hPend,'#dc2626')}</div>
+    ${metrics.carriedCount?`<div class="metric-card mc-orange"><div class="mc-label">Carried Over</div><div class="mc-val">${metrics.carriedCount}</div><div class="mc-trend" style="color:var(--orange)" title="Oldest task has been open this many days">↻ up to ${metrics.maxAgeDays} day${metrics.maxAgeDays!==1?'s':''} ageing</div></div>`:''}
     <div class="metric-card mc-black"><div class="mc-label">Completion Rate</div><div class="mc-val">${metrics.pct}%</div>${sparkSVG(hPct,'#64748b')}</div>
   </div><div class="prog-row"><div class="prog-bar"><div class="prog-fill" style="width:${metrics.pct}%"></div></div><div class="prog-label">${metrics.pct}%</div><div style="font-size:11px;color:var(--text3)">${metrics.doneAssignments}/${metrics.totalAssignments} assignments done</div></div>`;
 }
@@ -1637,17 +1791,42 @@ function renderDashboard(){
   // Admin sees all admin tasks + all lead tasks so tasks tagged to others appear on dashboard
   const schedBase=CU.isAdmin?[...(D.tasks||[]),...(D.leadTasks||[])]:allTasks();
   const sched=schedBase.filter(t=>!t.inactive&&isSched(t,viewDate));
-  const metrics=computeDashboardMetrics(sched,date);
+  // Carry-over: recurring tasks scheduled on an EARLIER day that are still not fully Done keep
+  // appearing until completed. Attach _carryOrigin (the origin scheduled date) so rows show the
+  // cumulative running progress across every day the task stayed open.
+  const schedIds=new Set(sched.map(t=>t.id));
+  const carried=[];
+  schedBase.forEach(t=>{
+    if(t.inactive)return;
+    if(schedIds.has(t.id))return;               // already showing as today's scheduled occurrence
+    if(t.aoLinked||t.frLinked)return;           // tracker-driven tasks manage their own state
+    if(!(t.assignees||[]).length)return;
+    const origin=carryOriginDate(t,viewDate);
+    if(!origin||origin===date)return;           // nothing open from a prior day
+    if(computeTaskOverallCumulative(t,origin,date)==='Done')return; // already completed
+    carried.push({...t,_carryOrigin:origin});
+  });
+  // Mark today's scheduled tasks with their own carry origin too, so a task pending since an
+  // earlier day but also scheduled again today shows cumulative progress. Use copies so we never
+  // mutate the shared D.tasks / D.leadTasks source objects.
+  const schedTagged=sched.map(t=>{
+    if(t.aoLinked||t.frLinked||!(t.assignees||[]).length)return t;
+    const origin=carryOriginDate(t,viewDate);
+    if(origin&&origin!==date&&computeTaskOverallCumulative(t,origin,date)!=='Done')return {...t,_carryOrigin:origin};
+    return t;
+  });
+  const schedAll=schedTagged.concat(carried);
+  const metrics=computeDashboardMetrics(schedAll,date);
 
   const byS={Done:[],Ongoing:[],Pending:[],'Needs Extension':[]};
-  sched.forEach(t=>{const ov=computeTaskOverall(t.id,date);if(!byS[ov])byS[ov]=[];byS[ov].push(t);});
+  schedAll.forEach(t=>{const ov=t._carryOrigin?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date);if(!byS[ov])byS[ov]=[];byS[ov].push(t);});
   // Inject admin's own personal tasks into the dashboard buckets
   (D.personalTasks||[]).filter(t=>t._owner===CU.username).forEach(t=>{
     const bucket=(t.status==='Done')?'Done':'Pending';
     byS[bucket].push({...t,_isPersonal:true,freq:'personal',deadline:t.dueDate||''});
   });
 
-  const escalated=sched.filter(t=>{const ov=computeTaskOverall(t.id,date);return ov!=='Done'&&isOverdue(t,date);});
+  const escalated=schedAll.filter(t=>{const ov=t._carryOrigin?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date);return ov!=='Done'&&isOverdue(t,date);});
   let escBanner=escalated.length?`<div class="esc-banner"><span>⚠️</span><div><div style="font-weight:700;color:var(--orange);font-size:13px">${escalated.length} overdue task${escalated.length>1?'s':''}</div><div style="font-size:12px;color:var(--text3)">${escalated.map(t=>t.title).join(' · ')}</div></div></div>`:'';
 
   // Extension requests
@@ -1664,11 +1843,11 @@ function renderDashboard(){
   const pendingSec=(byS.Pending||[]).length?secCfg.filter(sc=>sc.k==='Pending').map(sc=>{
     const list=byS[sc.k]||[];
     const rows=list.map(t=>{
-      const ov=computeTaskOverall(t.id,date),rate=taskCompletionRate(t.id,date),isOv=isOverdue(t,date)&&ov!=='Done';
+      const ov=t._carryOrigin?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date),rate=t._carryOrigin?taskCompletionRateCumulative(t,t._carryOrigin,date):taskCompletionRate(t.id,date),isOv=isOverdue(t,date)&&ov!=='Done';
       const mAv=(t.assignees||[]).slice(0,4).map(u=>`<span class="av" title="${getMN(u)}" style="width:20px;height:20px;font-size:8px;margin-right:-2px">${ini(getMN(u))}</span>`).join('');
       return `<tr class="${isOv?'overdue-row':''}">
         <td style="width:36%">
-          <div style="font-weight:600">${t.title}${isOv?'&nbsp;<span style="color:var(--red);font-size:10px;font-weight:700">OVERDUE</span>':''}${t.aoLinked?'&nbsp;<span style="font-size:10px;background:var(--orange-light);color:var(--orange);padding:1px 6px;border-radius:20px;font-weight:700">📊 Abnormal Orders</span>':''}${t.frLinked?'&nbsp;<span style="font-size:10px;background:var(--blue-light);color:var(--blue);padding:1px 6px;border-radius:20px;font-weight:700">💰 Finance Report</span>':''}${t._isPersonal?'&nbsp;<span style="font-size:10px;background:var(--green-light);color:var(--green);padding:1px 6px;border-radius:20px;font-weight:700">✅ Personal</span>':''}</div>
+          <div style="font-weight:600">${t.title}${isOv?'&nbsp;<span style="color:var(--red);font-size:10px;font-weight:700">OVERDUE</span>':''}${carryBadge(t)}${t.aoLinked?'&nbsp;<span style="font-size:10px;background:var(--orange-light);color:var(--orange);padding:1px 6px;border-radius:20px;font-weight:700">📊 Abnormal Orders</span>':''}${t.frLinked?'&nbsp;<span style="font-size:10px;background:var(--blue-light);color:var(--blue);padding:1px 6px;border-radius:20px;font-weight:700">💰 Finance Report</span>':''}${t._isPersonal?'&nbsp;<span style="font-size:10px;background:var(--green-light);color:var(--green);padding:1px 6px;border-radius:20px;font-weight:700">✅ Personal</span>':''}</div>
           <span class="freq-chip fc-${t.freq||'other'}">${t.freq||'personal'}</span>
           ${t.aoLinked?buildAOInlineRegions(date):''}
           ${t.frLinked?`<div id="fr-inline-regions-${frGetPlatform(t)}">${buildFRInlineRegions(frGetPlatform(t))}</div>`:''}
@@ -1676,7 +1855,7 @@ function renderDashboard(){
         <td style="width:14%;text-align:center"><span class="dl-chip${isOv?' overdue':''}">${t.deadline||'—'}</span></td>
         <td style="width:20%">${mAv}${(t.assignees||[]).length>4?`<span style="font-size:11px;color:var(--text3)"> +${t.assignees.length-4}</span>`:t._isPersonal?'<span style="font-size:11px;color:var(--text3)">Personal</span>':''}</td>
         <td style="width:14%;text-align:center">${t._isPersonal?`<select class="finput nb" style="padding:4px 7px;font-size:12px;width:auto" onchange="updatePersonalTaskStatus('${t._key}',this.value)"><option${(t.status||'Pending')==='Pending'?' selected':''}>Pending</option><option${t.status==='Done'?' selected':''}>Done</option></select>`:t.aoLinked||t.frLinked?`<span class="sbadge ${sbc(ov)}" style="cursor:default"><span class="sdot ${sdc(ov)}"></span>${ov}</span>`:statusBadge(ov,t.id,date)}</td>
-        <td style="width:16%">${t._isPersonal?`<button class="btn sm del" onclick="deletePersonalTask('${t._key}')" style="font-size:11px">Delete</button>`:t.frLinked?(()=>{const _fc=getFRCompletionForTask(frGetPlatform(t));const _col=_fc.pct>=100?'var(--green)':_fc.pct>0?'var(--blue)':'var(--red)';return`<div class="rate-bar-wrap"><div class="rate-bar"><div class="rate-bar-fill" style="width:${_fc.pct}%;background:${_col}"></div></div><div style="font-size:11px;font-weight:700;color:${_col};text-align:right">${_fc.pct}%</div></div><div style="font-size:10px;color:var(--text3)">${_fc.done}/${_fc.total} done</div>`;})():t.aoLinked?rateBarHtml(rate.pct)+'<div id="ao-dash-progress" style="font-size:10px;color:var(--text3)">'+rate.done+'/'+rate.total+' done</div>':rateBarHtml(rate.pct)+'<div style="font-size:10px;color:var(--text3)">'+rate.done+'/'+rate.total+' done</div>'}</td>
+        <td style="width:16%">${t._isPersonal?`<button class="btn sm del" onclick="deletePersonalTask('${t._key}')" style="font-size:11px">Delete</button>`:t.frLinked?(()=>{const _fc=getFRCompletionForTask(frGetPlatform(t));const _col=_fc.pct>=100?'var(--green)':_fc.pct>0?'var(--blue)':'var(--red)';return`<div class="rate-bar-wrap"><div class="rate-bar"><div class="rate-bar-fill" style="width:${_fc.pct}%;background:${_col}"></div></div><div style="font-size:11px;font-weight:700;color:${_col};text-align:right">${_fc.pct}%</div></div><div style="font-size:10px;color:var(--text3)">${_fc.done}/${_fc.total} done</div>`;})():t.aoLinked?rateBarHtml(rate.pct)+'<div id="ao-dash-progress" style="font-size:10px;color:var(--text3)">'+rate.done+'/'+rate.total+' done</div>':rateBarHtml(rate.pct)+'<div style="font-size:10px;color:var(--text3)">'+rate.done+'/'+rate.total+' done</div>'+carryProgressNote(t,date)}</td>
       </tr>`;
     }).join('');
     return `<div class="section-hdr ${sc.c}">${sc.l} <span style="opacity:.7">(${list.length})</span></div><div class="tbl-wrap"><table><thead><tr><th style="width:36%">Task</th><th style="width:14%;text-align:center">Deadline</th><th style="width:20%">Assigned</th><th style="width:14%;text-align:center">Status</th><th style="width:16%">Completion</th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -1686,11 +1865,11 @@ function renderDashboard(){
   const otherSecs=secCfg.filter(sc=>sc.k!=='Pending').map(sc=>{
     const list=byS[sc.k]||[];if(!list.length)return'';
     const rows=list.map(t=>{
-      const ov=computeTaskOverall(t.id,date),rate=taskCompletionRate(t.id,date),isOv=isOverdue(t,date)&&ov!=='Done';
+      const ov=t._carryOrigin?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date),rate=t._carryOrigin?taskCompletionRateCumulative(t,t._carryOrigin,date):taskCompletionRate(t.id,date),isOv=isOverdue(t,date)&&ov!=='Done';
       const mAv=(t.assignees||[]).slice(0,4).map(u=>`<span class="av" title="${getMN(u)}" style="width:20px;height:20px;font-size:8px;margin-right:-2px">${ini(getMN(u))}</span>`).join('');
       return `<tr class="${isOv?'overdue-row':''}">
         <td style="width:36%">
-          <div style="font-weight:600">${t.title}${isOv?'&nbsp;<span style="color:var(--red);font-size:10px;font-weight:700">OVERDUE</span>':''}${t.aoLinked?'&nbsp;<span style="font-size:10px;background:var(--orange-light);color:var(--orange);padding:1px 6px;border-radius:20px;font-weight:700">📊 Abnormal Orders</span>':''}${t.frLinked?'&nbsp;<span style="font-size:10px;background:var(--blue-light);color:var(--blue);padding:1px 6px;border-radius:20px;font-weight:700">💰 Finance Report</span>':''}${t._isPersonal?'&nbsp;<span style="font-size:10px;background:var(--green-light);color:var(--green);padding:1px 6px;border-radius:20px;font-weight:700">✅ Personal</span>':''}</div>
+          <div style="font-weight:600">${t.title}${isOv?'&nbsp;<span style="color:var(--red);font-size:10px;font-weight:700">OVERDUE</span>':''}${carryBadge(t)}${t.aoLinked?'&nbsp;<span style="font-size:10px;background:var(--orange-light);color:var(--orange);padding:1px 6px;border-radius:20px;font-weight:700">📊 Abnormal Orders</span>':''}${t.frLinked?'&nbsp;<span style="font-size:10px;background:var(--blue-light);color:var(--blue);padding:1px 6px;border-radius:20px;font-weight:700">💰 Finance Report</span>':''}${t._isPersonal?'&nbsp;<span style="font-size:10px;background:var(--green-light);color:var(--green);padding:1px 6px;border-radius:20px;font-weight:700">✅ Personal</span>':''}</div>
           <span class="freq-chip fc-${t.freq||'other'}">${t.freq||'personal'}</span>
           ${t.aoLinked?buildAOInlineRegions(date):''}
           ${t.frLinked?`<div id="fr-inline-regions-${frGetPlatform(t)}">${buildFRInlineRegions(frGetPlatform(t))}</div>`:''}
@@ -1698,7 +1877,7 @@ function renderDashboard(){
         <td style="width:14%;text-align:center"><span class="dl-chip${isOv?' overdue':''}">${t.deadline||'—'}</span></td>
         <td style="width:20%">${mAv}${(t.assignees||[]).length>4?`<span style="font-size:11px;color:var(--text3)"> +${t.assignees.length-4}</span>`:t._isPersonal?'<span style="font-size:11px;color:var(--text3)">Personal</span>':''}</td>
         <td style="width:14%;text-align:center">${t._isPersonal?`<select class="finput nb" style="padding:4px 7px;font-size:12px;width:auto" onchange="updatePersonalTaskStatus('${t._key}',this.value)"><option${(t.status||'Pending')==='Pending'?' selected':''}>Pending</option><option${t.status==='Done'?' selected':''}>Done</option></select>`:t.aoLinked||t.frLinked?`<span class="sbadge ${sbc(ov)}" style="cursor:default"><span class="sdot ${sdc(ov)}"></span>${ov}</span>`:statusBadge(ov,t.id,date)}</td>
-        <td style="width:16%">${t._isPersonal?`<button class="btn sm del" onclick="deletePersonalTask('${t._key}')" style="font-size:11px">Delete</button>`:t.frLinked?(()=>{const _fc=getFRCompletionForTask(frGetPlatform(t));const _col=_fc.pct>=100?'var(--green)':_fc.pct>0?'var(--blue)':'var(--red)';return`<div class="rate-bar-wrap"><div class="rate-bar"><div class="rate-bar-fill" style="width:${_fc.pct}%;background:${_col}"></div></div><div style="font-size:11px;font-weight:700;color:${_col};text-align:right">${_fc.pct}%</div></div><div style="font-size:10px;color:var(--text3)">${_fc.done}/${_fc.total} done</div>`;})():rateBarHtml(rate.pct)+'<div style="font-size:10px;color:var(--text3)">'+rate.done+'/'+rate.total+' done</div>'}</td>
+        <td style="width:16%">${t._isPersonal?`<button class="btn sm del" onclick="deletePersonalTask('${t._key}')" style="font-size:11px">Delete</button>`:t.frLinked?(()=>{const _fc=getFRCompletionForTask(frGetPlatform(t));const _col=_fc.pct>=100?'var(--green)':_fc.pct>0?'var(--blue)':'var(--red)';return`<div class="rate-bar-wrap"><div class="rate-bar"><div class="rate-bar-fill" style="width:${_fc.pct}%;background:${_col}"></div></div><div style="font-size:11px;font-weight:700;color:${_col};text-align:right">${_fc.pct}%</div></div><div style="font-size:10px;color:var(--text3)">${_fc.done}/${_fc.total} done</div>`;})():rateBarHtml(rate.pct)+'<div style="font-size:10px;color:var(--text3)">'+rate.done+'/'+rate.total+' done</div>'+carryProgressNote(t,date)}</td>
       </tr>`;
     }).join('');
     return `<div class="section-hdr ${sc.c}">${sc.l} <span style="opacity:.7">(${list.length})</span></div><div class="tbl-wrap"><table><thead><tr><th style="width:36%">Task</th><th style="width:14%;text-align:center">Deadline</th><th style="width:20%">Assigned</th><th style="width:14%;text-align:center">Status</th><th style="width:16%">Completion</th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -2666,6 +2845,7 @@ function renderMembers(){
         <div><label class="flabel">Region</label><select class="finput nb" id="nm-reg"><option value="">— None —</option><option>MY</option><option>PH</option><option>TH</option><option>VN</option><option>ID</option><option>SG</option><option>EP</option></select></div>
         <div><label class="flabel">Reports To</label><select class="finput nb" id="nm-rt"><option value="">— None —</option>${D.members.filter(m=>m.approved&&m.active!==false&&['HOD','Manager','Assist. Manager','Team Lead'].includes(m.role)).map(m=>`<option value="${m.username}">${m.name} (${m.role})</option>`).join('')}</select></div>
       </div>
+      <div class="fg"><label class="flabel">Buddy <span style="font-weight:400;color:var(--text3);font-size:11px">(covers this member's trackers — can edit their brand rows)</span></label><select class="finput nb" id="nm-buddy"><option value="">— None —</option>${D.members.filter(m=>m.approved&&m.active!==false).map(m=>`<option value="${m.username}">${m.name}</option>`).join('')}</select></div>
       <div class="form-actions">
         <button class="btn primary" onclick="addM()">Add Member</button>
         <button class="btn" onclick="document.getElementById('bulk-f').click()">Bulk Import Excel</button>
@@ -2694,10 +2874,10 @@ function renderMembers(){
 
 
 async function addM(){
-  const name=document.getElementById('nm-n')?.value.trim(),user=document.getElementById('nm-u')?.value.trim().toLowerCase(),pass=document.getElementById('nm-p')?.value,role=document.getElementById('nm-r')?.value||'Member',region=document.getElementById('nm-reg')?.value||'',rt=document.getElementById('nm-rt')?.value||'';
+  const name=document.getElementById('nm-n')?.value.trim(),user=document.getElementById('nm-u')?.value.trim().toLowerCase(),pass=document.getElementById('nm-p')?.value,role=document.getElementById('nm-r')?.value||'Member',region=document.getElementById('nm-reg')?.value||'',rt=document.getElementById('nm-rt')?.value||'',buddy=document.getElementById('nm-buddy')?.value||'';
   if(!name||!user||!pass){toast('Name, username and password required');return;}
   if(user===ADMIN_UN||D.members.find(m=>m.username===user)){toast('Username already taken');return;}
-  await fbPush('members',{name,username:user,password:pass,role,region,reportsTo:rt,approved:true});
+  await fbPush('members',{name,username:user,password:pass,role,region,reportsTo:rt,buddy,approved:true});
   await logAct(0,ds(now()),CU.name,'Member Added: '+name,'MEMBER_ADDED');
   ['nm-n','nm-u','nm-p'].forEach(id=>document.getElementById(id).value='');
   toast('Member added');
