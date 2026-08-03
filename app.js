@@ -173,7 +173,7 @@ function computeTaskOverall(taskId, date){
   // AO-linked tasks: status from tracker input
   if(task.aoLinked) return getAOStatusForDate(date);
   // Finance report linked tasks
-  if(task.frLinked){const plat=frGetPlatform(task);if(plat)return getFRStatusForTask(plat);}
+  if(task.frLinked){return getFRStatusForTaskObj(task);}
   const mems=getMemberStatuses(taskId,date);
   const vals=(task.assignees||[]).map(u=>mems[u]||'Pending');
   if(vals.every(v=>v==='Done')) return 'Done';
@@ -407,7 +407,7 @@ function taskCompletionRate(taskId, date){
     return {done,total,pct:total?Math.round(done/total*100):0};
   }
   // Finance report linked tasks
-  if(task.frLinked){const plat=frGetPlatform(task);if(plat)return getFRCompletionForTask(plat);}
+  if(task.frLinked){return getFRCompletionForTaskObj(task);}
   const mems=getMemberStatuses(taskId,date);
   const total=(task.assignees||[]).length;
   const done=(task.assignees||[]).filter(u=>(mems[u]||'Pending')==='Done').length;
@@ -1745,8 +1745,7 @@ function buildDashboardTaskRows(list, date){
     if(t._isPersonal){
       completionCell=`<button class="btn sm del" onclick="deletePersonalTask('${t._key}')" style="font-size:11px">Delete</button>`;
     } else if(t.frLinked){
-      const _frPlat=frGetPlatform(t);
-      const _fc=getFRCompletionForTask(_frPlat);
+      const _fc=getFRCompletionForTaskObj(t);
       const _fcCol=_fc.pct>=100?'var(--green)':_fc.pct>0?'var(--blue)':'var(--red)';
       const _fcBar=`<div class="rate-bar-wrap"><div class="rate-bar"><div class="rate-bar-fill" style="width:${_fc.pct}%;background:${_fcCol}"></div></div><div style="font-size:11px;font-weight:700;color:${_fcCol};text-align:right">${_fc.pct}%</div></div>`;
       completionCell=_fcBar+`<div style="font-size:10px;color:var(--text3)">${_fc.done}/${_fc.total} done</div>`;
@@ -1777,7 +1776,7 @@ function buildDashboardTaskRows(list, date){
         <div style="font-weight:600">${t.title}${isOv?'&nbsp;<span style="color:var(--red);font-size:10px;font-weight:700">OVERDUE</span>':''}${carryBadge(t)}${t.aoLinked?'&nbsp;<span style="font-size:10px;background:var(--orange-light);color:var(--orange);padding:1px 6px;border-radius:20px;font-weight:700">📊 Abnormal Orders</span>':''}${t.frLinked?'&nbsp;<span style="font-size:10px;background:var(--blue-light);color:var(--blue);padding:1px 6px;border-radius:20px;font-weight:700">💰 Finance Report</span>':''}${t._isPersonal?'&nbsp;<span style="font-size:10px;background:var(--green-light);color:var(--green);padding:1px 6px;border-radius:20px;font-weight:700">✅ Personal</span>':''}</div>
         <span class="freq-chip fc-${t.freq||'other'}">${t.freq||'personal'}</span>
         ${t.aoLinked?buildAOInlineRegions(date):''}
-        ${t.frLinked?`<div id="fr-inline-regions-${frGetPlatform(t)}">${buildFRInlineRegions(frGetPlatform(t))}</div>`:''}
+        ${t.frLinked?`<div id="fr-inline-regions-${t.id}">${buildFRInlineRegionsForTask(t)}</div>`:''}
       </td>
       <td style="width:13%;text-align:center">${t._isPersonal?'<span style="font-size:11px;color:var(--text3)">—</span>':taskDateChip(t,date)}</td>
       <td style="width:13%;text-align:center"><span class="dl-chip${isOv?' overdue':''}">${t.deadline||'—'}</span></td>
@@ -4708,8 +4707,7 @@ function renderMyTasks(){
         ?`<div>${buildAOInlineRegions(date)}<button class="btn sm" onclick="showPage('live-trackers')" style="margin-top:4px;font-size:11px">Edit in Tracker →</button></div>`
         :t.frLinked
         ?(function(){
-            const frPlat=frGetPlatform(t);
-            const frComp=frPlat?getFRCompletionForTask(frPlat):{done:0,total:0,pct:0};
+            const frComp=getFRCompletionForTaskObj(t);
             const col=frComp.total===0?'var(--text3)':frComp.pct>=100?'var(--green)':frComp.pct>0?'var(--yellow)':'var(--red)';
             const pctLabel=frComp.total?`${frComp.done}/${frComp.total} = ${frComp.pct}%`:'No data';
             return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -7984,6 +7982,91 @@ function getFRCompletionForTask(platform){
   return{done:c.done,total:c.total,pct:c.pct};
 }
 
+// ── Multi-platform, cadence-aware completion ──────────────────────────────
+// A Finance Report task may span ALL platforms (Lazada + Shopee + TikTok), not
+// just one. frGetPlatform() only ever returns a single platform, so the old
+// per-task completion could not see brands marked Done on the other platforms —
+// e.g. Dulux Done on Shopee never moved a Lazada-inferred task. It also always
+// read the WEEKLY column even for monthly reports, so an Aug-1 monthly "Done"
+// (which lives in the monthly column) never registered.
+//
+// frTaskPlatforms() returns every platform the task applies to. If the task
+// pins one explicitly (task.frPlatform) we honour it; otherwise, if the title
+// names a platform we use that one; if it names none (e.g. "Monthly Platform
+// Reports") the task is treated as spanning ALL platform sheets present on the
+// linked tracker.
+function frTaskPlatforms(task){
+  if(!task||!task.frLinked)return[];
+  if(task.frPlatform)return[task.frPlatform];
+  const t=String(task.title||'').toLowerCase();
+  const named=[];
+  if(t.includes('lazada'))named.push('Lazada');
+  if(t.includes('shopee'))named.push('Shopee');
+  if(t.includes('tiktok')||t.includes('tik tok'))named.push('TikTok');
+  if(named.length)return named;
+  // No platform named → span every sheet the linked tracker actually has.
+  const linked=getFRLinked();
+  if(!linked||!linked.sheets)return[];
+  return Object.keys(linked.sheets);
+}
+
+// Does this task track the MONTHLY column rather than the weekly one? Driven by
+// the task's own frequency so a "Monthly …" task reads the monthly (Input Date)
+// column that the Live Tracker highlights green, not the weekly column.
+function frTaskIsMonthly(task){
+  return !!(task&&(task.freq==='monthly'||task.freq==='eom'||task.frMonthly));
+}
+
+// Completion for one sheet against a chosen cadence column (weekly or monthly).
+// Mirrors frGetSheetCompletion but lets the caller pick the column resolver so
+// monthly tasks read the monthly column.
+function frGetSheetCompletionCadence(sheet,platform,wantMonthly){
+  if(!sheet)return{done:0,total:0,pct:0,regions:{}};
+  const colIdx=wantMonthly?frActiveMonthlyColIdx(sheet,platform):frActiveColIdx(sheet,platform);
+  if(colIdx===-1)return{done:0,total:0,pct:0,regions:{}};
+  const dataRows=(sheet.rows||[]).filter(function(r){
+    if(!r||r[0]==null||!String(r[0]).trim())return false;
+    const acctStatus=String(r[2]||'').trim().toLowerCase();
+    return acctStatus!=='inactive'&&acctStatus!=='exited';
+  });
+  let total=0,done=0;const regions={};
+  dataRows.forEach(function(row){
+    const region=String(row[0]||'').trim()||'—';
+    const isDone=frIsDone(row[colIdx]);
+    total++;if(isDone)done++;
+    if(!regions[region])regions[region]={done:0,total:0,notDone:[]};
+    regions[region].total++;
+    if(isDone)regions[region].done++;
+    else{const brand=String(row[4]||'').trim()||String(row[3]||'').trim()||'Unknown';regions[region].notDone.push(brand);}
+  });
+  return{done,total,pct:total?Math.round(done/total*100):0,regions};
+}
+
+// Aggregate completion for a task across ALL of its platforms and the correct
+// cadence column. Each brand-row per platform counts as one unit (1:1), which
+// is exactly how the roll-up should sum Lazada + Shopee + TikTok.
+function getFRCompletionForTaskObj(task){
+  const linked=getFRLinked();
+  if(!linked)return{done:0,total:0,pct:0};
+  const wantMonthly=frTaskIsMonthly(task);
+  let done=0,total=0;
+  frTaskPlatforms(task).forEach(function(plat){
+    const sheet=getFRSheet(linked,plat);
+    if(!sheet)return;
+    const c=frGetSheetCompletionCadence(sheet,plat,wantMonthly);
+    done+=c.done;total+=c.total;
+  });
+  return{done,total,pct:total?Math.round(done/total*100):0};
+}
+
+function getFRStatusForTaskObj(task){
+  const c=getFRCompletionForTaskObj(task);
+  if(!c.total)return'Pending';
+  if(c.pct>=100)return'Done';
+  if(c.pct>0)return'Ongoing';
+  return'Pending';
+}
+
 // ── Per-member section completion (for the "confirm my section" prompt) ──
 // Returns how many of THE CURRENT USER's own assigned brands (matched by Exec or Team Lead
 // name, without the admin-sees-all override) in the active reporting column are filled.
@@ -8075,6 +8158,22 @@ function buildFRInlineRegions(platform){
 
   return progressBar
     +'<div style="margin-top:2px;display:flex;flex-wrap:wrap;gap:2px;align-items:center">'+chips+weekChip+'</div>';
+}
+
+// Inline region breakdown for a task, spanning every platform it applies to.
+// Single-platform tasks render exactly as before; multi-platform tasks stack
+// one labelled block per platform (Lazada / Shopee / TikTok).
+function buildFRInlineRegionsForTask(task){
+  const plats=frTaskPlatforms(task);
+  if(plats.length<=1)return buildFRInlineRegions(plats[0]||null);
+  return plats.map(function(p){
+    const sheet=getFRSheet(getFRLinked()||{},p);
+    if(!sheet)return'';
+    return'<div style="margin-top:6px">'
+      +'<div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">'+p+'</div>'
+      +buildFRInlineRegions(p)
+    +'</div>';
+  }).join('');
 }
 
 // ── FR CW Header Tooltip (fixed-position, immune to sticky thead overflow clipping) ──
