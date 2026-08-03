@@ -62,12 +62,13 @@ const DOWF=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturda
 const CARRYOVER_LOOKBACK_DAYS=120;
 
 let CU=null;
-let D={tasks:[],members:[],statuses:{},actLog:[],calEntries:{},broadcast:null,incidents:[],extRequests:{},groups:[],trackers:{},todAttendance:{},auditLog:[],leaves:[],leadTasks:[],weeklyReports:[],personalTasks:[],_tLoaded:false,_mLoaded:false};
+let D={tasks:[],members:[],statuses:{},actLog:[],calEntries:{},broadcast:null,incidents:[],extRequests:{},groups:[],trackers:{},todAttendance:{},auditLog:[],leaves:[],leadTasks:[],weeklyReports:[],personalTasks:[],nonCompliance:{},_tLoaded:false,_mLoaded:false};
 // FR_WEEK_OFFSET declared early: Finance-tracker render helpers reference it well before its
 // former mid-file declaration, which threw "Cannot access 'FR_WEEK_OFFSET' before initialization".
 // Defaults live here; loadFRConfig() later merges admin overrides from Firebase into this same object.
 let FR_WEEK_OFFSET={Lazada:-1,Shopee:0,TikTok:0};
 let _extListenerInit=false;
+let _ncListenerInit=false;
 let _activeTracker=null,_activeTrackerSheet=null;
 
 let _todWeekStart=null;
@@ -787,6 +788,21 @@ function startApp(){
     D.extRequests=nv;if(_curPage==='dashboard')renderDashboard();
   });
   fbListen('incidents',v=>{D.incidents=v?Object.entries(v).map(([k,i])=>({...i,_key:k})).sort((a,b)=>(b.ts||0)-(a.ts||0)):[];if(_curPage==='incidents')renderIncidents();const open=D.incidents.filter(i=>i.status==='Open').length;const btn=document.getElementById('ntab-incidents');if(btn)btn.style.setProperty('--dot','block');});
+  // Non-compliance registry: overdue/failed tasks land here for admin review instead of being
+  // auto-pushed straight into the incident log. Admin decides per-entry whether to send to Incidents.
+  fbListen('nonCompliance',v=>{
+    const prev=D.nonCompliance||{};const nv=v||{};
+    if(_ncListenerInit&&CU&&CU.isAdmin){
+      Object.keys(nv).forEach(function(k){
+        if(!prev[k]&&nv[k].status==='Open'){
+          const r=nv[k];
+          toast('⚠️ New non-compliance flagged: '+(r.taskTitle||'task'));
+        }
+      });
+    }
+    _ncListenerInit=true;
+    D.nonCompliance=nv;if(_curPage==='dashboard')renderDashboard();
+  });
   fbListen('broadcast',v=>{D.broadcast=v;if(v?.msg){const dis=localStorage.getItem('gh_bc_dis');if(dis!==String(v.ts))showBC(v);}else hideBC();});
   fbListen('calEntries',v=>{D.calEntries={};if(v)for(const[k,en]of Object.entries(v))if(en&&typeof en==='object'){D.calEntries[k]={};for(const[ek,e]of Object.entries(en))D.calEntries[k][ek]={...e,_key:ek};}if(selCalDate)renderCalDay(selCalDate);});
   fbListen('groups',v=>{D.groups=v?Object.entries(v).map(([k,g])=>({...g,_key:k})):[];});
@@ -1739,6 +1755,23 @@ function buildDashboardTaskRows(list, date){
     } else {
       completionCell=rateBarHtml(rate.pct)+`<div style="font-size:10px;color:var(--text3)">${rate.done}/${rate.total} done</div>`+carryProgressNote(t,date);
     }
+    // Inline "Request Extension" control — shown right beside the status so it's easy to find.
+    // Eligible for a non-admin assignee on a normal (non personal/AO/FR) task that isn't Done and
+    // isn't yet overdue (extensions must be requested before the deadline). Reflects a pending or
+    // approved request instead of the button so it can't be submitted twice.
+    let extInline='';
+    if(!t._isPersonal&&!t.aoLinked&&!t.frLinked&&!CU.isAdmin&&(t.assignees||[]).includes(CU.username)){
+      const myStat=getMemberStatus(t.id,date,CU.username);
+      const hasPending=Object.values(D.extRequests||{}).some(function(r){return r.taskId==t.id&&r.date===date&&r.memberUsername===CU.username&&r.status==='Pending';});
+      const hasApproved=!!getApprovedExt(t.id,date);
+      if(hasApproved){
+        extInline='<div style="margin-top:5px"><span style="font-size:10px;font-weight:700;color:var(--teal);background:var(--teal-light,#ccfbf1);padding:2px 7px;border-radius:20px">✓ Extension approved</span></div>';
+      } else if(hasPending){
+        extInline='<div style="margin-top:5px"><span style="font-size:10px;font-weight:700;color:var(--text3);background:var(--bg);border:1px solid var(--border);padding:2px 7px;border-radius:20px">⏳ Extension pending</span></div>';
+      } else if(myStat!=='Done'&&!isOv){
+        extInline='<div style="margin-top:5px"><button class="btn sm teal" style="font-size:10px;padding:2px 8px" onclick="openExtRequestModal('+t.id+',\''+date+'\')">⏱ Request Extension</button></div>';
+      }
+    }
     return `<tr class="${isOv?'overdue-row':''}">
       <td style="width:32%">
         <div style="font-weight:600">${t.title}${isOv?'&nbsp;<span style="color:var(--red);font-size:10px;font-weight:700">OVERDUE</span>':''}${carryBadge(t)}${t.aoLinked?'&nbsp;<span style="font-size:10px;background:var(--orange-light);color:var(--orange);padding:1px 6px;border-radius:20px;font-weight:700">📊 Abnormal Orders</span>':''}${t.frLinked?'&nbsp;<span style="font-size:10px;background:var(--blue-light);color:var(--blue);padding:1px 6px;border-radius:20px;font-weight:700">💰 Finance Report</span>':''}${t._isPersonal?'&nbsp;<span style="font-size:10px;background:var(--green-light);color:var(--green);padding:1px 6px;border-radius:20px;font-weight:700">✅ Personal</span>':''}</div>
@@ -1749,7 +1782,7 @@ function buildDashboardTaskRows(list, date){
       <td style="width:13%;text-align:center">${t._isPersonal?'<span style="font-size:11px;color:var(--text3)">—</span>':taskDateChip(t,date)}</td>
       <td style="width:13%;text-align:center"><span class="dl-chip${isOv?' overdue':''}">${t.deadline||'—'}</span></td>
       <td style="width:18%">${mAv}${(t.assignees||[]).length>4?`<span style="font-size:11px;color:var(--text3)"> +${t.assignees.length-4}</span>`:t._isPersonal?'<span style="font-size:11px;color:var(--text3)">Personal</span>':''}</td>
-      <td style="width:12%;text-align:center">${t._isPersonal?`<select class="finput nb" style="padding:4px 7px;font-size:12px;width:auto" onchange="updatePersonalTaskStatus('${t._key}',this.value)"><option${(t.status||'Pending')==='Pending'?' selected':''}>Pending</option><option${t.status==='Done'?' selected':''}>Done</option></select>`:t.aoLinked||t.frLinked?`<span class="sbadge ${sbc(ov)}" style="cursor:default"><span class="sdot ${sdc(ov)}"></span>${ov}</span>`:statusBadge(ov,t.id,date)}</td>
+      <td style="width:12%;text-align:center">${t._isPersonal?`<select class="finput nb" style="padding:4px 7px;font-size:12px;width:auto" onchange="updatePersonalTaskStatus('${t._key}',this.value)"><option${(t.status||'Pending')==='Pending'?' selected':''}>Pending</option><option${t.status==='Done'?' selected':''}>Done</option></select>`:t.aoLinked||t.frLinked?`<span class="sbadge ${sbc(ov)}" style="cursor:default"><span class="sdot ${sdc(ov)}"></span>${ov}</span>`:statusBadge(ov,t.id,date)}${extInline}</td>
       <td style="width:16%">${completionCell}</td>
     </tr>`;
   }).join('');
@@ -1962,6 +1995,7 @@ function renderDashboard(){
     ${pendingSec}
     ${buildDashboardOngoing(byS,date)}
     ${buildDashboardResponseStatus()}
+    ${buildDashboardNonCompliance()}
     ${buildDashboardOthers(byS,date)}
     ${adminPersonalSec}
     ${memberPersonalSec}
@@ -4924,13 +4958,14 @@ function checkOverdueAndBroadcast(){
       fbSet('broadcast',{msg:msg,ts:Date.now(),sentBy:'System',auto:true});
       toast('Auto-broadcast sent: '+t.title+' overdue');
     }
-    logNonComplianceIncident(t,date);
+    registerNonCompliance(t,date);
   });
 }
 
-// Auto-log a non-compliance incident once a task (including AO/FR-linked live tracker tasks)
-// passes its admin-set deadline without being completed. Skipped entirely if an approved
-// extension is currently covering this task/date — extended tasks are never non-compliance.
+// Register a non-compliance entry once a task (including AO/FR-linked live tracker tasks)
+// passes its admin-set deadline without being completed. This lands in the nonCompliance
+// registry for admin review — it is NOT auto-sent to the incident log. Skipped entirely if an
+// approved extension is currently covering this task/date — extended tasks are never non-compliance.
 // Returns the specific AO tracker rows that were NOT filled in for a given date.
 // Each entry carries the brand, region (sheet key), CDM and Team Lead straight from
 // the tracker row, so a non-compliance incident can name exactly what was missed.
@@ -4970,97 +5005,166 @@ function aoGetUnfilledRows(date){
   return out;
 }
 
-function logNonComplianceIncident(t,date){
+// Register overdue/failed tasks into the non-compliance REGISTRY (nonCompliance/) rather than
+// pushing them straight into the incident log. Each entry is Open and waits for the governance
+// admin to either "Send to Incidents" or "Dismiss". Assigned members can see their own entries.
+// Dedupe key `ncId` is deterministic (task+date+who) so the same miss is never registered twice.
+function registerNonCompliance(t,date){
   if(getApprovedExt(t.id,date))return;
   const platform=t.aoLinked?'Abnormal Orders':t.frLinked?(frGetPlatform(t)||'Finance Report'):'';
 
-  // AO-linked tasks: log one incident per tracker row left unfilled, so the
-  // incident names the exact brand/region/CDM instead of a blanket member list.
+  // AO-linked tasks: one entry per tracker row left unfilled (names the exact brand/region/CDM).
   if(t.aoLinked){
     const missed=aoGetUnfilledRows(date);
     missed.forEach(function(r){
-      const ncKey='gh_nc_'+t.id+'_'+date+'_'+r.region+'_'+r.rowIndex;
-      if(localStorage.getItem(ncKey))return;
-      localStorage.setItem(ncKey,'1');
+      const ncId='nc_'+t.id+'_'+date+'_'+r.region+'_'+r.rowIndex;
+      if((D.nonCompliance||{})[ncId])return; // already registered
       const m=(D.members||[]).find(function(x){return x.name===r.cdm;});
-      // If the tracker's CDM name doesn't match a registered member (blank cell, typo,
-      // ex-member), fall back to the task's own assignees so the incident still notifies
-      // someone instead of logging untagged and reaching nobody.
       let tagged,cdmName,unmatched=false;
-      if(m&&m.username){
-        tagged=[m.username];
-        cdmName=m.name;
-      } else {
-        unmatched=true;
-        tagged=(t.assignees||[]).slice();
-        cdmName=r.cdm||(tagged.map(getMN).join(', ')||'Unassigned');
-      }
-      const responses={};tagged.forEach(function(u){responses[u]={action:'Pending'};});
-      fbPush('incidents',{
-        title:'Non-Compliance: '+t.title,
-        incidentType:'Compliance',
-        classification:'Non-Compliance',
-        category:'Compliance',
-        incidentDate:date,
-        date:date,
-        severity:'Medium',
-        region:r.region,
-        brand:r.brand,
-        platform:platform,
-        cdm:cdmName,
-        cdmTL:r.cdmTL||(m&&m.reportsTo?getMN(m.reportsTo):''),
-        issue:'Non-compliance — failure to update the Abnormal Orders tracker for '+r.brand+' ('+r.region+') on time.',
-        description:'"'+t.title+'" was not updated for '+r.brand+' ('+r.region+') by the '+t.deadline+' deadline.',
-        remarks:unmatched
-          ?('Auto-logged by system after '+t.deadline+' deadline. Tracker CDM "'+(r.cdm||'blank')+'" did not match a registered member — tagged to task assignees.')
-          :('Auto-logged by system after '+t.deadline+' deadline.'),
-        reportedBy:'System',
+      if(m&&m.username){tagged=[m.username];cdmName=m.name;}
+      else{unmatched=true;tagged=(t.assignees||[]).slice();cdmName=r.cdm||(tagged.map(getMN).join(', ')||'Unassigned');}
+      fbSet('nonCompliance/'+ncId,{
+        ncId:ncId,taskId:t.id,taskTitle:t.title,date:date,deadline:t.deadline||'',
+        kind:'AO',platform:platform,region:r.region,brand:r.brand,
+        cdm:cdmName,cdmTL:r.cdmTL||(m&&m.reportsTo?getMN(m.reportsTo):''),
         tagged:tagged,
-        assignees:tagged,
-        responses:responses,
-        status:'Open',
-        _autoNonCompliance:true,
-        _taskId:t.id,
-        ts:Date.now()
+        reason:'Failure to update the Abnormal Orders tracker for '+r.brand+' ('+r.region+') by the '+(t.deadline||'')+' deadline.',
+        detail:unmatched?('Tracker CDM "'+(r.cdm||'blank')+'" did not match a registered member — tagged to task assignees.'):'',
+        status:'Open',sentAsIncident:false,ts:Date.now()
       });
     });
     return;
   }
 
-  // Non-AO tasks: fall back to one incident per pending assignee.
+  // Non-AO tasks: one entry per pending assignee.
   const pending=(t.assignees||[]).filter(function(u){return(getMemberStatus(t.id,date,u)||'Pending')!=='Done';});
   const kind=t.frLinked?'Finance Report (FR) submission':t.title;
   pending.forEach(function(u){
-    const ncKey='gh_nc_'+t.id+'_'+date+'_'+u;
-    if(localStorage.getItem(ncKey))return;
-    localStorage.setItem(ncKey,'1');
+    const ncId='nc_'+t.id+'_'+date+'_'+u;
+    if((D.nonCompliance||{})[ncId])return; // already registered
     const m=(D.members||[]).find(function(x){return x.username===u;})||{};
-    const responses={};responses[u]={action:'Pending'};
-    fbPush('incidents',{
-      title:'Non-Compliance: '+t.title,
-      incidentType:'Compliance',
-      classification:'Non-Compliance',
-      category:'Compliance',
-      incidentDate:date,
-      date:date,
-      severity:'Medium',
-      region:m.region||'',
-      platform:platform,
-      cdm:getMN(u),
-      cdmTL:m.reportsTo?getMN(m.reportsTo):'',
-      issue:'Non-compliance — failure to complete '+kind+' on time.',
-      description:'"'+t.title+'" was not marked Done by the '+t.deadline+' deadline.',
-      remarks:'Auto-logged by system after '+t.deadline+' deadline.',
-      reportedBy:'System',
+    fbSet('nonCompliance/'+ncId,{
+      ncId:ncId,taskId:t.id,taskTitle:t.title,date:date,deadline:t.deadline||'',
+      kind:t.frLinked?'FR':'TASK',platform:platform,region:m.region||'',brand:'',
+      cdm:getMN(u),cdmTL:m.reportsTo?getMN(m.reportsTo):'',
       tagged:[u],
-      assignees:[u],
-      responses:responses,
-      status:'Open',
-      _autoNonCompliance:true,
-      _taskId:t.id,
-      ts:Date.now()
+      reason:'Failure to complete '+kind+' by the '+(t.deadline||'')+' deadline.',
+      detail:'',
+      status:'Open',sentAsIncident:false,ts:Date.now()
     });
   });
+}
+
+// ── NON-COMPLIANCE: admin actions ──────────────────────────────────────────────
+// Governance admin manually flags an already-overdue / failed task as non-compliance
+// straight from the dashboard row, even if the auto-registration hasn't fired yet.
+async function flagNonCompliance(taskId,date){
+  if(!CU.isAdmin){toast('Only the governance admin can flag non-compliance');return;}
+  const t=(D.tasks.find(x=>x.id==taskId))||(D.leadTasks||[]).find(x=>x.id==taskId);
+  if(!t){toast('Task not found');return;}
+  registerNonCompliance(t,date);
+  toast('Flagged as non-compliance');
+}
+
+// Send a registered non-compliance entry into the formal Incident Log. Creates the incident
+// using the same shape the log expects, then marks the NC entry as sent (with a back-reference)
+// so the dashboard shows "✓ Sent as incident" and the admin can't double-send it.
+async function sendNCToIncident(ncId){
+  if(!CU.isAdmin){toast('Only the governance admin can send incidents');return;}
+  const r=(D.nonCompliance||{})[ncId];
+  if(!r){toast('Entry not found');return;}
+  if(r.sentAsIncident){toast('Already sent as an incident');return;}
+  const tagged=(r.tagged||[]).slice();
+  const responses={};tagged.forEach(function(u){responses[u]={action:'Pending'};});
+  const incKey=await fbPush('incidents',{
+    title:'Non-Compliance: '+r.taskTitle,
+    incidentType:'Compliance',
+    classification:'Non-Compliance',
+    category:'Compliance',
+    incidentDate:r.date,
+    date:ds(now()),
+    severity:'Medium',
+    region:r.region||'',
+    brand:r.brand||'',
+    platform:r.platform||'',
+    cdm:r.cdm||'',
+    cdmTL:r.cdmTL||'',
+    issue:'Non-compliance — '+(r.reason||''),
+    description:'"'+r.taskTitle+'" was not completed by the '+(r.deadline||'')+' deadline.',
+    remarks:'Sent to Incidents by '+CU.name+' from the non-compliance list.'+(r.detail?' '+r.detail:''),
+    reportedBy:CU.name,
+    tagged:tagged,
+    assignees:tagged,
+    responses:responses,
+    status:'Open',
+    _fromNonCompliance:true,
+    _ncId:ncId,
+    _taskId:r.taskId,
+    ts:Date.now()
+  });
+  await fbUpd('nonCompliance/'+ncId,{status:'Sent',sentAsIncident:true,sentBy:CU.name,sentAt:Date.now(),incidentKey:incKey});
+  await logAct(r.taskId,r.date,CU.name,'Non-compliance sent to Incidents: '+r.taskTitle,'NC_SENT');
+  toast('Sent to Incident Log');
+}
+
+// Admin dismisses a non-compliance entry without escalating it to an incident.
+async function dismissNC(ncId){
+  if(!CU.isAdmin){toast('Only the governance admin can dismiss');return;}
+  const r=(D.nonCompliance||{})[ncId];
+  if(!r){toast('Entry not found');return;}
+  await fbUpd('nonCompliance/'+ncId,{status:'Dismissed',sentAsIncident:false,dismissedBy:CU.name,dismissedAt:Date.now()});
+  await logAct(r.taskId,r.date,CU.name,'Non-compliance dismissed: '+r.taskTitle,'NC_DISMISSED');
+  toast('Dismissed');
+}
+
+// ── NON-COMPLIANCE: dashboard section ──────────────────────────────────────────
+// Admin sees ALL entries; an assigned member sees only entries tagged to them (so they can see
+// their own non-compliance before/after it's escalated, per requirement).
+function buildDashboardNonCompliance(){
+  const all=Object.values(D.nonCompliance||{}).filter(Boolean);
+  if(!all.length)return'';
+  const visible=CU.isAdmin?all:all.filter(function(r){return(r.tagged||[]).includes(CU.username);});
+  if(!visible.length)return'';
+  // Sort: Open first, then Sent, then Dismissed; newest first within each.
+  const rank={Open:0,Sent:1,Dismissed:2};
+  visible.sort(function(a,b){
+    const ra=rank[a.status]??0,rb=rank[b.status]??0;
+    if(ra!==rb)return ra-rb;
+    return (b.ts||0)-(a.ts||0);
+  });
+  const openCount=visible.filter(function(r){return r.status==='Open';}).length;
+
+  function statusPill(r){
+    if(r.status==='Sent'||r.sentAsIncident)
+      return '<span style="font-size:10px;font-weight:700;color:var(--red);background:var(--red-light,#fee2e2);padding:2px 8px;border-radius:20px;white-space:nowrap">✓ Sent as incident</span>';
+    if(r.status==='Dismissed')
+      return '<span style="font-size:10px;font-weight:700;color:var(--text3);background:var(--bg);border:1px solid var(--border);padding:2px 8px;border-radius:20px;white-space:nowrap">Dismissed</span>';
+    return '<span style="font-size:10px;font-weight:700;color:var(--orange);background:var(--orange-light);padding:2px 8px;border-radius:20px;white-space:nowrap">⏳ Open</span>';
+  }
+
+  const rows=visible.map(function(r){
+    const who=r.cdm||(r.tagged||[]).map(getMN).join(', ')||'—';
+    const scope=[r.brand,r.region,r.platform].filter(Boolean).join(' · ');
+    const actions=CU.isAdmin&&r.status==='Open'
+      ? '<div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap"><button class="btn sm del" onclick="sendNCToIncident(\''+r.ncId+'\')">Send to Incident</button><button class="btn sm" onclick="dismissNC(\''+r.ncId+'\')">Dismiss</button></div>'
+      : '';
+    return '<tr>'
+      +'<td style="width:26%"><div style="font-weight:600">'+escHtml(r.taskTitle||'')+'</div>'+(scope?'<div style="font-size:11px;color:var(--text3)">'+escHtml(scope)+'</div>':'')+'</td>'
+      +'<td style="width:16%">'+escHtml(who)+'</td>'
+      +'<td style="width:12%;text-align:center"><span style="font-size:11px">'+escHtml(r.date||'')+'</span><div style="font-size:10px;color:var(--text4)">'+escHtml(r.deadline||'')+'</div></td>'
+      +'<td style="width:26%"><div style="font-size:12px;color:var(--text2)">'+escHtml(r.reason||'')+'</div>'+(r.detail?'<div style="font-size:10px;color:var(--text4);margin-top:2px">'+escHtml(r.detail)+'</div>':'')+'</td>'
+      +'<td style="width:10%;text-align:center">'+statusPill(r)+'</td>'
+      +'<td style="width:10%">'+actions+'</td>'
+      +'</tr>';
+  }).join('');
+
+  return '<div class="section-hdr sh-red" style="margin-top:4px">Non-Compliance'
+    +(openCount?' <span style="opacity:.7">('+openCount+' open)</span>':' <span style="opacity:.7">('+visible.length+')</span>')
+    +(CU.isAdmin?'':' <span style="font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)">— your flagged tasks</span>')
+    +'</div>'
+    +'<div class="tbl-wrap"><table><thead><tr>'
+    +'<th style="width:26%">Task</th><th style="width:16%">CDM / Assigned</th><th style="width:12%;text-align:center">Date / Deadline</th><th style="width:26%">Reason</th><th style="width:10%;text-align:center">Status</th><th style="width:10%">'+(CU.isAdmin?'Action':'')+'</th>'
+    +'</tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 
 // Called every minute for non-admin users — checks their own lead tasks for overdue auto-escalation
