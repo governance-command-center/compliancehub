@@ -5106,6 +5106,48 @@ function aoGetUnfilledRows(date){
   return out;
 }
 
+// Returns the pending (unfilled) FR brand rows for a task, straight from the live tracker —
+// one item per brand row that is NOT yet done in the task's active cadence column. Mirrors
+// aoGetUnfilledRows so FR non-compliance names exactly which brand was missed and, crucially,
+// tags the Exec/CDM CURRENTLY selected on that row in the Live Tracker (not stale task
+// assignees). Inactive/exited brand rows are skipped — same filter the completion math uses —
+// so a resigned member whose brands were reassigned or exited never gets flagged.
+function frGetUnfilledRows(task,date){
+  const out=[];
+  const linked=getFRLinked();
+  if(!linked||!linked.sheets)return out;
+  const wantMonthly=frTaskIsMonthly(task);
+  frTaskPlatforms(task).forEach(function(platform){
+    const sheet=getFRSheet(linked,platform);
+    if(!sheet)return;
+    const colIdx=wantMonthly?frActiveMonthlyColIdx(sheet,platform):frActiveColIdx(sheet,platform);
+    if(colIdx===-1)return;
+    const regionCol=frFixedColIdx(sheet,platform,'region');
+    const acctCol=frFixedColIdx(sheet,platform,'acct');
+    const brandCol=frFixedColIdx(sheet,platform,'brand');
+    const execCol=frFixedColIdx(sheet,platform,'exec');
+    // Team Lead column: detect by header, else conventional position right after Exec.
+    const headerRows=(sheet.headerRows)||(sheet.row0?[sheet.row0]:[[]]);
+    const hr0=headerRows[0]||[];
+    const tlCol=(function(){const i=hr0.findIndex(function(l){return/team.?lead|^tl$/i.test(String(l||''));});return i>=0?i:execCol+1;})();
+    (sheet.rows||[]).forEach(function(row,ri){
+      if(!row||row[regionCol]==null||!String(row[regionCol]).trim())return;
+      const acctStatus=String(row[acctCol]||'').trim().toLowerCase();
+      if(acctStatus==='inactive'||acctStatus==='exited')return; // not a live obligation
+      if(frIsDone(row[colIdx]))return;                          // already submitted → not pending
+      out.push({
+        platform:platform,
+        region:String(row[regionCol]||'').trim(),
+        brand:String(row[brandCol]||'').trim()||String(row[brandCol-1]||'').trim()||'Unknown',
+        exec:row[execCol]!=null?String(row[execCol]).trim():'',
+        tl:row[tlCol]!=null?String(row[tlCol]).trim():'',
+        rowIndex:ri
+      });
+    });
+  });
+  return out;
+}
+
 // Register overdue/failed tasks into the non-compliance REGISTRY (nonCompliance/) rather than
 // pushing them straight into the incident log. Each entry is Open and waits for the governance
 // admin to either "Send to Incidents" or "Dismiss". Assigned members can see their own entries.
@@ -5137,19 +5179,50 @@ function registerNonCompliance(t,date){
     return;
   }
 
-  // Non-AO tasks: one entry per pending assignee.
+  // FR-linked tasks: one entry per pending brand ROW in the live tracker, tagged to the Exec/CDM
+  // currently selected on that row. This replaces the old "one entry per task assignee" logic,
+  // which flagged stale/resigned assignees who no longer own any live brand. Rows that are
+  // inactive/exited, or already filled in, are skipped by frGetUnfilledRows.
+  if(t.frLinked){
+    const missed=frGetUnfilledRows(t,date);
+    missed.forEach(function(r){
+      const ncId='nc_'+t.id+'_'+date+'_'+r.platform+'_'+r.rowIndex;
+      if((D.nonCompliance||{})[ncId])return; // already registered
+      // Resolve the row's Exec/CDM name to a registered member so it tags a real login.
+      const execName=(r.exec||'').trim();
+      const m=(D.members||[]).find(function(x){return x.name&&x.name.trim().toLowerCase()===execName.toLowerCase();});
+      // A row whose Exec is blank, or names someone no longer a registered/active member, has no
+      // valid current owner — skip it rather than mis-tagging. The obligation follows whoever the
+      // Live Tracker currently assigns; if nobody is assigned, there is no member to flag.
+      if(!m||!m.username)return;
+      if(m.active===false||m.approved===false)return; // resigned / deactivated → not flagged
+      const tlName=(r.tl||'').trim();
+      const tlM=(D.members||[]).find(function(x){return x.name&&x.name.trim().toLowerCase()===tlName.toLowerCase();});
+      fbSet('nonCompliance/'+ncId,{
+        ncId:ncId,taskId:t.id,taskTitle:t.title,date:date,deadline:t.deadline||'',
+        kind:'FR',platform:r.platform||platform,region:r.region||m.region||'',brand:r.brand||'',
+        cdm:m.name,cdmTL:tlM?tlM.name:(tlName||(m.reportsTo?getMN(m.reportsTo):'')),
+        tagged:[m.username],
+        reason:'Failure to complete '+t.title+' for '+r.brand+(r.region?' ('+r.region+')':'')+' by the '+(t.deadline||'')+' deadline.',
+        detail:'',
+        status:'Open',sentAsIncident:false,ts:Date.now()
+      });
+    });
+    return;
+  }
+
+  // Plain (non-tracker) tasks: one entry per pending assignee.
   const pending=(t.assignees||[]).filter(function(u){return(getMemberStatus(t.id,date,u)||'Pending')!=='Done';});
-  const kind=t.frLinked?'Finance Report (FR) submission':t.title;
   pending.forEach(function(u){
     const ncId='nc_'+t.id+'_'+date+'_'+u;
     if((D.nonCompliance||{})[ncId])return; // already registered
     const m=(D.members||[]).find(function(x){return x.username===u;})||{};
     fbSet('nonCompliance/'+ncId,{
       ncId:ncId,taskId:t.id,taskTitle:t.title,date:date,deadline:t.deadline||'',
-      kind:t.frLinked?'FR':'TASK',platform:platform,region:m.region||'',brand:'',
+      kind:'TASK',platform:platform,region:m.region||'',brand:'',
       cdm:getMN(u),cdmTL:m.reportsTo?getMN(m.reportsTo):'',
       tagged:[u],
-      reason:'Failure to complete '+kind+' by the '+(t.deadline||'')+' deadline.',
+      reason:'Failure to complete '+t.title+' by the '+(t.deadline||'')+' deadline.',
       detail:'',
       status:'Open',sentAsIncident:false,ts:Date.now()
     });
@@ -5219,10 +5292,46 @@ async function dismissNC(ncId){
 }
 
 // ── NON-COMPLIANCE: dashboard section ──────────────────────────────────────────
+// Is an Open FR non-compliance entry still valid — i.e. does its tagged member still exist, is
+// still active/approved, and does the Live Tracker still assign them a NON-exited brand row on
+// this task's platform? Entries that fail (member resigned, or their brands were reassigned/
+// exited) are stale: the obligation has moved off them, so they shouldn't keep showing or count
+// as open. Only Open FR entries are gated; AO/TASK entries and already Sent/Dismissed FR entries
+// are left untouched (historical record).
+function ncEntryStillValid(r){
+  if(!r)return false;
+  if(r.kind!=='FR')return true;            // only FR entries are tracker-ownership driven
+  if(r.status&&r.status!=='Open')return true; // Sent/Dismissed are historical — always keep
+  const u=(r.tagged||[])[0];
+  if(!u)return false;
+  const m=(D.members||[]).find(function(x){return x.username===u;});
+  if(!m)return false;                       // tagged member no longer registered
+  if(m.active===false||m.approved===false)return false; // resigned / deactivated
+  // Still owns a live brand row for this task's platform?
+  const linked=getFRLinked();
+  if(!linked)return true;                   // tracker unavailable → don't hide on a transient gap
+  const sheet=getFRSheet(linked,r.platform);
+  if(!sheet)return true;
+  const execCol=frFixedColIdx(sheet,r.platform,'exec');
+  const headerRows=(sheet.headerRows)||(sheet.row0?[sheet.row0]:[[]]);
+  const hr0=headerRows[0]||[];
+  const tlCol=(function(){const i=hr0.findIndex(function(l){return/team.?lead|^tl$/i.test(String(l||''));});return i>=0?i:execCol+1;})();
+  const acctCol=frFixedColIdx(sheet,r.platform,'acct');
+  const nm=String(m.name||'').trim().toLowerCase();
+  return (sheet.rows||[]).some(function(row){
+    if(!row)return false;
+    const st=String(row[acctCol]||'').trim().toLowerCase();
+    if(st==='inactive'||st==='exited')return false;
+    const ex=String(row[execCol]||'').trim().toLowerCase();
+    const tl=String(row[tlCol]||'').trim().toLowerCase();
+    return (ex&&ex===nm)||(tl&&tl===nm);
+  });
+}
+
 // Admin sees ALL entries; an assigned member sees only entries tagged to them (so they can see
 // their own non-compliance before/after it's escalated, per requirement).
 function buildDashboardNonCompliance(){
-  const all=Object.values(D.nonCompliance||{}).filter(Boolean);
+  const all=Object.values(D.nonCompliance||{}).filter(Boolean).filter(ncEntryStillValid);
   if(!all.length)return'';
   const visible=CU.isAdmin?all:all.filter(function(r){return(r.tagged||[]).includes(CU.username);});
   if(!visible.length)return'';
@@ -5259,10 +5368,24 @@ function buildDashboardNonCompliance(){
       +'</tr>';
   }).join('');
 
-  return '<div class="section-hdr sh-red" style="margin-top:4px">Non-Compliance'
-    +(openCount?' <span style="opacity:.7">('+openCount+' open)</span>':' <span style="opacity:.7">('+visible.length+')</span>')
-    +(CU.isAdmin?'':' <span style="font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)">— your flagged tasks</span>')
-    +'</div>'
+  // Collapsible like the Activity Feed so a long non-compliance list doesn't pile up in the view.
+  // Default collapsed; the header stays visible with a count badge and toggles on click.
+  if(window._ncOpen===undefined)window._ncOpen=false;
+  const isOpen=window._ncOpen;
+  const countBadge=' <span style="opacity:.7">'
+    +(openCount?'('+openCount+' open)':'('+visible.length+')')
+    +'</span>'
+    +(CU.isAdmin?'':' <span style="font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)">— your flagged tasks</span>');
+  const toggle='<span style="font-size:12px;color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0">'+(isOpen?'▲ Hide':'▼ Show')+'</span>';
+
+  const header='<div class="section-hdr sh-red" style="margin-top:4px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none"'
+    +' onclick="window._ncOpen=!window._ncOpen;renderDashboard()">'
+    +'<span>Non-Compliance'+countBadge+'</span>'+toggle
+    +'</div>';
+
+  if(!isOpen)return header;
+
+  return header
     +'<div class="tbl-wrap"><table><thead><tr>'
     +'<th style="width:26%">Task</th><th style="width:16%">CDM / Assigned</th><th style="width:12%;text-align:center">Date / Deadline</th><th style="width:26%">Reason</th><th style="width:10%;text-align:center">Status</th><th style="width:10%">'+(CU.isAdmin?'Action':'')+'</th>'
     +'</tr></thead><tbody>'+rows+'</tbody></table></div>';
