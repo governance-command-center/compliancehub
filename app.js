@@ -62,7 +62,7 @@ const DOWF=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturda
 const CARRYOVER_LOOKBACK_DAYS=120;
 
 let CU=null;
-let D={tasks:[],members:[],statuses:{},actLog:[],calEntries:{},broadcast:null,incidents:[],extRequests:{},groups:[],trackers:{},todAttendance:{},auditLog:[],leaves:[],leadTasks:[],weeklyReports:[],personalTasks:[],nonCompliance:{},_tLoaded:false,_mLoaded:false};
+let D={tasks:[],members:[],statuses:{},actLog:[],calEntries:{},broadcast:null,incidents:[],extRequests:{},groups:[],trackers:{},todAttendance:{},auditLog:[],leaves:[],leadTasks:[],weeklyReports:[],personalTasks:[],nonCompliance:{},frCompletions:{},_tLoaded:false,_mLoaded:false};
 // FR_WEEK_OFFSET declared early: Finance-tracker render helpers reference it well before its
 // former mid-file declaration, which threw "Cannot access 'FR_WEEK_OFFSET' before initialization".
 // Defaults live here; loadFRConfig() later merges admin overrides from Firebase into this same object.
@@ -483,19 +483,99 @@ function hasAnyStatus(taskId,dateStr){
   return mems&&Object.keys(mems).length>0;
 }
 
+// ── Tracker-linked completion dates (linger-through-completion-day) ──────────
+// FR/AO task status is read LIVE from the tracker and is date-independent, so the moment the
+// last cell is filled the task reads "Done" and would otherwise disappear the same instant.
+// Requirement: a report assigned on the 1st but finished on the 4th must stay on the dashboard
+// through the 4th and only drop off on the 5th. To do that we stamp the date the task's current
+// reporting CYCLE first reaches 100% (per cycle, so next month starts fresh) and key the carry
+// off that stamp. frCycleKey identifies the cycle: the month for a monthly task, else the active
+// weekly column's due date. frGetCompletionDate returns the stored stamp (or null).
+function frCycleKey(t){
+  if(!(t.aoLinked||t.frLinked))return null;
+  if(t.frLinked&&frTaskIsMonthly(t)){
+    // Monthly cycle = the calendar month currently being reported. Anchor to the active monthly
+    // column's due date (1st of the following month) when we can read it, so the key rolls over
+    // exactly when the tracker's monthly column does; fall back to the current month.
+    const linked=getFRLinked();
+    const plats=frTaskPlatforms(t);
+    if(linked&&plats.length){
+      const sheet=getFRSheet(linked,plats[0]);
+      if(sheet){
+        const ci=frActiveMonthlyColIdx(sheet,plats[0]);
+        const grp=_frScanDateCols(sheet,plats[0]).find(function(g){return g.ci===ci;});
+        if(grp&&grp.dueDate){
+          const dd=new Date(grp.dueDate);dd.setDate(dd.getDate()-1); // last covered day = the reported month
+          return 'm'+dd.getFullYear()+'-'+String(dd.getMonth()+1).padStart(2,'0');
+        }
+      }
+    }
+    const n=now();return 'm'+n.getFullYear()+'-'+String(n.getMonth()+1).padStart(2,'0');
+  }
+  if(t.frLinked){
+    // Weekly cycle = the active weekly column's due date (rolls forward each reporting week).
+    const linked=getFRLinked();
+    const plats=frTaskPlatforms(t);
+    if(linked&&plats.length){
+      const sheet=getFRSheet(linked,plats[0]);
+      if(sheet){
+        const ci=frActiveColIdx(sheet,plats[0]);
+        const grp=_frScanDateCols(sheet,plats[0]).find(function(g){return g.ci===ci;});
+        if(grp&&grp.dueDate)return 'w'+ds(grp.dueDate);
+      }
+    }
+  }
+  // AO or unresolved FR → key by the current ISO week so it still resets periodically.
+  return 'w'+getWeekNumber(ds(now()));
+}
+function frGetCompletionDate(t){
+  const key=frCycleKey(t);
+  if(!key)return null;
+  const rec=(D.frCompletions||{})[t.id];
+  return rec&&rec[key]?rec[key]:null;
+}
+// Called on every tracker update: if a tracker-linked task's current cycle now reads Done and we
+// haven't stamped a completion date for that cycle yet, stamp today. Idempotent — only writes once
+// per cycle, so re-renders and multi-client listeners don't keep rewriting it.
+function frRecordCompletions(){
+  if(!CU)return;
+  const all=[...(D.tasks||[]),...(D.leadTasks||[])];
+  all.forEach(function(t){
+    if(t.inactive||!(t.aoLinked||t.frLinked))return;
+    if(computeTaskOverall(t.id,ds(now()))!=='Done')return;
+    const key=frCycleKey(t);
+    if(!key)return;
+    const rec=(D.frCompletions||{})[t.id]||{};
+    if(rec[key])return; // already stamped for this cycle
+    const today=ds(now());
+    // optimistic local update so the current render already sees it
+    if(!D.frCompletions[t.id])D.frCompletions[t.id]={};
+    D.frCompletions[t.id][key]=today;
+    fbSet('frCompletions/'+t.id+'/'+key,today);
+  });
+}
+
 // Carry-over for TRACKER-LINKED tasks (Finance Report / Abnormal Orders). These don't store
 // per-day member statuses — their status comes live from the linked tracker (date-independent).
-// So the rule is simpler: if the task was scheduled on an earlier day and the tracker is still
-// not fully Done (100%), it keeps appearing until the tracker is complete. Returns the most
-// recent PAST scheduled occurrence date (the day it was originally due) if it's still open and
-// that occurrence is earlier than the view date; otherwise null (nothing to carry).
+// A tracker task keeps appearing from its scheduled day until it is completed AND that completion
+// day has passed: while pending it carries; on the day it hits 100% it still shows (so the team
+// sees it close out that day); the day AFTER its recorded completion date it finally drops off.
+// Returns the most recent PAST scheduled occurrence date (its original due day) while it should
+// still show; otherwise null (nothing to carry).
 function trackerCarryOrigin(t,viewD){
   if(!(t.aoLinked||t.frLinked))return null;
   const viewStr=ds(viewD);
   // If it's scheduled today, it's a normal occurrence, not a carry.
   if(isSched(t,viewD))return null;
-  // Live tracker status — if already Done, nothing carries.
-  if(computeTaskOverall(t.id,viewStr)==='Done')return null;
+  // If the cycle was completed, keep showing THROUGH the completion day; hide strictly after it.
+  if(computeTaskOverall(t.id,viewStr)==='Done'){
+    const cd=frGetCompletionDate(t);
+    // Done but no stamp yet (e.g. completed before this feature, or stamp not written) → treat as
+    // completed today so it still lingers one day rather than disappearing retroactively.
+    if(!cd)return null;
+    if(viewStr>cd)return null;      // past the completion day → drop off
+    // else: viewStr <= cd → fall through and keep carrying (still its completion day)
+  }
   // Find the most recent scheduled occurrence strictly before the view date.
   for(let i=1;i<=CARRYOVER_LOOKBACK_DAYS;i++){
     const d=_addDays(viewD,-i);
@@ -768,7 +848,7 @@ function startApp(){
   const sr=document.getElementById('sidebar-role');if(sr)sr.textContent=CU.isAdmin?'Admin':(CU.role||'Member');
   // Restore sidebar collapse state
   if(localStorage.getItem('gh_sb_collapsed')==='1'){const sb=document.getElementById('sidebar');if(sb)sb.classList.add('collapsed');}
-  fbListen('tasks',v=>{D.tasks=v?Object.values(v).filter(Boolean):[];D._tLoaded=true;buildNav();rerender();});
+  fbListen('tasks',v=>{D.tasks=v?Object.values(v).filter(Boolean):[];D._tLoaded=true;frRecordCompletions();buildNav();rerender();});
   fbListen('members',v=>{D.members=v?Object.values(v).filter(Boolean):[];D._mLoaded=true;buildNav();rerender();});
   fbListen('statuses',v=>{D.statuses=v||{};rerender();});
   fbListen('actLog',v=>{D.actLog=v?Object.values(v).sort((a,b)=>(b.ts||0)-(a.ts||0)).slice(0,500):[];if(_curPage==='dashboard')renderDashboard();});
@@ -837,7 +917,13 @@ function startApp(){
       if(_curPage==='tasks')renderTasks();
     });
   }
+  // Per-cycle completion dates for tracker-linked (FR/AO) tasks. Stamped the first day a task's
+  // reporting cycle reads 100%, so a completed report keeps showing through THAT day and drops off
+  // the next — instead of vanishing the instant the last cell is filled. See frRecordCompletions().
+  fbListen('frCompletions',v=>{D.frCompletions=v||{};if(_curPage==='dashboard')renderDashboard();if(_curPage==='my-tasks')renderMyTasks();});
   fbListen('trackers',v=>{D.trackers=v||{};
+    // A tracker edit may have just pushed a cycle to 100% — stamp its completion date now.
+    frRecordCompletions();
     // Only re-render live trackers if user is not currently editing an AO cell
     if(_curPage==='live-trackers'){
       const active=document.activeElement;
@@ -8121,8 +8207,13 @@ function frGetMySectionCompletion(sheet,platform){
   return{done,total,complete:total>0&&done>=total};
 }
 
-// Build inline region chips for dashboard (hover shows pending brands)
-function buildFRInlineRegions(platform){
+// Build inline region chips for dashboard (hover shows pending brands).
+// `wantMonthly` picks which cadence column the per-region breakdown reads. It MUST match the
+// cadence the task's overall completion cell uses (getFRCompletionForTaskObj → frTaskIsMonthly),
+// otherwise a monthly task shows its right-side bar from the monthly column while these region
+// chips read the (still-empty) weekly column — the exact mismatch that made Lazada look 36%
+// incomplete here while the completion cell correctly read 100% from the monthly column.
+function buildFRInlineRegions(platform,wantMonthly){
   if(!platform)return'';
   const linked=getFRLinked();
   if(!linked){
@@ -8131,7 +8222,7 @@ function buildFRInlineRegions(platform){
   }
   const sheet=getFRSheet(linked,platform);
   if(!sheet)return'<div style="font-size:11px;color:var(--text3);margin-top:4px">No '+platform+' sheet in tracker</div>';
-  const comp=frGetSheetCompletion(sheet,platform);
+  const comp=frGetSheetCompletionCadence(sheet,platform,!!wantMonthly);
   if(!comp.total)return'<div style="font-size:11px;color:var(--text3);margin-top:4px">No data for current cycle</div>';
 
   // Overall progress
@@ -8162,15 +8253,26 @@ function buildFRInlineRegions(platform){
     +'</div>';
   }).join('');
 
-  // Week label chip with date tooltip
-  const weekChip='<div class="tt-wrap" style="display:inline-block;margin:2px">'
-    +'<span style="font-size:10px;color:var(--blue);background:var(--blue-light);padding:2px 7px;border-radius:20px;font-weight:700;cursor:default;display:inline-block">📅 '+cwLabel+'</span>'
-    +'<div class="tt-box" style="min-width:180px;white-space:normal;line-height:1.5;font-size:11px;font-weight:400">'
-      +'<b>Week of '+effLabel+'</b><br>'
-      +(offset!==0?'<span style="color:#fca5a5">Offset: '+(offset<0?Math.abs(offset)+' week(s) behind':'ahead by '+offset+'w')+'</span><br>':'')
-      +'Hover region chips to see pending stores.'
+  // Cadence label chip with tooltip. Monthly-cadence breakdowns show a "Monthly" chip keyed to
+  // the current month rather than a weekly CW number (which would be misleading — the region
+  // counts come from the monthly column, not the weekly one).
+  const monthLabel=now().toLocaleDateString('en-PH',{month:'long',year:'numeric'});
+  const weekChip=wantMonthly
+    ?'<div class="tt-wrap" style="display:inline-block;margin:2px">'
+      +'<span style="font-size:10px;color:var(--green);background:var(--green-light);padding:2px 7px;border-radius:20px;font-weight:700;cursor:default;display:inline-block">🗓️ Monthly</span>'
+      +'<div class="tt-box" style="min-width:180px;white-space:normal;line-height:1.5;font-size:11px;font-weight:400">'
+        +'<b>'+monthLabel+' monthly report</b><br>'
+        +'Counts read from the monthly column. Hover region chips to see pending stores.'
+      +'</div>'
     +'</div>'
-  +'</div>';
+    :'<div class="tt-wrap" style="display:inline-block;margin:2px">'
+      +'<span style="font-size:10px;color:var(--blue);background:var(--blue-light);padding:2px 7px;border-radius:20px;font-weight:700;cursor:default;display:inline-block">📅 '+cwLabel+'</span>'
+      +'<div class="tt-box" style="min-width:180px;white-space:normal;line-height:1.5;font-size:11px;font-weight:400">'
+        +'<b>Week of '+effLabel+'</b><br>'
+        +(offset!==0?'<span style="color:#fca5a5">Offset: '+(offset<0?Math.abs(offset)+' week(s) behind':'ahead by '+offset+'w')+'</span><br>':'')
+        +'Hover region chips to see pending stores.'
+      +'</div>'
+    +'</div>';
 
   // Progress bar + summary line
   const progressBar='<div style="display:flex;align-items:center;gap:6px;margin-top:5px;margin-bottom:3px">'
@@ -8190,13 +8292,14 @@ function buildFRInlineRegions(platform){
 // one labelled block per platform (Lazada / Shopee / TikTok).
 function buildFRInlineRegionsForTask(task){
   const plats=frTaskPlatforms(task);
-  if(plats.length<=1)return buildFRInlineRegions(plats[0]||null);
+  const wantMonthly=frTaskIsMonthly(task);
+  if(plats.length<=1)return buildFRInlineRegions(plats[0]||null,wantMonthly);
   return plats.map(function(p){
     const sheet=getFRSheet(getFRLinked()||{},p);
     if(!sheet)return'';
     return'<div style="margin-top:6px">'
       +'<div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">'+p+'</div>'
-      +buildFRInlineRegions(p)
+      +buildFRInlineRegions(p,wantMonthly)
     +'</div>';
   }).join('');
 }
@@ -9539,11 +9642,14 @@ async function frConfirmSectionDone(trackerKey,sheetKey){
   if(_curPage==='live-trackers')renderLiveTrackers();
 }
 
-// Patch just the FR region chips on the dashboard without full re-render
+// Patch just the FR region chips on the dashboard without a full re-render. The dashboard renders
+// one block per FR task keyed by task id (fr-inline-regions-<taskId>), so patch those — and use
+// each task's own cadence so a monthly task keeps reading the monthly column here too.
 function ltPatchFRDashboard(){
-  ['Lazada','Shopee','TikTok'].forEach(function(platform){
-    const el=document.getElementById('fr-inline-regions-'+platform);
-    if(el)el.innerHTML=buildFRInlineRegions(platform);
+  [...(D.tasks||[]),...(D.leadTasks||[])].forEach(function(t){
+    if(!t||!t.frLinked)return;
+    const el=document.getElementById('fr-inline-regions-'+t.id);
+    if(el)el.innerHTML=buildFRInlineRegionsForTask(t);
   });
 }
 // ── LEAVES ──
