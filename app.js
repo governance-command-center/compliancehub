@@ -2347,6 +2347,18 @@ function openTaskForm(taskId,isLeadTask){
         ✓ When members fill in their rows in the Live Tracker today, their task status auto-updates to <b>Done</b>. Make sure a tracker is linked to the Dashboard in Live Trackers.
       </div>
     </div>
+    <div class="fg" style="background:var(--blue-light);border-radius:var(--radius);padding:12px;border:1px solid var(--blue-mid)">
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="checkbox" id="ft-fr-link" style="width:16px;height:16px;cursor:pointer" ${t?.frLinked?'checked':''} onchange="document.getElementById('ft-fr-hint').style.display=this.checked?'':'none'"/>
+        <div>
+          <label class="flabel" for="ft-fr-link" style="cursor:pointer;color:var(--blue);margin-bottom:0">Link to Finance Report Live Tracker</label>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px">Progress is pulled directly from the linked Finance Report tracker — the completion rate reflects how many brand rows have been filled in, no manual status update needed</div>
+        </div>
+      </div>
+      <div id="ft-fr-hint" style="margin-top:8px;font-size:11px;color:var(--text2);background:var(--surface);border-radius:var(--radius);padding:8px;display:${t?.frLinked?'':'none'}">
+        ✓ Completion is read live from the Finance Report tracker sheets (all platforms this task covers). For a <b>Monthly</b> task the monthly column is used; otherwise the current weekly column. Make sure a Finance tracker is linked in Live Trackers.
+      </div>
+    </div>
     ${allGroups.length?`<div class="fg"><label class="flabel">Quick-add Group</label><select class="finput nb" onchange="applyGroup(this.value);this.value=''"><option value="">— Select group to add members —</option>${groupOpts}</select></div>`:''}
     <div>
       <label class="flabel">Assign Members &nbsp;<span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)">${D.members.filter(m=>m.approved&&m.active!==false).length} available</span></label>
@@ -2401,7 +2413,12 @@ async function saveTask(){
     dm:dmVal,
     note:document.getElementById('ft-note')?.value.trim()||'',
     assignees:[..._selM],
-    aoLinked:!!(document.getElementById('ft-ao-link')?.checked)};
+    aoLinked:!!(document.getElementById('ft-ao-link')?.checked),
+    frLinked:!!(document.getElementById('ft-fr-link')?.checked)};
+  // For an FR-linked task, remember whether it should read the monthly column.
+  // Monthly/EOM frequencies read the tracker's monthly column; any other cadence
+  // reads the current weekly column (same logic frTaskIsMonthly already applies).
+  if(data.frLinked)data.frMonthly=(freq==='monthly'||freq==='eom');
   var isLT=!CU.isAdmin&&(_editIsLeadTask||(isLead()&&!_editTId)); // new tasks from leads go to leadTasks; admin always uses tasks/
   if(isLT){
     // Lead-owned task path
