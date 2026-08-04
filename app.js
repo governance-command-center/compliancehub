@@ -7901,8 +7901,8 @@ function frFindActiveCol(sheet,platform){
   const row0=(sheet.headerRows&&sheet.headerRows[0])||sheet.row0||[];
   const targetDow=FR_DOW[platform]||4;
   const todayD=frEffectiveDate(platform); // applies week offset
-  // Always use 7 fixed cols for known platforms — avoid blank-cell detection issues
-  let fixedCount=7;
+  // Use the sheet's real fixed-column count (matches buildFRTable / _frScanDateCols).
+  let fixedCount=frFixedCount(sheet,platform);
   let bestColIdx=-1,bestDiff=Infinity;
   let lastValidColIdx=-1;
   for(let ci=fixedCount;ci<row0.length;ci++){
@@ -7953,15 +7953,18 @@ function frGetSheetCompletion(sheet,platform){
   // real "Order Report: 02 Jul - 08 Jul" style headers, so Done never registered here.
   const colIdx=frActiveColIdx(sheet,platform);
   if(colIdx===-1)return{done:0,total:0,pct:0,regions:{}};
+  const regionCol=frFixedColIdx(sheet,platform,'region');
+  const acctCol=frFixedColIdx(sheet,platform,'acct');
+  const brandCol=frFixedColIdx(sheet,platform,'brand');
   const dataRows=(sheet.rows||[]).filter(function(r){
-    if(!r||r[0]==null||!String(r[0]).trim())return false;
-    const acctStatus=String(r[2]||'').trim().toLowerCase();
+    if(!r||r[regionCol]==null||!String(r[regionCol]).trim())return false;
+    const acctStatus=String(r[acctCol]||'').trim().toLowerCase();
     return acctStatus!=='inactive'&&acctStatus!=='exited';
   });
   let total=0,done=0;
   const regions={};
   dataRows.forEach(function(row){
-    const region=String(row[0]||'').trim()||'—';
+    const region=String(row[regionCol]||'').trim()||'—';
     const val=row[colIdx];
     const isDone=frIsDone(val);
     total++;
@@ -7971,7 +7974,7 @@ function frGetSheetCompletion(sheet,platform){
     if(isDone){
       regions[region].done++;
     } else {
-      const brand=String(row[4]||'').trim()||String(row[3]||'').trim()||'Unknown';
+      const brand=String(row[brandCol]||'').trim()||String(row[brandCol-1]||'').trim()||'Unknown';
       regions[region].notDone.push(brand);
     }
   });
@@ -8041,20 +8044,23 @@ function frGetSheetCompletionCadence(sheet,platform,wantMonthly){
   if(!sheet)return{done:0,total:0,pct:0,regions:{}};
   const colIdx=wantMonthly?frActiveMonthlyColIdx(sheet,platform):frActiveColIdx(sheet,platform);
   if(colIdx===-1)return{done:0,total:0,pct:0,regions:{}};
+  const regionCol=frFixedColIdx(sheet,platform,'region');
+  const acctCol=frFixedColIdx(sheet,platform,'acct');
+  const brandCol=frFixedColIdx(sheet,platform,'brand');
   const dataRows=(sheet.rows||[]).filter(function(r){
-    if(!r||r[0]==null||!String(r[0]).trim())return false;
-    const acctStatus=String(r[2]||'').trim().toLowerCase();
+    if(!r||r[regionCol]==null||!String(r[regionCol]).trim())return false;
+    const acctStatus=String(r[acctCol]||'').trim().toLowerCase();
     return acctStatus!=='inactive'&&acctStatus!=='exited';
   });
   let total=0,done=0;const regions={};
   dataRows.forEach(function(row){
-    const region=String(row[0]||'').trim()||'—';
+    const region=String(row[regionCol]||'').trim()||'—';
     const isDone=frIsDone(row[colIdx]);
     total++;if(isDone)done++;
     if(!regions[region])regions[region]={done:0,total:0,notDone:[]};
     regions[region].total++;
     if(isDone)regions[region].done++;
-    else{const brand=String(row[4]||'').trim()||String(row[3]||'').trim()||'Unknown';regions[region].notDone.push(brand);}
+    else{const brand=String(row[brandCol]||'').trim()||String(row[brandCol-1]||'').trim()||'Unknown';regions[region].notDone.push(brand);}
   });
   return{done,total,pct:total?Math.round(done/total*100):0,regions};
 }
@@ -8099,10 +8105,12 @@ function frGetMySectionCompletion(sheet,platform){
   const execCol=(function(){const i=hr0.findIndex(function(l){return/exec/i.test(String(l||''));});return i>=0?i:5;})();
   const tlCol=(function(){const i=hr0.findIndex(function(l){return/team.?lead|^tl$/i.test(String(l||''));});return i>=0?i:6;})();
   const nm=String(CU.name||'').trim().toLowerCase();
+  const regionCol=frFixedColIdx(sheet,platform,'region');
+  const acctCol=frFixedColIdx(sheet,platform,'acct');
   let done=0,total=0;
   (sheet.rows||[]).forEach(function(r){
-    if(!r||r[0]==null||!String(r[0]).trim())return;
-    const st=String(r[2]||'').trim().toLowerCase();
+    if(!r||r[regionCol]==null||!String(r[regionCol]).trim())return;
+    const st=String(r[acctCol]||'').trim().toLowerCase();
     if(st==='inactive'||st==='exited')return;
     const ex=String(r[execCol]||'').trim().toLowerCase();
     const tl=String(r[tlCol]||'').trim().toLowerCase();
@@ -9262,11 +9270,45 @@ function frSelectAll(trackerKey,sheetKey,chkEl){
 // Returns [{ci, dueDate, isMonthly}] for all non-fixed columns, using the header
 // parser so each column's Report Date (dueDate = coverage-end + 1) and its cadence
 // (weekly vs monthly) come straight from the sheet — nothing to keep configured.
+// ── Shared fixed-column geometry (single source of truth) ──
+// buildFRTable derives the number of leading "fixed" (non-date) columns from the
+// sheet's own override first, then the platform default. The completion resolvers
+// MUST use the identical value or they scan the wrong date columns. Keeping this in
+// one helper guarantees the dashboard and the tracker table never disagree.
+function frFixedCount(sheet,platform){
+  const activeDefaults=(FR_PLATFORM_FIXED_DEFAULTS[platform]||FR_DEFAULT_FIXED);
+  return (sheet&&sheet.fixedColCount!=null&&sheet.fixedColCount>0)?sheet.fixedColCount:activeDefaults.length;
+}
+// Resolve the index of a fixed column by matching its header label (same detection the
+// table uses), falling back to the conventional position. Used so completion reads the
+// correct Region / Account Status / Brand cells even when fixed columns are customised.
+function frFixedColIdx(sheet,platform,which){
+  const headerRows=sheet&&(sheet.headerRows||(sheet.row0?[sheet.row0]:[[]]))||[[]];
+  const row0=headerRows[0]||[];
+  const fixedCount=frFixedCount(sheet,platform);
+  const test={
+    region:/region/i,
+    acct:/account.?status|acct.?status/i,
+    brand:/brand|store.?name/i,
+    exec:/exec/i
+  }[which];
+  const fallback={region:0,acct:2,brand:4,exec:5}[which];
+  if(test){
+    for(let i=0;i<fixedCount;i++){if(test.test(String(row0[i]||'')))return i;}
+  }
+  return fallback;
+}
+
 function _frScanDateCols(sheet,platform){
   if(!sheet)return [];
   const headerRows=sheet.headerRows||(sheet.row0?[sheet.row0,sheet.row1].filter(r=>r&&r.length):[[]]);
   const row0=headerRows[0]||[];
-  const fixedCount=7; // Region, Platform, Account Status, Merchant ID, Brand, Exec, Team Lead
+  // Use the SAME fixed-column count the table (buildFRTable) uses, not a hardcoded 7.
+  // If an admin adjusts a sheet's fixed columns via "Manage Columns" (sheet.fixedColCount),
+  // date columns start at a different index — a hardcoded 7 here would scan the wrong
+  // columns, so the active-column resolver returned an index that didn't line up with the
+  // cells members actually fill, making completion read empty and show 0/N.
+  const fixedCount=frFixedCount(sheet,platform);
   const groups=[];
   for(let ci=fixedCount;ci<row0.length;ci++){
     const topLabel=row0[ci]!=null?String(row0[ci]).trim():'';
