@@ -1879,14 +1879,13 @@ function buildDashboardOngoing(byS,date){
   const list=byS.Ongoing||[];if(!list.length)return'';
   return `<div class="section-hdr sh-yellow">Ongoing <span style="opacity:.7">(${list.length})</span></div><div class="tbl-wrap"><table>${dashTaskTableHead()}<tbody>${buildDashboardTaskRows(list,date)}</tbody></table></div>`;
 }
-function buildDashboardOthers(byS,date){
-  const secs=['Needs Extension','Done'];
-  return secs.map(k=>{
-    const list=byS[k]||[];if(!list.length)return'';
-    const cfg={Done:{c:'sh-green',l:'Completed'},'Needs Extension':{c:'sh-teal',l:'Needs Extension'}};
-    const s=cfg[k];
-    return `<div class="section-hdr ${s.c}">${s.l} <span style="opacity:.7">(${list.length})</span></div><div class="tbl-wrap"><table>${dashTaskTableHead()}<tbody>${buildDashboardTaskRows(list,date)}</tbody></table></div>`;
-  }).join('');
+function buildDashboardCompleted(byS,date){
+  const list=byS.Done||[];if(!list.length)return'';
+  return `<div class="section-hdr sh-green">Completed <span style="opacity:.7">(${list.length})</span></div><div class="tbl-wrap"><table>${dashTaskTableHead()}<tbody>${buildDashboardTaskRows(list,date)}</tbody></table></div>`;
+}
+function buildDashboardNeedsExtension(byS,date){
+  const list=byS['Needs Extension']||[];if(!list.length)return'';
+  return `<div class="section-hdr sh-teal">Needs Extension <span style="opacity:.7">(${list.length})</span></div><div class="tbl-wrap"><table>${dashTaskTableHead()}<tbody>${buildDashboardTaskRows(list,date)}</tbody></table></div>`;
 }
 
 // ── DASHBOARD ──
@@ -2079,12 +2078,13 @@ function renderDashboard(){
     ${metricsHTML(metrics)}
     ${pendingSec}
     ${buildDashboardOngoing(byS,date)}
+    ${buildDashboardCompleted(byS,date)}
+    ${buildDashboardNeedsExtension(byS,date)}
     ${buildDashboardResponseStatus()}
-    ${buildDashboardNonCompliance()}
-    ${buildDashboardOthers(byS,date)}
     ${adminPersonalSec}
     ${memberPersonalSec}
     ${buildDashboardLeaveSummary()}
+    ${buildDashboardNonCompliance()}
     ${buildActivityFeed()}`;
 }
 
