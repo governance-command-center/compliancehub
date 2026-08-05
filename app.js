@@ -1841,12 +1841,14 @@ function buildDashboardTaskRows(list, date){
       completionCell=rateBarHtml(rate.pct)+`<div style="font-size:10px;color:var(--text3)">${rate.done}/${rate.total} done</div>`+carryProgressNote(t,date);
     }
     // Inline "Request Extension" control — shown right beside the status so it's easy to find.
-    // Eligible for a non-admin assignee on a normal (non personal/AO/FR) task that isn't Done and
-    // isn't yet overdue (extensions must be requested before the deadline). Reflects a pending or
-    // approved request instead of the button so it can't be submitted twice.
+    // Shown for a non-admin assignee on ANY dashboard task (plain, Abnormal-Orders-linked, or
+    // Finance-Report-linked) that isn't Done. Personal tasks are the member's own to-do items with
+    // no team deadline, so they're the only kind excluded. Reflects a pending or approved request
+    // instead of the button so it can't be submitted twice. Before the deadline it submits a
+    // request; after the deadline the greyed button explains the window is closed.
     let extInline='';
-    if(!t._isPersonal&&!t.aoLinked&&!t.frLinked&&!CU.isAdmin&&(t.assignees||[]).includes(CU.username)){
-      const myStat=getMemberStatus(t.id,date,CU.username);
+    if(!t._isPersonal&&!CU.isAdmin&&(t.assignees||[]).includes(CU.username)){
+      const myStat=t.aoLinked||t.frLinked?ov:getMemberStatus(t.id,date,CU.username);
       const hasPending=Object.values(D.extRequests||{}).some(function(r){return r.taskId==t.id&&r.date===date&&r.memberUsername===CU.username&&r.status==='Pending';});
       const hasApproved=!!getApprovedExt(t.id,date);
       if(hasApproved){
