@@ -8874,7 +8874,7 @@ function buildFRTable(trackerKey,sheetKey,sheet){
 
     // Header accent: current weekly → amber top border, current monthly → green top border,
     // so the two current columns are distinguishable at a glance even in the dark header.
-    const _hdrAccent=dc.isActive?'border-top:3px solid #fbbf24;':(dc.isActiveMonthly?'border-top:3px solid #22c55e;':'');
+    const _hdrAccent=(dc.isActive||dc.isActiveMonthly)?'border-top:3px solid #22c55e;':'';
     hdr+='<th ' + (dc.isActive?'data-active="1" ':'') + (dc.isActiveMonthly?'data-active-monthly="1" ':'') + ' class="fr-cw-th-cell" style="text-align:left;padding:8px 10px;background:' + bg + ';border:1px solid #1e3a5f;'+_hdrAccent+'color:' + fg + ';min-width:160px;white-space:normal;line-height:1.4;vertical-align:top;position:relative">'
       + cellContent
     + '</th>';
@@ -9054,8 +9054,8 @@ function buildFRTable(trackerKey,sheetKey,sheet){
         // TOD, non-admin viewing a past column, or not this row's assigned Exec/Team Lead: read-only
         // Highlight priority: Done (green fill) → current monthly (mint/green) → current weekly (yellow)
         // → past (grey) → future (indigo tint).
-        const bg=isDone?'#e8f5e9':dc.isActiveMonthly?'#e7f7ec':dc.isPast?'#fafafa':dc.isActive?'#fffde7':'#f5f7ff';
-        const col=isDone?'#388e3c':dc.isActiveMonthly?'#15803d':dc.isPast?'#9ca3af':dc.isActive?'var(--text3)':'#c7d2fe';
+        const bg=isDone?'#e8f5e9':(dc.isActiveMonthly||dc.isActive)?'#e7f7ec':dc.isPast?'#fafafa':'#f5f7ff';
+        const col=isDone?'#388e3c':(dc.isActiveMonthly||dc.isActive)?'#15803d':dc.isPast?'#9ca3af':'#c7d2fe';
         const frTs=((sheet.frTimestamps||{})[rowIdx+'_'+dc.ci])||'';
         const lockTitle=pastLockedForUser?' title="Past dates can only be edited by an admin"':(notOwnerLocked?' title="View only — this brand is assigned to another Exec/Team Lead"':'');
         cells+='<td style="padding:5px 8px;border:1px solid var(--border);text-align:center;background:'+bg+'"'+lockTitle+'>'
@@ -9065,11 +9065,11 @@ function buildFRTable(trackerKey,sheetKey,sheet){
       } else {
         // Editable input for active & future columns (and past, for admins)
         // Current monthly column → green tint + green outline; current weekly → yellow + blue outline.
-        const bg=isDone?'var(--green-light)':dc.isActiveMonthly?'#e7f7ec':dc.isActive?'#fffde7':dc.isPast?'#fafafa':'#f5f7ff';
-        const col=isDone?'var(--green)':dc.isActiveMonthly?'#15803d':dc.isActive?'var(--text)':dc.isPast?'#6b7280':'#6366f1';
-        const placeholderTxt=(dc.isActive||dc.isActiveMonthly)?'e.g. Done, No Data\u2026':'Done / No Data\u2026';
+        const bg=isDone?'var(--green-light)':(dc.isActiveMonthly||dc.isActive)?'#e7f7ec':dc.isPast?'#fafafa':'#f5f7ff';
+        const col=isDone?'var(--green)':(dc.isActiveMonthly||dc.isActive)?'#15803d':dc.isPast?'#6b7280':'#6366f1';
+        const placeholderTxt='';
         const frTs=((sheet.frTimestamps||{})[rowIdx+'_'+dc.ci])||'';
-        const _outline=dc.isActiveMonthly?';outline:1px solid #86efac;outline-offset:-1px':(dc.isActive?';outline:1px solid #bfdbfe;outline-offset:-1px':'');
+        const _outline=(dc.isActiveMonthly||dc.isActive)?';outline:1px solid #86efac;outline-offset:-1px':'';
         cells+='<td style="padding:3px 4px;border:1px solid var(--border);text-align:center;background:'+bg+_outline+'">'
           +'<input type="text" value="'+vS.replace(/"/g,'&quot;')+'" placeholder="'+placeholderTxt+'"'
           +' style="width:150px;padding:4px 6px;border:1px solid transparent;border-radius:4px;font-size:11px;text-align:center;background:transparent;color:'+col+'"'
@@ -9125,7 +9125,7 @@ function buildFRTable(trackerKey,sheetKey,sheet){
 
   const legend='<div style="display:flex;gap:14px;padding:8px 12px;border-bottom:1px solid var(--border);background:#fafafa;font-size:11px;color:var(--text3);flex-wrap:wrap;align-items:center">'
     +'<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:var(--green-light);border-radius:2px;display:inline-block"></span>Done</span>'
-    +'<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#fffde7;border:1px solid #fde68a;border-radius:2px;display:inline-block"></span>Current weekly column</span>'
+    +'<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#e7f7ec;border:1px solid #86efac;border-radius:2px;display:inline-block"></span>Current weekly column</span>'
     +'<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#e7f7ec;border:1px solid #86efac;border-radius:2px;display:inline-block"></span>Current monthly column</span>'
     +'<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#fafafa;border:1px solid #ddd;border-radius:2px;display:inline-block"></span>Past — still editable</span>'
     +'<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#f5f7ff;border:1px solid #c7d2fe;border-radius:2px;display:inline-block"></span>Future — still editable</span>'
