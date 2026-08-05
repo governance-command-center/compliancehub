@@ -1853,8 +1853,15 @@ function buildDashboardTaskRows(list, date){
         extInline='<div style="margin-top:5px"><span style="font-size:10px;font-weight:700;color:var(--teal);background:var(--teal-light,#ccfbf1);padding:2px 7px;border-radius:20px">✓ Extension approved</span></div>';
       } else if(hasPending){
         extInline='<div style="margin-top:5px"><span style="font-size:10px;font-weight:700;color:var(--text3);background:var(--bg);border:1px solid var(--border);padding:2px 7px;border-radius:20px">⏳ Extension pending</span></div>';
-      } else if(myStat!=='Done'&&!isOv){
-        extInline='<div style="margin-top:5px"><button class="btn sm teal" style="font-size:10px;padding:2px 8px" onclick="openExtRequestModal('+t.id+',\''+date+'\')">⏱ Request Extension</button></div>';
+      } else if(myStat!=='Done'){
+        // Show the Request Extension control on every assigned task that isn't Done — including
+        // ones already past deadline. Before the deadline it submits a request; after the deadline
+        // the button explains the window is closed (extensions can't undo an auto-flagged miss).
+        if(isOv){
+          extInline='<div style="margin-top:5px"><button class="btn sm teal" style="font-size:10px;padding:2px 8px;opacity:.65" onclick="openExtRequestModal('+t.id+',\''+date+'\')" title="Deadline passed — extension window closed">⏱ Request Extension</button></div>';
+        } else {
+          extInline='<div style="margin-top:5px"><button class="btn sm teal" style="font-size:10px;padding:2px 8px" onclick="openExtRequestModal('+t.id+',\''+date+'\')">⏱ Request Extension</button></div>';
+        }
       }
     }
     return `<tr class="${isOv?'overdue-row':''}">
@@ -1948,6 +1955,14 @@ function buildDashboardLeaveSummary(){
 
 function renderDashboard(){
   const date=ds(viewDate);
+  // When looking at today, run the (idempotent) overdue sweep first so a task whose deadline just
+  // passed is already registered as non-compliance by the time this render paints — no waiting for
+  // the 20s poll. Guard against recursion via the fbListen→renderDashboard callback.
+  if(date===ds(now())&&!window._ncSweeping){
+    window._ncSweeping=true;
+    try{checkOverdueAndBroadcast();}catch(e){}
+    window._ncSweeping=false;
+  }
   // Admin sees all admin tasks + all lead tasks so tasks tagged to others appear on dashboard
   const schedBase=CU.isAdmin?[...(D.tasks||[]),...(D.leadTasks||[])]:allTasks();
   const sched=schedBase.filter(t=>!t.inactive&&isSched(t,viewDate));
@@ -5038,26 +5053,37 @@ function scheduleReminders(){
     const n=now(),h=n.getHours(),m=n.getMinutes();
     if((h===9&&m===0)||(h===16&&m===50))openRemind();
   },60000);
-  setInterval(checkOverdueAndBroadcast, 60000);
-  setInterval(checkLeadTaskOverdue, 60000);
+  // Sweep once right away, then poll every 20s so an overdue task lands in the non-compliance
+  // list within seconds of its deadline (e.g. a 12:00 deadline shows up by ~12:00:20), instead of
+  // waiting up to a full minute.
+  try{checkOverdueAndBroadcast();checkLeadTaskOverdue();}catch(e){}
+  setInterval(checkOverdueAndBroadcast, 20000);
+  setInterval(checkLeadTaskOverdue, 20000);
 }
 
 function checkOverdueAndBroadcast(){
-  if(!CU||!CU.isAdmin) return;
+  if(!CU) return;
   const date=ds(now());
+  // Admin sweeps every admin task; a non-admin sweeps only the tasks visible to them so their
+  // own overdue misses get registered the moment the deadline passes — even when no admin is
+  // online. Registration is idempotent (deterministic ncId), so overlapping admin + member
+  // sweeps never create duplicates.
   const sched=(CU.isAdmin?D.tasks:allTasks()).filter(function(t){return isSched(t,now());});
   sched.forEach(function(t){
     const ov=computeTaskOverall(t.id,date);
     if(ov==='Done') return;
     if(!isOverdue(t,date)) return; // not late yet, or an approved extension has moved the deadline
-    const alertKey='gh_alert_'+t.id+'_'+date;
-    if(!localStorage.getItem(alertKey)){
-      localStorage.setItem(alertKey,'1');
-      const pending=(t.assignees||[]).filter(function(u){return(getMemberStatus(t.id,date,u)||'Pending')!=='Done';});
-      const names=pending.map(getMN).join(', ')||'assigned team';
-      const msg='⚠️ OVERDUE: '+t.title+' is past deadline ('+t.deadline+'). Pending: '+names;
-      fbSet('broadcast',{msg:msg,ts:Date.now(),sentBy:'System',auto:true});
-      toast('Auto-broadcast sent: '+t.title+' overdue');
+    // Auto-broadcast is admin-only (avoids every member firing the same overdue broadcast).
+    if(CU.isAdmin){
+      const alertKey='gh_alert_'+t.id+'_'+date;
+      if(!localStorage.getItem(alertKey)){
+        localStorage.setItem(alertKey,'1');
+        const pending=(t.assignees||[]).filter(function(u){return(getMemberStatus(t.id,date,u)||'Pending')!=='Done';});
+        const names=pending.map(getMN).join(', ')||'assigned team';
+        const msg='⚠️ OVERDUE: '+t.title+' is past deadline ('+t.deadline+'). Pending: '+names;
+        fbSet('broadcast',{msg:msg,ts:Date.now(),sentBy:'System',auto:true});
+        toast('Auto-broadcast sent: '+t.title+' overdue');
+      }
     }
     registerNonCompliance(t,date);
   });
