@@ -9087,7 +9087,7 @@ function buildFRTable(trackerKey,sheetKey,sheet){
   // +1 to account for the leading checkbox column (rowspan'd in the header) so the
   // percentage cells line up under their correct date columns instead of being shifted left.
   const totalFixedCols=fixedCount+1;
-  let footerCells='<td colspan="'+totalFixedCols+'" style="padding:6px 10px;font-size:11px;font-weight:700;background:#f8fafc;border:1px solid var(--border);color:var(--text2)">Completion (Active only)</td>';
+  let footerCells='<td colspan="'+totalFixedCols+'" style="position:sticky;left:0;z-index:2;box-shadow:2px 0 4px rgba(0,0,0,0.08);padding:6px 10px;font-size:11px;font-weight:700;background:#f8fafc;border:1px solid var(--border);color:var(--text2)">Completion (Active only)</td>';
   dateColGroups.forEach(function(dc){
     const colRows=dataRows.filter(function(r){
       if(!r||r[0]==null||!String(r[0]).trim())return false;
