@@ -311,6 +311,14 @@ function aoRowExitDate(sheet,ri){
   const meta=sheet&&sheet.aoMeta&&sheet.aoMeta[ri];
   return meta&&meta.exitDate?String(meta.exitDate).trim():'';
 }
+// True unless the row is marked Exited or Inactive in aoMeta. Used everywhere completion is
+// computed so hidden (exited/inactive) brands never count toward the denominator — otherwise a
+// fully-filled region can never reach 100%.
+function aoRowIsActive(sheet,ri){
+  const meta=sheet&&sheet.aoMeta&&sheet.aoMeta[ri];
+  const st=meta&&meta.status?String(meta.status).trim().toLowerCase():'';
+  return st!=='exited'&&st!=='inactive';
+}
 // Admin-only: set a row's AO status. 'Exited' requires an exit date (collected via the modal).
 async function aoSetRowStatus(trackerKey,sheetKey,ri,status,exitDate){
   if(!CU.isAdmin){toast('Admin only.');return;}
@@ -460,9 +468,11 @@ function getAOStatusForDate(date){
     if(!dateCols.length)return;
     // Use live local rows so ltUpdateCell edits are counted
     const liveSheet=(D.trackers[linkedEntry[0]]||{}).sheets;
-    const liveRows=liveSheet&&liveSheet[key]&&liveSheet[key].rows?liveSheet[key].rows:(sh.rows||[]);
-    const dataRows=liveRows.filter(function(row){
-      return row&&row[0]!=null&&String(row[0]).trim()&&String(row[0]).toUpperCase()!=='TOTAL';
+    const _liveObj=liveSheet&&liveSheet[key]?liveSheet[key]:sh;
+    const liveRows=_liveObj&&_liveObj.rows?_liveObj.rows:(sh.rows||[]);
+    const dataRows=liveRows.filter(function(row,ri){
+      if(!(row&&row[0]!=null&&String(row[0]).trim()&&String(row[0]).toUpperCase()!=='TOTAL'))return false;
+      return aoRowIsActive(_liveObj,ri); // skip exited/inactive brands
     });
     totalRows+=dataRows.length;
     dataRows.forEach(function(row){
@@ -497,9 +507,11 @@ function taskCompletionRate(taskId, date){
       if(!dateCols.length)return;
       // Use live local rows
       const liveSheet=(D.trackers[linkedEntry[0]]||{}).sheets;
-      const liveRows=liveSheet&&liveSheet[key]&&liveSheet[key].rows?liveSheet[key].rows:(sh.rows||[]);
-      const dataRows=liveRows.filter(function(row){
-        return row&&row[0]!=null&&String(row[0]).trim()&&String(row[0]).toUpperCase()!=='TOTAL';
+      const _liveObj=liveSheet&&liveSheet[key]?liveSheet[key]:sh;
+      const liveRows=_liveObj&&_liveObj.rows?_liveObj.rows:(sh.rows||[]);
+      const dataRows=liveRows.filter(function(row,ri){
+        if(!(row&&row[0]!=null&&String(row[0]).trim()&&String(row[0]).toUpperCase()!=='TOTAL'))return false;
+        return aoRowIsActive(_liveObj,ri); // skip exited/inactive brands
       });
       total+=dataRows.length;
       dataRows.forEach(function(row){
@@ -5216,10 +5228,12 @@ function aoGetUnfilledRows(date){
     const dateCols=aoFindDateCols(row0,date,row1);
     if(!dateCols.length)return;
     const liveSheet=(D.trackers[trackerKey]||{}).sheets;
-    const liveRows=liveSheet&&liveSheet[key]&&liveSheet[key].rows?liveSheet[key].rows:(sh.rows||[]);
+    const _liveObj=liveSheet&&liveSheet[key]?liveSheet[key]:sh;
+    const liveRows=_liveObj&&_liveObj.rows?_liveObj.rows:(sh.rows||[]);
     liveRows.forEach(function(row,ri){
       if(!row||row[0]==null||!String(row[0]).trim())return;
       if(String(row[0]).toUpperCase()==='TOTAL')return;
+      if(!aoRowIsActive(_liveObj,ri))return; // exited/inactive brands aren't obligations
       const filled=dateCols.some(function(ci){
         const v=row[ci];
         return v!==null&&v!==undefined&&String(v).trim()!==''&&String(v).toUpperCase()!=='OFF';
@@ -7911,9 +7925,20 @@ function getAOCompletionForDashboard(date){
     // Build data rows, merging live local row data over the original sheet rows
     const baseRows=sh.rows||[];
     const liveSheet=(D.trackers[linkedEntry[0]]||{}).sheets;
-    const liveRows=liveSheet&&liveSheet[r.key]&&liveSheet[r.key].rows?liveSheet[r.key].rows:baseRows;
-    const dataRows=liveRows.filter(function(row){
-      return row&&row[0]!=null&&String(row[0]).trim()&&String(row[0]).toUpperCase()!=='TOTAL';
+    const _liveSheetObj=liveSheet&&liveSheet[r.key]?liveSheet[r.key]:sh;
+    const liveRows=_liveSheetObj&&_liveSheetObj.rows?_liveSheetObj.rows:baseRows;
+    // Exited / Inactive brands are hidden from the tracker and never receive inputs, so they must
+    // NOT count toward the completion denominator — otherwise a fully-filled region can never reach
+    // 100%. Their status lives in aoMeta, keyed by the row's true array index.
+    const _aoMeta=_liveSheetObj&&_liveSheetObj.aoMeta?_liveSheetObj.aoMeta:{};
+    function _aoRowActive(ri){
+      const m=_aoMeta[ri];
+      const st=m&&m.status?String(m.status).trim().toLowerCase():'';
+      return st!=='exited'&&st!=='inactive';
+    }
+    const dataRows=liveRows.filter(function(row,ri){
+      if(!(row&&row[0]!=null&&String(row[0]).trim()&&String(row[0]).toUpperCase()!=='TOTAL'))return false;
+      return _aoRowActive(ri);
     });
     const total=dataRows.length;
     if(!total){results[r.key]={order:{done:0,total:0,pct:0},product:{done:0,total:0,pct:0}};return;}
