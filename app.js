@@ -321,7 +321,7 @@ async function aoSetRowStatus(trackerKey,sheetKey,ri,status,exitDate){
   if(!localSheet.aoMeta)localSheet.aoMeta={};
   localSheet.aoMeta[ri]={status:status,exitDate:status==='Exited'?(exitDate||''):''};
   await fbSet('trackers/'+trackerKey+'/sheets/'+sheetKey+'/aoMeta/'+ri,localSheet.aoMeta[ri]);
-  toast(status==='Exited'?'Brand marked as Exited and moved to the Exited tab.':'Status updated to '+status+'.');
+  toast(status==='Exited'?'Brand marked as Exited and moved to the Exited tab.':status==='Inactive'?'Brand marked as Inactive and listed in the Exited tab.':'Status updated to '+status+'.');
   closeModal('modal-lt-upload');
   renderLiveTrackers();
 }
@@ -349,6 +349,25 @@ function aoInlineStatusChange(trackerKey,sheetKey,ri,newStatus,selectEl){
         +'<button class="btn" onclick="closeModal(\'modal-lt-upload\');renderLiveTrackers()">Cancel</button>'
       +'</div>';
     document.getElementById('modal-lt-upload').querySelector('h3').textContent='Set Brand as Exited';
+    openModal('modal-lt-upload');
+    if(selectEl)selectEl.value=aoRowStatus(sh,ri);
+    return;
+  }
+  if(newStatus==='Inactive'){
+    // Inactive: confirm only (no exit date). Brand leaves the active view and appears in the
+    // Exited tab, mirroring the Finance Report "Set Account as Inactive" flow.
+    document.getElementById('mlt-body').innerHTML=''
+      +'<div style="margin-bottom:12px;font-size:14px;font-weight:600">'+escHtml(brand)+'</div>'
+      +'<div class="fg" style="margin-bottom:12px"><div style="display:inline-block;padding:3px 12px;border-radius:20px;border:1px solid var(--yellow);background:var(--yellow-light);color:#92400e;font-size:12px;font-weight:700">Inactive</div></div>'
+      +'<div style="padding:12px;background:var(--yellow-light);border:1px solid var(--yellow);border-radius:var(--radius)">'
+        +'<div style="font-size:12px;font-weight:700;color:#92400e;margin-bottom:6px">⚠️ Confirm Status Change</div>'
+        +'<div style="font-size:12px;color:#92400e">Set this brand as <b>Inactive</b>? It will be removed from the active view and listed in the <b>Exited</b> tab.</div>'
+      +'</div>'
+      +'<div class="form-actions" style="margin-top:14px">'
+        +'<button class="btn primary" onclick="aoSetRowStatus(\''+trackerKey+'\',\''+sheetKey+'\','+ri+',\'Inactive\',\'\')">Confirm</button>'
+        +'<button class="btn" onclick="closeModal(\'modal-lt-upload\');renderLiveTrackers()">Cancel</button>'
+      +'</div>';
+    document.getElementById('modal-lt-upload').querySelector('h3').textContent='Set Brand as Inactive';
     openModal('modal-lt-upload');
     if(selectEl)selectEl.value=aoRowStatus(sh,ri);
     return;
@@ -7023,9 +7042,9 @@ async function frSaveNewTab(trackerKey){
   renderLiveTrackers();
 }
 
-// ── Build the AO "Exited" tab — a roll-up of every brand marked Exited across ALL AO sheets. ──
-// Mirrors buildExitedTable (Finance). Exited status + date live in each sheet's aoMeta map,
-// keyed by the row's true array index, so edits/reactivation act on the real record.
+// ── Build the AO "Exited" tab — a roll-up of every brand marked Exited or Inactive across ALL
+// AO sheets. Mirrors buildExitedTable (Finance). Status + exit date live in each sheet's aoMeta
+// map, keyed by the row's true array index, so edits/reactivation act on the real record.
 function buildAOExitedTable(trackerKey){
   const isAdmin=CU.isAdmin;
   const t=D.trackers[trackerKey]||{};
@@ -7037,11 +7056,12 @@ function buildAOExitedTable(trackerKey){
     s.rows.forEach(function(r,ri){
       if(!r)return;
       const meta=s.aoMeta[ri];
-      if(!meta||String(meta.status||'').trim()!=='Exited')return;
-      collected.push({row:r,srcSheet:sk,srcRowIdx:ri,exitDate:meta.exitDate||''});
+      const _st=meta?String(meta.status||'').trim():'';
+      if(_st!=='Exited'&&_st!=='Inactive')return;
+      collected.push({row:r,srcSheet:sk,srcRowIdx:ri,status:_st,exitDate:meta.exitDate||''});
     });
   });
-  // Sort exited roll-up by CDM name too (auto-group per CDM), then brand.
+  // Sort roll-up by CDM name too (auto-group per CDM), then brand.
   collected.sort(function(a,b){
     const ca=String(a.row[2]||'').trim().toLowerCase();
     const cb=String(b.row[2]||'').trim().toLowerCase();
@@ -7054,9 +7074,10 @@ function buildAOExitedTable(trackerKey){
     {label:'CDM',idx:2,w:130},
     {label:'Team Lead',idx:3,w:130},
   ];
-  const colSpan=COLS.length+1+(isAdmin?1:0);
+  const colSpan=COLS.length+2+(isAdmin?1:0); // +Status +Offboarding Date (+Actions)
   const hdrCells=COLS.map(function(c){return'<th style="padding:5px 10px;background:#ffeaea;border:1px solid var(--border);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#b91c1c;text-align:left;white-space:nowrap;min-width:'+c.w+'px">'+c.label+'</th>';}).join('');
   const hdr='<tr>'+hdrCells
+    +'<th style="padding:5px 10px;background:#ffeaea;border:1px solid var(--border);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#b91c1c;text-align:left;white-space:nowrap;min-width:90px">Status</th>'
     +'<th style="padding:5px 10px;background:#ffeaea;border:1px solid var(--border);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#b91c1c;text-align:left;white-space:nowrap;min-width:140px">Offboarding Date</th>'
     +(isAdmin?'<th style="padding:5px 10px;background:#ffeaea;border:1px solid var(--border);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#b91c1c;text-align:center;white-space:nowrap;min-width:120px">Actions</th>':'')
     +'</tr>';
@@ -7066,6 +7087,8 @@ function buildAOExitedTable(trackerKey){
     const row=item.row;
     const _src=String(item.srcSheet).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
     const _sri=item.srcRowIdx;
+    const _isInact=item.status==='Inactive';
+    const _rowBg=_isInact?'#fffbeb':'#fff8f8';
     let groupHtml='';
     const _cdm=String(row[2]||'').trim();
     const _cdmKey=_cdm.toLowerCase();
@@ -7076,15 +7099,20 @@ function buildAOExitedTable(trackerKey){
     const cells=COLS.map(function(c){
       const v=row[c.idx]!=null&&String(row[c.idx]).trim()!==''?String(row[c.idx]).trim():'—';
       const srcTag=(c.idx===0&&item.srcSheet)?'<div style="font-size:8px;color:var(--text4);margin-top:2px">from '+escHtml(item.srcSheet)+'</div>':'';
-      return'<td style="padding:5px 10px;border:1px solid var(--border);font-size:12px;color:var(--text2);white-space:nowrap;background:#fff8f8">'+escHtml(v)+srcTag+'</td>';
+      return'<td style="padding:5px 10px;border:1px solid var(--border);font-size:12px;color:var(--text2);white-space:nowrap;background:'+_rowBg+'">'+escHtml(v)+srcTag+'</td>';
     }).join('');
-    const dateCell=isAdmin
-      ?'<td style="padding:4px 8px;border:1px solid var(--border);background:#fff8f8;white-space:nowrap"><input type="date" value="'+escHtml(item.exitDate||'')+'" style="border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;color:var(--red);font-family:inherit;width:130px" onchange="aoUpdateExitDate(\''+_kEsc+'\',\''+_src+'\','+_sri+',this.value)"/></td>'
-      :'<td style="padding:5px 10px;border:1px solid var(--border);background:#fff8f8;font-size:12px;color:var(--red);font-weight:600;white-space:nowrap">'+escHtml(item.exitDate||'—')+'</td>';
-    const actions=isAdmin?'<td style="padding:4px 8px;border:1px solid var(--border);background:#fff8f8;text-align:center;white-space:nowrap"><button onclick="aoReactivateRow(\''+_kEsc+'\',\''+_src+'\','+_sri+')" style="padding:2px 8px;border-radius:4px;border:1px solid var(--green);background:var(--green-light);color:var(--green);font-size:11px;font-weight:700;cursor:pointer" title="Move this brand back to Active">↩ Reactivate</button></td>':'';
-    return groupHtml+'<tr style="background:#fff8f8">'+cells+dateCell+actions+'</tr>';
-  }).join(''):'<tr><td colspan="'+colSpan+'" class="empty-state" style="padding:32px;text-align:center;color:var(--text4)">No exited brands.</td></tr>';
-  const info='<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:#fef2f2;border-bottom:1px solid var(--red-mid);font-size:11px;color:var(--red)"><span>⚠️</span><span>Exited brands — <strong>'+collected.length+' record'+(collected.length!==1?'s':'')+'</strong>. These brands are no longer active in the AO tracker.</span></div>';
+    const _stColor=_isInact?'#92400e':'var(--red)';
+    const _stBg=_isInact?'var(--yellow-light)':'var(--red-light)';
+    const _stBd=_isInact?'var(--yellow)':'var(--red)';
+    const statusCell='<td style="padding:5px 10px;border:1px solid var(--border);background:'+_rowBg+';white-space:nowrap"><span style="display:inline-block;padding:2px 9px;border-radius:20px;font-size:10px;font-weight:700;background:'+_stBg+';color:'+_stColor+';border:1px solid '+_stBd+'">'+escHtml(item.status)+'</span></td>';
+    // Offboarding date only applies to Exited; Inactive shows a dash.
+    const dateCell=(!_isInact&&isAdmin)
+      ?'<td style="padding:4px 8px;border:1px solid var(--border);background:'+_rowBg+';white-space:nowrap"><input type="date" value="'+escHtml(item.exitDate||'')+'" style="border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;color:var(--red);font-family:inherit;width:130px" onchange="aoUpdateExitDate(\''+_kEsc+'\',\''+_src+'\','+_sri+',this.value)"/></td>'
+      :'<td style="padding:5px 10px;border:1px solid var(--border);background:'+_rowBg+';font-size:12px;color:var(--red);font-weight:600;white-space:nowrap">'+escHtml(_isInact?'—':(item.exitDate||'—'))+'</td>';
+    const actions=isAdmin?'<td style="padding:4px 8px;border:1px solid var(--border);background:'+_rowBg+';text-align:center;white-space:nowrap"><button onclick="aoReactivateRow(\''+_kEsc+'\',\''+_src+'\','+_sri+')" style="padding:2px 8px;border-radius:4px;border:1px solid var(--green);background:var(--green-light);color:var(--green);font-size:11px;font-weight:700;cursor:pointer" title="Move this brand back to Active">↩ Reactivate</button></td>':'';
+    return groupHtml+'<tr style="background:'+_rowBg+'">'+cells+statusCell+dateCell+actions+'</tr>';
+  }).join(''):'<tr><td colspan="'+colSpan+'" class="empty-state" style="padding:32px;text-align:center;color:var(--text4)">No exited or inactive brands.</td></tr>';
+  const info='<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:#fef2f2;border-bottom:1px solid var(--red-mid);font-size:11px;color:var(--red)"><span>⚠️</span><span>Exited / Inactive brands — <strong>'+collected.length+' record'+(collected.length!==1?'s':'')+'</strong>. These brands are no longer active in the AO tracker.</span></div>';
   return'<div style="overflow:auto;max-height:calc(100vh - 220px);position:relative">'+info+'<table style="border-collapse:collapse;font-size:12px;min-width:100%"><thead style="position:sticky;top:0;z-index:4">'+hdr+'</thead><tbody>'+body+'</tbody></table></div>';
 }
 
@@ -7256,14 +7284,16 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   (rows||[]).forEach(function(row,ri){ if(row)_ordered.push({row:row,ri:ri}); });
   const _totalEntries=_ordered.filter(function(e){return isTR(e.row);});
   const _dataEntries=_ordered.filter(function(e){return !isTR(e.row);});
-  // Stable group-by-CDM sort: primary key = CDM name (empty/unassigned sorts last), and within
-  // the same CDM the original row order is preserved (stable because we compare original index).
+  // Stable group-by-CDM sort: primary key = CDM name (empty/unassigned sorts last); secondary
+  // key = brand name, so newly-added brands slot into their CDM group in brand order automatically.
   _dataEntries.sort(function(a,b){
     const ca=String(a.row[2]||'').trim().toLowerCase();
     const cb=String(b.row[2]||'').trim().toLowerCase();
-    if(ca===cb)return a.ri-b.ri;
-    if(!ca)return 1; if(!cb)return -1;
-    return ca<cb?-1:1;
+    if(ca!==cb){if(!ca)return 1;if(!cb)return -1;return ca<cb?-1:1;}
+    const ba=String(a.row[0]||'').trim().toLowerCase();
+    const bb=String(b.row[0]||'').trim().toLowerCase();
+    if(ba!==bb)return ba<bb?-1:1;
+    return a.ri-b.ri;
   });
   const _renderOrder=_dataEntries.concat(_totalEntries);
   let _prevCdmGroup=null;
@@ -7271,8 +7301,8 @@ function buildAOTable(trackerKey,sheetKey,sheet){
     const row=entry.row, ri=entry.ri;
     if(!row)return'';
     const isT=isTR(row);
-    // Exited brands never appear in the active view — they live only in the Exited tab.
-    if(!isT&&aoRowStatus(_metaSheet,ri)==='Exited')return'';
+    // Exited/Inactive brands never appear in the active view — they live only in the Exited tab.
+    if(!isT){const _aost=aoRowStatus(_metaSheet,ri);if(_aost==='Exited'||_aost==='Inactive')return'';}
     // Apply column filters (skip total row and rows without data)
     if(!isT){
       if(_aoFilter.brand&&!String(row[0]||'').toLowerCase().includes(_aoFilter.brand.toLowerCase()))return'';
@@ -7328,15 +7358,16 @@ function buildAOTable(trackerKey,sheetKey,sheet){
       const isAssigneeCol=!isT&&(i===2||i===3);
       let cellInner;
       if(isStatusCol){
-        // Virtual Status column (Active / Exited), sourced from sheet.aoMeta.
+        // Virtual Status column (Active / Inactive / Exited), sourced from sheet.aoMeta.
         if(isT){cellInner='';}
         else{
           const _st=aoRowStatus(_metaSheet,ri);
           const _isExitedRow=_st==='Exited';
-          const _stColor=_isExitedRow?'var(--red)':'var(--green)';
-          const _stBg=_isExitedRow?'var(--red-light)':'var(--green-light)';
+          const _isInactiveRow=_st==='Inactive';
+          const _stColor=_isExitedRow?'var(--red)':_isInactiveRow?'#92400e':'var(--green)';
+          const _stBg=_isExitedRow?'var(--red-light)':_isInactiveRow?'var(--yellow-light)':'var(--green-light)';
           if(isAdmin){
-            const _opts=['Active','Exited'].map(function(s){return'<option value="'+s+'"'+(_st===s?' selected':'')+'>'+s+'</option>';}).join('');
+            const _opts=['Active','Inactive','Exited'].map(function(s){return'<option value="'+s+'"'+(_st===s?' selected':'')+'>'+s+'</option>';}).join('');
             cellInner='<select onchange="aoInlineStatusChange(\''+trackerKey+'\',\''+sheetKey+'\','+ri+',this.value,this)" style="padding:2px 6px;border-radius:20px;border:1px solid '+_stColor+';background:'+_stBg+';color:'+_stColor+';font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;appearance:auto">'+_opts+'</select>';
           } else {
             cellInner='<span style="display:inline-block;padding:2px 9px;border-radius:20px;border:1px solid '+_stColor+';background:'+_stBg+';color:'+_stColor+';font-size:11px;font-weight:700">'+_st+'</span>';
@@ -8744,6 +8775,23 @@ function buildFRTable(trackerKey,sheetKey,sheet){
     fixedLabels.push(v||activeDefaults[i]||defaultFixed[i]||'Col '+(i+1));
   }
 
+  // ── Fixed-column detection + display order ──
+  // Data indices never change (edits/storage stay stable); we only reorder for DISPLAY:
+  //   • Synagie Merchant ID is hidden on every tab.
+  //   • Account Status is moved to render right AFTER Team Lead (it lives near the start in the
+  //     data, but the user wants it shown last among the fixed columns).
+  const _synagieIdx=fixedLabels.findIndex(function(l){return /synagie|merchant/i.test(String(l||''));});
+  const _acctIdx=fixedLabels.findIndex(function(l){return /account.?status|acct.?status/i.test(String(l||''));});
+  const _tlIdx=fixedCount-1; // Team Lead is the last fixed column in the data
+  const fixedRenderOrder=[];
+  for(let i=0;i<fixedCount;i++){
+    if(i===_synagieIdx)continue;          // hidden entirely
+    if(i===_acctIdx)continue;             // deferred — inserted after Team Lead below
+    fixedRenderOrder.push(i);
+    if(i===_tlIdx&&_acctIdx>=0)fixedRenderOrder.push(_acctIdx); // Status right after Team Lead
+  }
+  // Edge case: if Status column wasn't detected but Team Lead is, order is already fine.
+
   // ── Build date column groups ──
   // Each date column group spans one column and may have sub-rows from headerRows[1], [2], etc.
   const dateColGroups=[];
@@ -8901,17 +8949,23 @@ function buildFRTable(trackerKey,sheetKey,sheet){
   +'</th>';
   // Sticky left offsets — shift by 36px for the checkbox col (present for all users)
   const _frCbOffset=36;
+  // Hidden columns (Synagie) are already excluded from fixedRenderOrder. Compute per-data-index
+  // widths, then accumulate sticky-left offsets in VISUAL (render) order so the moved Status
+  // column and every other fixed column sit at the correct frozen position with no gaps.
+  const SYNAGIE_IDX=_synagieIdx;
+  const isHiddenFixedCol=function(i){return i===SYNAGIE_IDX;};
   const COL_WIDTHS_DEFAULT=[80,80,110,130,150,130,130];
-  const COL_WIDTHS=Array.from({length:fixedCount},function(_,i){return COL_WIDTHS_DEFAULT[i]||130;});
-  const stickyLefts=[];
-  (function(){var acc=0;for(var i=0;i<fixedCount;i++){stickyLefts.push(acc+_frCbOffset);acc+=COL_WIDTHS[i];}})();
-  const FREEZE_UP_TO=fixedCount-1; // freeze exactly Region→...→Team Lead (the fixed columns), nothing more
-  fixedLabels.forEach(function(l,i){
+  const COL_WIDTHS=Array.from({length:fixedCount},function(_,i){return isHiddenFixedCol(i)?0:(COL_WIDTHS_DEFAULT[i]||130);});
+  const stickyLefts=[];stickyLefts.length=fixedCount;
+  (function(){var acc=_frCbOffset;fixedRenderOrder.forEach(function(i){stickyLefts[i]=acc;acc+=(COL_WIDTHS[i]||0);});})();
+  // The last VISUAL fixed column (now Team Lead's Status, if present) carries the freeze shadow.
+  const _lastRenderIdx=fixedRenderOrder.length?fixedRenderOrder[fixedRenderOrder.length-1]:(fixedCount-1);
+  fixedRenderOrder.forEach(function(i){
+    const l=fixedLabels[i];
     const sl=stickyLefts[i]!==undefined?stickyLefts[i]:0;
     const minW=COL_WIDTHS[i]||80;
-    const isSticky=i<=FREEZE_UP_TO;
-    const isLastSticky=i===FREEZE_UP_TO;
-    const stickyStyle=isSticky?('position:sticky;left:'+sl+'px;z-index:5;'+(isLastSticky?'box-shadow:2px 0 4px rgba(0,0,0,0.08);':'')):'';
+    const isLastSticky=i===_lastRenderIdx;
+    const stickyStyle='position:sticky;left:'+sl+'px;z-index:5;'+(isLastSticky?'box-shadow:2px 0 4px rgba(0,0,0,0.08);':'');
     // Admin can edit fixed column header labels inline
     const headerContent=isAdmin
       ?'<input type="text" value="'+escHtml(l)+'" title="Click to edit column header"'
@@ -9167,8 +9221,34 @@ function buildFRTable(trackerKey,sheetKey,sheet){
     if(_frFilter.tl&&!String(r[tlCol]||'').toLowerCase().includes(_frFilter.tl.toLowerCase()))return false;
     return true;
   });
+  // ── Auto-group per CDM name, then brand name ──
+  // FR's CDM is the Exec column. Sorting here (not the underlying rows array) keeps each row's
+  // true index intact for edits, since bodyRows resolves rowIdx via rows.indexOf(row). Newly-added
+  // brands therefore slot into their CDM group in brand order automatically on the next render.
+  dataRows.sort(function(a,b){
+    const ca=String(a[execCol]||'').trim().toLowerCase();
+    const cb=String(b[execCol]||'').trim().toLowerCase();
+    if(ca!==cb){if(!ca)return 1;if(!cb)return -1;return ca<cb?-1:1;}
+    const ba=String(a[brandCol]||'').trim().toLowerCase();
+    const bb=String(b[brandCol]||'').trim().toLowerCase();
+    if(ba!==bb)return ba<bb?-1:1;
+    return rows.indexOf(a)-rows.indexOf(b);
+  });
+  // Total number of columns in a full row (checkbox + visible fixed + date groups), for the
+  // group-divider colspan. Subtract any hidden fixed columns (Synagie Merchant ID).
+  const _hiddenFixedCount=(SYNAGIE_IDX>=0&&SYNAGIE_IDX<fixedCount)?1:0;
+  const _frTotalCols=1+(fixedCount-_hiddenFixedCount)+dateColGroups.length;
+  let _frPrevCdm=null;
   const bodyRows=dataRows.map(function(row){
     const rowIdx=rows.indexOf(row);
+    // CDM group divider whenever the Exec/CDM changes between rows.
+    let _frGroupHtml='';
+    const _cdmName=String(row[execCol]||'').trim();
+    const _cdmKey=_cdmName.toLowerCase();
+    if(_cdmKey!==_frPrevCdm){
+      _frPrevCdm=_cdmKey;
+      _frGroupHtml='<tr><td colspan="'+_frTotalCols+'" style="position:sticky;left:0;background:#eef2f7;border:1px solid var(--border);padding:4px 12px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text3)">👤 CDM: '+escHtml(_cdmName||'— Unassigned —')+'</td></tr>';
+    }
     const execName=String(row[execCol]||'').trim();
     const isTaggedRow=taggedMembers.some(function(u){const m=D.members.find(function(x){return x.username===u;});return m&&(m.name===execName||execName.toLowerCase().includes((m.name||'').toLowerCase()));});
     const acctStatus=String(row[acctStatusCol]||'').trim().toLowerCase();
@@ -9188,13 +9268,12 @@ function buildFRTable(trackerKey,sheetKey,sheet){
       cells+='<td style="position:sticky;left:0;z-index:3;padding:3px 6px;border:1px solid var(--border);background:var(--surface);min-width:36px;width:36px"></td>';
     }
 
-    // Fixed cells
-    for(let i=0;i<fixedCount;i++){
+    // Fixed cells — rendered in fixedRenderOrder (Synagie hidden, Status moved after Team Lead).
+    fixedRenderOrder.forEach(function(i){
       const v=(row[i]===null||row[i]===undefined)?'':String(row[i]);
       const sl=stickyLefts[i]!==undefined?stickyLefts[i]:0;
-      const isStickyCell=i<=FREEZE_UP_TO;
-      const isLastStickyCell=i===FREEZE_UP_TO;
-      const stickyTdStyle=isStickyCell?('position:sticky;left:'+sl+'px;z-index:2;'+(isLastStickyCell?'box-shadow:2px 0 4px rgba(0,0,0,0.06);':'')):'';
+      const isLastStickyCell=i===_lastRenderIdx;
+      const stickyTdStyle='position:sticky;left:'+sl+'px;z-index:2;'+(isLastStickyCell?'box-shadow:2px 0 4px rgba(0,0,0,0.06);':'');
       if(i===acctStatusCol){
         // Acct Status — inline dropdown (admin: all options; CDM: Active/Inactive only on own row)
         const isMyRow=execName===myName;
@@ -9252,7 +9331,7 @@ function buildFRTable(trackerKey,sheetKey,sheet){
           cells+='<td style="'+stickyTdStyle+'padding:5px 8px;border:1px solid var(--border);font-size:12px;background:var(--surface);white-space:nowrap;color:var(--text2)">'+escHtml(v)+'</td>';
         }
       }
-    }
+    });
 
     // Date cols — past columns are admin-only to edit/correct; active & future remain editable
     // for the row's assigned Exec/CDM or Team Lead (or admin); everyone else is read-only,
@@ -9294,13 +9373,13 @@ function buildFRTable(trackerKey,sheetKey,sheet){
         +'</td>';
       }
     });
-    return'<tr style="'+rowStyle+'">'+cells+'</tr>';
+    return _frGroupHtml+'<tr style="'+rowStyle+'">'+cells+'</tr>';
   }).join('');
 
   // ── Footer: completion row ──
   // +1 to account for the leading checkbox column (rowspan'd in the header) so the
   // percentage cells line up under their correct date columns instead of being shifted left.
-  const totalFixedCols=fixedCount+1;
+  const totalFixedCols=(fixedCount-_hiddenFixedCount)+1;
   let footerCells='<td colspan="'+totalFixedCols+'" style="position:sticky;left:0;z-index:2;box-shadow:2px 0 4px rgba(0,0,0,0.08);padding:6px 10px;font-size:11px;font-weight:700;background:#f8fafc;border:1px solid var(--border);color:var(--text2)">Completion (Active only)</td>';
   dateColGroups.forEach(function(dc){
     const colRows=dataRows.filter(function(r){
@@ -9408,6 +9487,7 @@ function frOpenAddBrand(trackerKey,sheetKey){
   let fieldsHtml='';
   for(let i=0;i<fixedCount;i++){
     const label=fixedLabels[i];
+    if(/synagie|merchant/i.test(String(label||'')))continue; // Synagie Merchant ID hidden — left blank
     if(i===acctStatusCol){
       fieldsHtml+='<div class="fg"><label class="flabel">'+escHtml(label)+'</label><select class="finput nb" id="frab-f-'+i+'"><option>Active</option><option>Inactive</option><option>Exited</option></select></div>';
     } else if(i===execCol||i===tlCol){
@@ -9449,7 +9529,6 @@ function buildExitedTable(trackerKey,sheetKey,sheet){
     {label:'Team Lead',idx:6,w:130},
     {label:'Exec',idx:5,w:140},
     {label:'Platform',idx:1,w:100},
-    {label:'Merchant ID',idx:3,w:120},
     {label:'Store Name',idx:4,w:180},
     {label:'Status',idx:2,w:90},
     {label:'Offboarding Date',idx:7,w:130},
