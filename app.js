@@ -295,6 +295,90 @@ async function ltSetRowAssignee(trackerKey,sheetKey,ri,colIdx,value){
   renderLiveTrackers();
 }
 
+// ── AO Account Status (Active / Exited) ──
+// The AO date-column layout is index-fragile: fixed cols are 0=Brand,1=Platform,2=CDM,
+// 3=Team Lead and every date column is computed off those positions and off maxCol. Inserting
+// a real "Status" column into each row array would shift every date column and corrupt
+// aoWeekBlock()/aoFindDateCols(). So AO status + exit date live in a PARALLEL per-row map on the
+// sheet (sheet.aoMeta[rowIndex] = {status:'Active'|'Exited', exitDate:'YYYY-MM-DD'}) keyed by the
+// row's true array index — never in the row array itself.
+function aoRowStatus(sheet,ri){
+  const meta=sheet&&sheet.aoMeta&&sheet.aoMeta[ri];
+  const s=meta&&meta.status?String(meta.status).trim():'';
+  return s||'Active';
+}
+function aoRowExitDate(sheet,ri){
+  const meta=sheet&&sheet.aoMeta&&sheet.aoMeta[ri];
+  return meta&&meta.exitDate?String(meta.exitDate).trim():'';
+}
+// Admin-only: set a row's AO status. 'Exited' requires an exit date (collected via the modal).
+async function aoSetRowStatus(trackerKey,sheetKey,ri,status,exitDate){
+  if(!CU.isAdmin){toast('Admin only.');return;}
+  if(!D.trackers[trackerKey])D.trackers[trackerKey]={};
+  if(!D.trackers[trackerKey].sheets)D.trackers[trackerKey].sheets={};
+  if(!D.trackers[trackerKey].sheets[sheetKey])D.trackers[trackerKey].sheets[sheetKey]={rows:[],timestamps:{}};
+  const localSheet=D.trackers[trackerKey].sheets[sheetKey];
+  if(!localSheet.aoMeta)localSheet.aoMeta={};
+  localSheet.aoMeta[ri]={status:status,exitDate:status==='Exited'?(exitDate||''):''};
+  await fbSet('trackers/'+trackerKey+'/sheets/'+sheetKey+'/aoMeta/'+ri,localSheet.aoMeta[ri]);
+  toast(status==='Exited'?'Brand marked as Exited and moved to the Exited tab.':'Status updated to '+status+'.');
+  closeModal('modal-lt-upload');
+  renderLiveTrackers();
+}
+// Inline dropdown handler. Active → save immediately. Exited → open a centered modal that
+// requires an exit date before saving (mirrors the Finance Report "Set Account as Exited" popup).
+function aoInlineStatusChange(trackerKey,sheetKey,ri,newStatus,selectEl){
+  if(!CU.isAdmin){toast('Admin only.');if(selectEl){const t=D.trackers[trackerKey];const sh=t&&t.sheets?t.sheets[sheetKey]:null;selectEl.value=aoRowStatus(sh,ri);}return;}
+  const t=D.trackers[trackerKey];if(!t)return;
+  const sh=(t.sheets||{})[sheetKey];if(!sh)return;
+  const row=(sh.rows||[])[ri]||[];
+  const brand=String(row[0]||'').trim()||'This brand';
+  if(newStatus==='Exited'){
+    const cur=aoRowExitDate(sh,ri)||ds(now());
+    document.getElementById('mlt-body').innerHTML=''
+      +'<div style="margin-bottom:12px;font-size:14px;font-weight:600">'+escHtml(brand)+'</div>'
+      +'<div class="fg" style="margin-bottom:12px"><div style="display:inline-block;padding:3px 12px;border-radius:20px;border:1px solid var(--red);background:var(--red-light);color:var(--red);font-size:12px;font-weight:700">Exited</div></div>'
+      +'<div style="padding:12px;background:var(--red-light);border:1px solid var(--red-mid);border-radius:var(--radius)">'
+        +'<div style="font-size:12px;font-weight:700;color:var(--red);margin-bottom:6px">⚠️ Offboarding Date Required</div>'
+        +'<label class="flabel">Offboarding / Exit Date</label>'
+        +'<input class="finput nb" id="ao-exit-date" type="date" value="'+escHtml(cur)+'"/>'
+        +'<div style="font-size:11px;color:var(--red);margin-top:4px">This brand will be moved to the Exited tab.</div>'
+      +'</div>'
+      +'<div class="form-actions" style="margin-top:14px">'
+        +'<button class="btn primary" onclick="aoConfirmExit(\''+trackerKey+'\',\''+sheetKey+'\','+ri+')">Confirm Exit</button>'
+        +'<button class="btn" onclick="closeModal(\'modal-lt-upload\');renderLiveTrackers()">Cancel</button>'
+      +'</div>';
+    document.getElementById('modal-lt-upload').querySelector('h3').textContent='Set Brand as Exited';
+    openModal('modal-lt-upload');
+    if(selectEl)selectEl.value=aoRowStatus(sh,ri);
+    return;
+  }
+  // Active — save directly.
+  aoSetRowStatus(trackerKey,sheetKey,ri,'Active','');
+}
+function aoConfirmExit(trackerKey,sheetKey,ri){
+  const exitDate=document.getElementById('ao-exit-date')?.value||'';
+  if(!exitDate){toast('Please pick an exit date.');return;}
+  aoSetRowStatus(trackerKey,sheetKey,ri,'Exited',exitDate);
+}
+// Admin-only: update an exit date from the Exited tab.
+async function aoUpdateExitDate(trackerKey,sheetKey,ri,val){
+  if(!CU.isAdmin){toast('Admin only.');return;}
+  const t=D.trackers[trackerKey];if(!t)return;
+  const sh=(t.sheets||{})[sheetKey];if(!sh)return;
+  if(!sh.aoMeta)sh.aoMeta={};
+  const cur=sh.aoMeta[ri]||{status:'Exited',exitDate:''};
+  cur.exitDate=val||'';cur.status='Exited';
+  sh.aoMeta[ri]=cur;
+  await fbSet('trackers/'+trackerKey+'/sheets/'+sheetKey+'/aoMeta/'+ri,cur);
+  toast('Offboarding date updated.');
+}
+// Admin-only: revert an exited brand back to Active from the Exited tab.
+async function aoReactivateRow(trackerKey,sheetKey,ri){
+  if(!CU.isAdmin){toast('Admin only.');return;}
+  await aoSetRowStatus(trackerKey,sheetKey,ri,'Active','');
+}
+
 // ── Finance Report Row Ownership (Exec/CDM / Team Lead access control) ──
 // Mirrors aoIsRowOwner: a brand row "belongs" to whoever is named in its Exec/CDM or
 // Team Lead cell. Admin always has full access; everyone else gets view-only on rows
@@ -6499,15 +6583,15 @@ function buildTrackerContent(key){
   let names=savedOrder.length
     ?[...savedOrder.filter(n=>sheets[n]),...allNames.filter(n=>!savedOrder.includes(n))]
     :allNames.slice();
-  // Finance trackers always show the "Exited" tab, even before any brand has exited,
+  // Finance AND AO trackers always show the "Exited" tab, even before any brand has exited,
   // so users always know where exited/inactive brands are listed. It is pinned last.
-  if(t.category==='Finance'){
+  if(t.category==='Finance'||t.category==='AO Tracker'){
     names=names.filter(n=>n!=='Exited');
     names.push('Exited');
   }
   if(!names.length)return'<div class="empty-state" style="padding:40px">No sheets in this tracker.</div>';
-  // "Exited" is a valid tab for Finance trackers even when its backing sheet does not exist yet.
-  const _exitedVirtual=t.category==='Finance'&&_activeTrackerSheet==='Exited';
+  // "Exited" is a valid tab for Finance/AO trackers even when its backing sheet does not exist yet.
+  const _exitedVirtual=(t.category==='Finance'||t.category==='AO Tracker')&&_activeTrackerSheet==='Exited';
   if(!_activeTrackerSheet||(!sheets[_activeTrackerSheet]&&!_exitedVirtual))_activeTrackerSheet=names[0];
   const sh=sheets[_activeTrackerSheet];
   const isFin=t.category==='Finance';
@@ -6550,7 +6634,7 @@ function buildTrackerContent(key){
   }
   // Show current week label for AO tracker (no navigation — only current week is editable)
   var weekNavHtml='';
-  if(t.category==='AO Tracker'){
+  if(t.category==='AO Tracker'&&_activeTrackerSheet!=='Exited'){
     var mon2=new Date();
     mon2.setDate(mon2.getDate()-(mon2.getDay()===0?6:mon2.getDay()-1));
     var fri2=new Date(mon2);fri2.setDate(mon2.getDate()+4);
@@ -6615,7 +6699,8 @@ function buildTrackerContent(key){
       +'</div>'
     +'</div>';
   }
-  return tabsHtml+weekNavHtml+frWeekBannerHtml+(t.category==='Finance'?(isExitedTab?buildExitedTable(key,_activeTrackerSheet,sh):buildFRTable(key,_activeTrackerSheet,sh)):buildAOTable(key,_activeTrackerSheet,sh));
+  const isAOExitedTab=t.category==='AO Tracker'&&_activeTrackerSheet==='Exited';
+  return tabsHtml+weekNavHtml+frWeekBannerHtml+(t.category==='Finance'?(isExitedTab?buildExitedTable(key,_activeTrackerSheet,sh):buildFRTable(key,_activeTrackerSheet,sh)):(isAOExitedTab?buildAOExitedTable(key):buildAOTable(key,_activeTrackerSheet,sh)));
 }
 
 function ltSetSheet(key,sheet){_activeTrackerSheet=sheet;renderLiveTrackers();}
@@ -6692,10 +6777,20 @@ async function aoDeleteSelectedRows(trackerKey,sheetKey){
     if(oldToNew[oldRi]===undefined)return; // belonged to a deleted row
     newTimestamps[oldToNew[oldRi]+'_'+parts[1]]=oldTimestamps[tk];
   });
+  // Remap AO status/exit-date meta (keyed by row index) the same way, so a surviving exited
+  // brand keeps its status and a deleted row's meta is dropped.
+  const oldMeta=sheet.aoMeta||{};
+  const newMeta={};
+  Object.keys(oldMeta).forEach(function(mk){
+    const oldRi=parseInt(mk,10);
+    if(oldToNew[oldRi]===undefined)return;
+    newMeta[oldToNew[oldRi]]=oldMeta[mk];
+  });
   const path='trackers/'+trackerKey+'/sheets/'+sheetKey;
   D.trackers[trackerKey].sheets[sheetKey].rows=newRows;
   D.trackers[trackerKey].sheets[sheetKey].timestamps=newTimestamps;
-  await fbUpd(path,{rows:newRows,timestamps:newTimestamps});
+  D.trackers[trackerKey].sheets[sheetKey].aoMeta=newMeta;
+  await fbUpd(path,{rows:newRows,timestamps:newTimestamps,aoMeta:newMeta});
   const delCount=sel.size;
   sel.clear();
   toast('Deleted '+delCount+' brand'+(delCount>1?'s':'')+' from tracker.');
@@ -6928,6 +7023,71 @@ async function frSaveNewTab(trackerKey){
   renderLiveTrackers();
 }
 
+// ── Build the AO "Exited" tab — a roll-up of every brand marked Exited across ALL AO sheets. ──
+// Mirrors buildExitedTable (Finance). Exited status + date live in each sheet's aoMeta map,
+// keyed by the row's true array index, so edits/reactivation act on the real record.
+function buildAOExitedTable(trackerKey){
+  const isAdmin=CU.isAdmin;
+  const t=D.trackers[trackerKey]||{};
+  const allSheets=t.sheets||{};
+  const collected=[];
+  Object.keys(allSheets).forEach(function(sk){
+    if(sk==='Exited')return;
+    const s=allSheets[sk];if(!s||!s.rows||!s.aoMeta)return;
+    s.rows.forEach(function(r,ri){
+      if(!r)return;
+      const meta=s.aoMeta[ri];
+      if(!meta||String(meta.status||'').trim()!=='Exited')return;
+      collected.push({row:r,srcSheet:sk,srcRowIdx:ri,exitDate:meta.exitDate||''});
+    });
+  });
+  // Sort exited roll-up by CDM name too (auto-group per CDM), then brand.
+  collected.sort(function(a,b){
+    const ca=String(a.row[2]||'').trim().toLowerCase();
+    const cb=String(b.row[2]||'').trim().toLowerCase();
+    if(ca!==cb){if(!ca)return 1;if(!cb)return -1;return ca<cb?-1:1;}
+    return String(a.row[0]||'').toLowerCase()<String(b.row[0]||'').toLowerCase()?-1:1;
+  });
+  const COLS=[
+    {label:'Brand',idx:0,w:160},
+    {label:'Platform',idx:1,w:100},
+    {label:'CDM',idx:2,w:130},
+    {label:'Team Lead',idx:3,w:130},
+  ];
+  const colSpan=COLS.length+1+(isAdmin?1:0);
+  const hdrCells=COLS.map(function(c){return'<th style="padding:5px 10px;background:#ffeaea;border:1px solid var(--border);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#b91c1c;text-align:left;white-space:nowrap;min-width:'+c.w+'px">'+c.label+'</th>';}).join('');
+  const hdr='<tr>'+hdrCells
+    +'<th style="padding:5px 10px;background:#ffeaea;border:1px solid var(--border);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#b91c1c;text-align:left;white-space:nowrap;min-width:140px">Offboarding Date</th>'
+    +(isAdmin?'<th style="padding:5px 10px;background:#ffeaea;border:1px solid var(--border);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#b91c1c;text-align:center;white-space:nowrap;min-width:120px">Actions</th>':'')
+    +'</tr>';
+  const _kEsc=String(trackerKey).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  let _prevCdm=null;
+  const body=collected.length?collected.map(function(item){
+    const row=item.row;
+    const _src=String(item.srcSheet).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    const _sri=item.srcRowIdx;
+    let groupHtml='';
+    const _cdm=String(row[2]||'').trim();
+    const _cdmKey=_cdm.toLowerCase();
+    if(_cdmKey!==_prevCdm){
+      _prevCdm=_cdmKey;
+      groupHtml='<tr><td colspan="'+colSpan+'" style="background:#fbe9e9;border:1px solid var(--border);padding:4px 12px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#b91c1c">👤 CDM: '+escHtml(_cdm||'— Unassigned —')+'</td></tr>';
+    }
+    const cells=COLS.map(function(c){
+      const v=row[c.idx]!=null&&String(row[c.idx]).trim()!==''?String(row[c.idx]).trim():'—';
+      const srcTag=(c.idx===0&&item.srcSheet)?'<div style="font-size:8px;color:var(--text4);margin-top:2px">from '+escHtml(item.srcSheet)+'</div>':'';
+      return'<td style="padding:5px 10px;border:1px solid var(--border);font-size:12px;color:var(--text2);white-space:nowrap;background:#fff8f8">'+escHtml(v)+srcTag+'</td>';
+    }).join('');
+    const dateCell=isAdmin
+      ?'<td style="padding:4px 8px;border:1px solid var(--border);background:#fff8f8;white-space:nowrap"><input type="date" value="'+escHtml(item.exitDate||'')+'" style="border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;color:var(--red);font-family:inherit;width:130px" onchange="aoUpdateExitDate(\''+_kEsc+'\',\''+_src+'\','+_sri+',this.value)"/></td>'
+      :'<td style="padding:5px 10px;border:1px solid var(--border);background:#fff8f8;font-size:12px;color:var(--red);font-weight:600;white-space:nowrap">'+escHtml(item.exitDate||'—')+'</td>';
+    const actions=isAdmin?'<td style="padding:4px 8px;border:1px solid var(--border);background:#fff8f8;text-align:center;white-space:nowrap"><button onclick="aoReactivateRow(\''+_kEsc+'\',\''+_src+'\','+_sri+')" style="padding:2px 8px;border-radius:4px;border:1px solid var(--green);background:var(--green-light);color:var(--green);font-size:11px;font-weight:700;cursor:pointer" title="Move this brand back to Active">↩ Reactivate</button></td>':'';
+    return groupHtml+'<tr style="background:#fff8f8">'+cells+dateCell+actions+'</tr>';
+  }).join(''):'<tr><td colspan="'+colSpan+'" class="empty-state" style="padding:32px;text-align:center;color:var(--text4)">No exited brands.</td></tr>';
+  const info='<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:#fef2f2;border-bottom:1px solid var(--red-mid);font-size:11px;color:var(--red)"><span>⚠️</span><span>Exited brands — <strong>'+collected.length+' record'+(collected.length!==1?'s':'')+'</strong>. These brands are no longer active in the AO tracker.</span></div>';
+  return'<div style="overflow:auto;max-height:calc(100vh - 220px);position:relative">'+info+'<table style="border-collapse:collapse;font-size:12px;min-width:100%"><thead style="position:sticky;top:0;z-index:4">'+hdr+'</thead><tbody>'+body+'</tbody></table></div>';
+}
+
 function buildAOTable(trackerKey,sheetKey,sheet){
   if(!sheet)return'<div class="empty-state" style="padding:32px">Empty sheet.</div>';
   const{row0,row1,rows}=sheet;
@@ -6944,7 +7104,10 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   for(let i=0;i<5;i++){const d=new Date(mon);d.setDate(mon.getDate()+i);weekDates.push(ds(d));}
 
   const maxCol=Math.max((row0||[]).length,(row1||[]).length);
-  const fixedW=[120,80,90,90],fixedL=['Brand','Platform','CDM','Team Lead'];
+  // Status is a VIRTUAL fixed column (index 4 in the display list) — it is not backed by the
+  // row array (which reserves index 4+ for date columns). Its value comes from sheet.aoMeta.
+  const AO_STATUS_DISP=4;
+  const fixedW=[120,80,90,90,90],fixedL=['Brand','Platform','CDM','Team Lead','Status'];
 
   // Parse date columns from Excel headers
   const dateCols=[];
@@ -7084,15 +7247,50 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   const hDoneRow='';
 
   // ── Data rows ──
-  const bodyRows=(rows||[]).map(function(row,ri){
+  // Build an ordered index list. We keep each row's TRUE array index (ri) for edits/selection,
+  // but reorder for display so all rows sharing the same CDM cluster together (auto-group per CDM
+  // name). The TOTAL row is always kept pinned at the very bottom in its original position.
+  const _liveSheetForOrder=(D.trackers[trackerKey]||{}).sheets&&D.trackers[trackerKey].sheets[sheetKey];
+  const _metaSheet=_liveSheetForOrder||sheet;
+  const _ordered=[];
+  (rows||[]).forEach(function(row,ri){ if(row)_ordered.push({row:row,ri:ri}); });
+  const _totalEntries=_ordered.filter(function(e){return isTR(e.row);});
+  const _dataEntries=_ordered.filter(function(e){return !isTR(e.row);});
+  // Stable group-by-CDM sort: primary key = CDM name (empty/unassigned sorts last), and within
+  // the same CDM the original row order is preserved (stable because we compare original index).
+  _dataEntries.sort(function(a,b){
+    const ca=String(a.row[2]||'').trim().toLowerCase();
+    const cb=String(b.row[2]||'').trim().toLowerCase();
+    if(ca===cb)return a.ri-b.ri;
+    if(!ca)return 1; if(!cb)return -1;
+    return ca<cb?-1:1;
+  });
+  const _renderOrder=_dataEntries.concat(_totalEntries);
+  let _prevCdmGroup=null;
+  const bodyRows=_renderOrder.map(function(entry){
+    const row=entry.row, ri=entry.ri;
     if(!row)return'';
     const isT=isTR(row);
+    // Exited brands never appear in the active view — they live only in the Exited tab.
+    if(!isT&&aoRowStatus(_metaSheet,ri)==='Exited')return'';
     // Apply column filters (skip total row and rows without data)
     if(!isT){
       if(_aoFilter.brand&&!String(row[0]||'').toLowerCase().includes(_aoFilter.brand.toLowerCase()))return'';
       if(_aoFilter.platform&&!String(row[1]||'').toLowerCase().includes(_aoFilter.platform.toLowerCase()))return'';
       if(_aoFilter.cdm&&!String(row[2]||'').toLowerCase().includes(_aoFilter.cdm.toLowerCase()))return'';
       if(_aoFilter.tl&&!String(row[3]||'').toLowerCase().includes(_aoFilter.tl.toLowerCase()))return'';
+    }
+    // ── CDM group divider row ── inserted whenever the CDM name changes between data rows.
+    let groupHeaderHtml='';
+    if(!isT){
+      const _cdmName=String(row[2]||'').trim();
+      const _cdmKey=_cdmName.toLowerCase();
+      if(_cdmKey!==_prevCdmGroup){
+        _prevCdmGroup=_cdmKey;
+        const _label=_cdmName||'— Unassigned —';
+        const _colspanTotal=1+fixedW.length+dateCols.length*2;
+        groupHeaderHtml='<tr><td colspan="'+_colspanTotal+'" style="position:sticky;left:0;background:#eef2f7;border:1px solid var(--border);padding:4px 12px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text3)">👤 CDM: '+escHtml(_label)+'</td></tr>';
+      }
     }
     const isSel=aoSelRows.has(ri);
     let cells='';
@@ -7120,7 +7318,8 @@ function buildAOTable(trackerKey,sheetKey,sheet){
       return opts;
     };
     fixedW.forEach(function(_,i){
-      const v=row[i];
+      const isStatusCol=(i===AO_STATUS_DISP);
+      const v=isStatusCol?'':row[i]; // Status is virtual — not in the row array
       const vS=(v===null||v===undefined)?'':String(v);
       const fixBg=isT?'#f8fafc':(isSel?'#eff6ff':'var(--surface)');
       const sl=aoFixedLefts[i];
@@ -7128,7 +7327,22 @@ function buildAOTable(trackerKey,sheetKey,sheet){
       const shadowStyle=isLast?'box-shadow:2px 0 4px rgba(0,0,0,0.06);':'';
       const isAssigneeCol=!isT&&(i===2||i===3);
       let cellInner;
-      if(isAssigneeCol&&isAdmin){
+      if(isStatusCol){
+        // Virtual Status column (Active / Exited), sourced from sheet.aoMeta.
+        if(isT){cellInner='';}
+        else{
+          const _st=aoRowStatus(_metaSheet,ri);
+          const _isExitedRow=_st==='Exited';
+          const _stColor=_isExitedRow?'var(--red)':'var(--green)';
+          const _stBg=_isExitedRow?'var(--red-light)':'var(--green-light)';
+          if(isAdmin){
+            const _opts=['Active','Exited'].map(function(s){return'<option value="'+s+'"'+(_st===s?' selected':'')+'>'+s+'</option>';}).join('');
+            cellInner='<select onchange="aoInlineStatusChange(\''+trackerKey+'\',\''+sheetKey+'\','+ri+',this.value,this)" style="padding:2px 6px;border-radius:20px;border:1px solid '+_stColor+';background:'+_stBg+';color:'+_stColor+';font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;appearance:auto">'+_opts+'</select>';
+          } else {
+            cellInner='<span style="display:inline-block;padding:2px 9px;border-radius:20px;border:1px solid '+_stColor+';background:'+_stBg+';color:'+_stColor+';font-size:11px;font-weight:700">'+_st+'</span>';
+          }
+        }
+      } else if(isAssigneeCol&&isAdmin){
         cellInner='<select onchange="ltSetRowAssignee(\''+trackerKey+'\',\''+sheetKey+'\','+ri+','+i+',this.value)" style="width:100%;max-width:'+(fixedW[i]-10)+'px;padding:2px 3px;font-size:11px;border:1px solid var(--border);border-radius:3px;background:#fff">'+aoMemberOpts(vS)+'</select>';
       } else if(isAssigneeCol&&!vS){
         cellInner='<span style="color:var(--text4)">— Unassigned —</span>';
@@ -7199,7 +7413,7 @@ function buildAOTable(trackerKey,sheetKey,sheet){
         }
       });
     });
-    return'<tr style="background:'+(isT?'#f8fafc':isSel?'#eff6ff':'')+'">' + cells + '</tr>';
+    return groupHeaderHtml+'<tr style="background:'+(isT?'#f8fafc':isSel?'#eff6ff':'')+'">' + cells + '</tr>';
   }).join('');
 
   const hasFilters=_aoFilter.brand||_aoFilter.platform||_aoFilter.cdm||_aoFilter.tl;
