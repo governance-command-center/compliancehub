@@ -20,16 +20,82 @@ function allTasks(){
   var base=D.tasks||[];
   var lead=D.leadTasks||[];
   if(CU.isAdmin) return base; // admin sees all admin tasks
+  // A task counts as "mine" if I'm in its assignees list OR — for tracker-linked
+  // tasks (Abnormal Orders / Finance Report) whose real per-person assignment lives
+  // in the tracker rows, not in t.assignees — I'm named on at least one live row of
+  // that linked tracker. Without this, a member tagged only in the tracker (e.g. as a
+  // row's CDM/Team Lead) never sees the AO/FR task on their dashboard.
+  function isMine(t){
+    if((t.assignees||[]).includes(CU.username))return true;
+    if((t.aoLinked||t.frLinked)&&userOwnsAnyTrackerRow(t))return true;
+    return false;
+  }
   if(isLead()){
     // Lead sees: admin tasks assigned to them + all their own created lead tasks
-    var assignedAdminTasks=base.filter(function(t){return(t.assignees||[]).includes(CU.username);});
+    var assignedAdminTasks=base.filter(isMine);
     var myLeadTasks=lead.filter(function(t){return t._leadOwner===CU.username;});
     return assignedAdminTasks.concat(myLeadTasks);
   }
   // Regular member: ONLY admin tasks assigned to them + lead tasks assigned to them
-  var assignedBase=base.filter(function(t){return(t.assignees||[]).includes(CU.username);});
-  var assignedLeadTasks=lead.filter(function(t){return(t.assignees||[]).includes(CU.username);});
+  var assignedBase=base.filter(isMine);
+  var assignedLeadTasks=lead.filter(isMine);
   return assignedBase.concat(assignedLeadTasks);
+}
+// True if the current (non-admin) user is named on at least one live (non Exited/Inactive)
+// row of the tracker linked to this task. Covers both the Abnormal Orders tracker
+// (CDM col 2 / Team Lead col 3, reusing aoIsRowOwner) and the Finance Report tracker
+// (Exec/CDM & Team Lead columns, resolved per-platform). Standing-buddy grants are
+// inherited via aoIsRowOwner / aoIsBuddyOf so a buddy also sees the task.
+function userOwnsAnyTrackerRow(t){
+  if(!CU||CU.isAdmin)return true;
+  if(!(CU.name||'').trim())return false;
+  try{
+    if(t.aoLinked){
+      var aoEntry=Object.entries(D.trackers||{}).find(function(e){return e[1]&&e[1].aoLinked;});
+      if(!aoEntry)return false;
+      var aoSheets=(aoEntry[1].sheets)||{};
+      return Object.keys(aoSheets).some(function(sk){
+        var sh=aoSheets[sk];if(!sh||!sh.rows)return false;
+        var meta=sh.aoMeta||{};
+        return sh.rows.some(function(row,ri){
+          if(!row||row[0]==null||!String(row[0]).trim())return false;
+          if(String(row[0]).toUpperCase()==='TOTAL')return false;
+          var m=meta[ri],st=m&&m.status?String(m.status).trim().toLowerCase():'';
+          if(st==='exited'||st==='inactive')return false;
+          return aoIsRowOwner(row);
+        });
+      });
+    }
+    if(t.frLinked){
+      var frLinked=(typeof getFRLinked==='function')?getFRLinked():null;
+      if(!frLinked){
+        var frEntry=Object.entries(D.trackers||{}).find(function(e){return e[1]&&e[1].frLinked;});
+        frLinked=frEntry?frEntry[1]:null;
+      }
+      if(!frLinked)return false;
+      var frSheets=frLinked.sheets||{};
+      var nm=(CU.name||'').trim().toLowerCase();
+      return Object.keys(frSheets).some(function(sk){
+        var sheet=frSheets[sk];if(!sheet||!sheet.rows)return false;
+        var platform=sk;
+        var execCol=frFixedColIdx(sheet,platform,'exec');
+        var headerRows=(sheet.headerRows)||(sheet.row0?[sheet.row0]:[[]]);
+        var hr0=headerRows[0]||[];
+        var tlCol=(function(){var i=hr0.findIndex(function(l){return/team.?lead|^tl$/i.test(String(l||''));});return i>=0?i:execCol+1;})();
+        var acctCol=frFixedColIdx(sheet,platform,'acct');
+        return sheet.rows.some(function(row){
+          if(!row)return false;
+          var stt=String(row[acctCol]||'').trim().toLowerCase();
+          if(stt==='inactive'||stt==='exited')return false;
+          var ex=String(row[execCol]||'').trim().toLowerCase();
+          var tl=String(row[tlCol]||'').trim().toLowerCase();
+          if((ex&&ex===nm)||(tl&&tl===nm))return true;
+          return aoIsBuddyOf(ex)||aoIsBuddyOf(tl);
+        });
+      });
+    }
+  }catch(e){/* tracker shape unexpected — fail closed, don't crash dashboard */}
+  return false;
 }
 // Check if current user can edit a task
 function canEditTask(t){
