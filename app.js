@@ -5493,13 +5493,61 @@ async function sendNCToIncident(ncId){
 }
 
 // Admin dismisses a non-compliance entry without escalating it to an incident.
+// Dismissed entries are hidden from the dashboard list immediately afterwards (see
+// buildDashboardNonCompliance) — they stay in the DB as a historical record but no
+// longer clutter the view.
 async function dismissNC(ncId){
   if(!CU.isAdmin){toast('Only the governance admin can dismiss');return;}
   const r=(D.nonCompliance||{})[ncId];
   if(!r){toast('Entry not found');return;}
   await fbUpd('nonCompliance/'+ncId,{status:'Dismissed',sentAsIncident:false,dismissedBy:CU.name,dismissedAt:Date.now()});
   await logAct(r.taskId,r.date,CU.name,'Non-compliance dismissed: '+r.taskTitle,'NC_DISMISSED');
+  (window._ncSelected||(window._ncSelected=new Set())).delete(ncId);
   toast('Dismissed');
+}
+
+// ── NON-COMPLIANCE: selection + bulk actions ────────────────────────────────────
+// window._ncSelected persists a Set of selected ncId's across re-renders (same pattern
+// as window._ncOpen for the collapse state). Only "Open" entries are selectable since
+// bulk actions (Send to Incident / Dismiss) only make sense for still-open items.
+function toggleNCSelect(ncId){
+  if(!window._ncSelected)window._ncSelected=new Set();
+  if(window._ncSelected.has(ncId))window._ncSelected.delete(ncId);
+  else window._ncSelected.add(ncId);
+  renderDashboard();
+}
+// Reads the currently-visible open ids from window._ncOpenIds (stashed by
+// buildDashboardNonCompliance on each render) rather than taking an argument, since an
+// array of string ids can't be safely inlined into an onclick="" attribute.
+function toggleNCSelectAll(){
+  const ids=window._ncOpenIds||[];
+  if(!window._ncSelected)window._ncSelected=new Set();
+  const allSelected=ids.length>0&&ids.every(id=>window._ncSelected.has(id));
+  if(allSelected)ids.forEach(id=>window._ncSelected.delete(id));
+  else ids.forEach(id=>window._ncSelected.add(id));
+  renderDashboard();
+}
+function clearNCSelection(){window._ncSelected=new Set();renderDashboard();}
+
+// Bulk-send every selected (still Open) non-compliance entry to the Incident Log.
+async function bulkSendNCToIncident(){
+  if(!CU.isAdmin){toast('Only the governance admin can send incidents');return;}
+  const sel=Array.from(window._ncSelected||[]).filter(id=>{const r=(D.nonCompliance||{})[id];return r&&r.status==='Open';});
+  if(!sel.length){toast('No open entries selected');return;}
+  for(const ncId of sel){await sendNCToIncident(ncId);}
+  window._ncSelected=new Set();
+  toast(sel.length+' entr'+(sel.length===1?'y':'ies')+' sent to Incident Log');
+  renderDashboard();
+}
+// Bulk-dismiss every selected (still Open) non-compliance entry.
+async function bulkDismissNC(){
+  if(!CU.isAdmin){toast('Only the governance admin can dismiss');return;}
+  const sel=Array.from(window._ncSelected||[]).filter(id=>{const r=(D.nonCompliance||{})[id];return r&&r.status==='Open';});
+  if(!sel.length){toast('No open entries selected');return;}
+  for(const ncId of sel){await dismissNC(ncId);}
+  window._ncSelected=new Set();
+  toast(sel.length+' entr'+(sel.length===1?'y':'ies')+' dismissed');
+  renderDashboard();
 }
 
 // ── NON-COMPLIANCE: dashboard section ──────────────────────────────────────────
@@ -5541,41 +5589,64 @@ function ncEntryStillValid(r){
 
 // Admin sees ALL entries; an assigned member sees only entries tagged to them (so they can see
 // their own non-compliance before/after it's escalated, per requirement).
+// Dismissed entries are dropped entirely from this list — once an admin dismisses one it's
+// removed from view here (it still lives in nonCompliance/ in the DB as a historical record,
+// it just no longer clutters this dashboard list). Open/Sent entries are also filterable by date.
 function buildDashboardNonCompliance(){
-  const all=Object.values(D.nonCompliance||{}).filter(Boolean).filter(ncEntryStillValid);
+  const all=Object.values(D.nonCompliance||{}).filter(Boolean).filter(ncEntryStillValid).filter(function(r){return r.status!=='Dismissed';});
   if(!all.length)return'';
-  const visible=CU.isAdmin?all:all.filter(function(r){return(r.tagged||[]).includes(CU.username);});
+  let visible=CU.isAdmin?all:all.filter(function(r){return(r.tagged||[]).includes(CU.username);});
   if(!visible.length)return'';
-  // Sort: Open first, then Sent, then Dismissed; newest first within each.
-  const rank={Open:0,Sent:1,Dismissed:2};
-  visible.sort(function(a,b){
+
+  // Date filter (matches r.date, the task's scheduled/occurrence date) — From/To range,
+  // same pattern used on the Incidents page.
+  if(window._ncFrom===undefined)window._ncFrom='';
+  if(window._ncTo===undefined)window._ncTo='';
+  const filtered=visible.filter(function(r){
+    if(window._ncFrom&&(r.date||'')<window._ncFrom)return false;
+    if(window._ncTo&&(r.date||'')>window._ncTo)return false;
+    return true;
+  });
+
+  // Sort: Open first, then Sent; newest first within each.
+  const rank={Open:0,Sent:1};
+  filtered.sort(function(a,b){
     const ra=rank[a.status]??0,rb=rank[b.status]??0;
     if(ra!==rb)return ra-rb;
     return (b.ts||0)-(a.ts||0);
   });
   const openCount=visible.filter(function(r){return r.status==='Open';}).length;
+  const openIds=filtered.filter(function(r){return r.status==='Open';}).map(function(r){return r.ncId;});
+  window._ncOpenIds=openIds; // stashed for toggleNCSelectAll (avoids inlining an array into onclick)
+  if(!window._ncSelected)window._ncSelected=new Set();
+  // Drop selected ids that are no longer open/visible (sent, dismissed, filtered out elsewhere)
+  window._ncSelected=new Set(Array.from(window._ncSelected).filter(function(id){return openIds.includes(id);}));
+  const selCount=window._ncSelected.size;
 
   function statusPill(r){
     if(r.status==='Sent'||r.sentAsIncident)
       return '<span style="font-size:10px;font-weight:700;color:var(--red);background:var(--red-light,#fee2e2);padding:2px 8px;border-radius:20px;white-space:nowrap">✓ Sent as incident</span>';
-    if(r.status==='Dismissed')
-      return '<span style="font-size:10px;font-weight:700;color:var(--text3);background:var(--bg);border:1px solid var(--border);padding:2px 8px;border-radius:20px;white-space:nowrap">Dismissed</span>';
     return '<span style="font-size:10px;font-weight:700;color:var(--orange);background:var(--orange-light);padding:2px 8px;border-radius:20px;white-space:nowrap">⏳ Open</span>';
   }
 
-  const rows=visible.map(function(r){
+  const rows=filtered.map(function(r){
     const who=r.cdm||(r.tagged||[]).map(getMN).join(', ')||'—';
     const scope=[r.brand,r.region,r.platform].filter(Boolean).join(' · ');
-    const actions=CU.isAdmin&&r.status==='Open'
+    const isOpenRow=r.status==='Open';
+    const checkbox=CU.isAdmin&&isOpenRow
+      ? '<input type="checkbox" style="width:15px;height:15px;cursor:pointer" '+(window._ncSelected.has(r.ncId)?'checked ':'')+'onclick="toggleNCSelect(\''+r.ncId+'\')"/>'
+      : '';
+    const actions=CU.isAdmin&&isOpenRow
       ? '<div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap"><button class="btn sm del" onclick="sendNCToIncident(\''+r.ncId+'\')">Send to Incident</button><button class="btn sm" onclick="dismissNC(\''+r.ncId+'\')">Dismiss</button></div>'
       : '';
     return '<tr>'
-      +'<td style="width:26%"><div style="font-weight:600">'+escHtml(r.taskTitle||'')+'</div>'+(scope?'<div style="font-size:11px;color:var(--text3)">'+escHtml(scope)+'</div>':'')+'</td>'
-      +'<td style="width:16%">'+escHtml(who)+'</td>'
-      +'<td style="width:12%;text-align:center"><span style="font-size:11px">'+escHtml(r.date||'')+'</span><div style="font-size:10px;color:var(--text4)">'+escHtml(r.deadline||'')+'</div></td>'
-      +'<td style="width:26%"><div style="font-size:12px;color:var(--text2)">'+escHtml(r.reason||'')+'</div>'+(r.detail?'<div style="font-size:10px;color:var(--text4);margin-top:2px">'+escHtml(r.detail)+'</div>':'')+'</td>'
+      +(CU.isAdmin?'<td style="width:3%;text-align:center">'+checkbox+'</td>':'')
+      +'<td style="width:24%"><div style="font-weight:600">'+escHtml(r.taskTitle||'')+'</div>'+(scope?'<div style="font-size:11px;color:var(--text3)">'+escHtml(scope)+'</div>':'')+'</td>'
+      +'<td style="width:15%">'+escHtml(who)+'</td>'
+      +'<td style="width:11%;text-align:center"><span style="font-size:11px">'+escHtml(r.date||'')+'</span><div style="font-size:10px;color:var(--text4)">'+escHtml(r.deadline||'')+'</div></td>'
+      +'<td style="width:24%"><div style="font-size:12px;color:var(--text2)">'+escHtml(r.reason||'')+'</div>'+(r.detail?'<div style="font-size:10px;color:var(--text4);margin-top:2px">'+escHtml(r.detail)+'</div>':'')+'</td>'
       +'<td style="width:10%;text-align:center">'+statusPill(r)+'</td>'
-      +'<td style="width:10%">'+actions+'</td>'
+      +'<td style="width:13%">'+actions+'</td>'
       +'</tr>';
   }).join('');
 
@@ -5596,10 +5667,42 @@ function buildDashboardNonCompliance(){
 
   if(!isOpen)return header;
 
+  // Toolbar: date range filter + (admin) bulk selection actions
+  const dateFilterBar='<div style="display:flex;gap:8px;margin:8px 0;flex-wrap:wrap;align-items:center" onclick="event.stopPropagation()">'
+    +'<label class="flabel" style="display:inline;margin-bottom:0">From</label>'
+    +'<input type="date" class="finput nb" style="width:auto;margin-bottom:0" value="'+escHtml(window._ncFrom)+'" onchange="window._ncFrom=this.value;renderDashboard()"/>'
+    +'<label class="flabel" style="display:inline;margin-bottom:0">To</label>'
+    +'<input type="date" class="finput nb" style="width:auto;margin-bottom:0" value="'+escHtml(window._ncTo)+'" onchange="window._ncTo=this.value;renderDashboard()"/>'
+    +(window._ncFrom||window._ncTo?'<button class="btn sm" onclick="window._ncFrom=\'\';window._ncTo=\'\';renderDashboard()">Clear</button>':'')
+    +'</div>';
+
+  const bulkBar=CU.isAdmin
+    ? '<div style="display:flex;gap:8px;margin:0 0 8px;flex-wrap:wrap;align-items:center" onclick="event.stopPropagation()">'
+      +'<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text3);cursor:pointer">'
+        +'<input type="checkbox" style="width:15px;height:15px;cursor:pointer" '+(openIds.length&&openIds.every(function(id){return window._ncSelected.has(id);})?'checked ':'')+'onclick="toggleNCSelectAll()" '+(openIds.length?'':'disabled')+'/>'
+        +'Select all open'
+      +'</label>'
+      +(selCount?'<span style="font-size:12px;font-weight:700;color:var(--text2)">'+selCount+' selected</span>'
+        +'<button class="btn sm del" onclick="bulkSendNCToIncident()">Send to Incident</button>'
+        +'<button class="btn sm" onclick="bulkDismissNC()">Dismiss</button>'
+        +'<button class="btn sm" onclick="clearNCSelection()">Clear selection</button>'
+        :'')
+    +'</div>'
+    : '';
+
+  const emptyRow=!filtered.length
+    ?'<div class="empty-state" style="padding:20px">No non-compliance entries in this date range.</div>'
+    :'';
+
   return header
-    +'<div class="tbl-wrap"><table><thead><tr>'
-    +'<th style="width:26%">Task</th><th style="width:16%">CDM / Assigned</th><th style="width:12%;text-align:center">Date / Deadline</th><th style="width:26%">Reason</th><th style="width:10%;text-align:center">Status</th><th style="width:10%">'+(CU.isAdmin?'Action':'')+'</th>'
-    +'</tr></thead><tbody>'+rows+'</tbody></table></div>';
+    +dateFilterBar
+    +bulkBar
+    +(filtered.length
+      ? '<div class="tbl-wrap"><table><thead><tr>'
+        +(CU.isAdmin?'<th style="width:3%"></th>':'')
+        +'<th style="width:24%">Task</th><th style="width:15%">CDM / Assigned</th><th style="width:11%;text-align:center">Date / Deadline</th><th style="width:24%">Reason</th><th style="width:10%;text-align:center">Status</th><th style="width:13%">'+(CU.isAdmin?'Action':'')+'</th>'
+        +'</tr></thead><tbody>'+rows+'</tbody></table></div>'
+      : emptyRow);
 }
 
 // Called every minute for non-admin users — checks their own lead tasks for overdue auto-escalation
