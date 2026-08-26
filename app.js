@@ -138,6 +138,9 @@ let _ncListenerInit=false;
 let _activeTracker=null,_activeTrackerSheet=null;
 
 let _todWeekStart=null;
+let _todViewMode='weekly'; // 'weekly' | 'monthly'
+let _todMonthDate=null; // Date, day is irrelevant — represents the viewed month
+let _todSelectedMember=''; // username selected for monthly detail view (admin/lead)
 let viewDate=new Date(),calViewDate=new Date(),selCalDate=null;
 let _editTId=null,_selM=[],_selTagged=[];
 let _listeners=[],_curPage='dashboard';
@@ -3188,6 +3191,10 @@ function renderMembers(){
         <div><label class="flabel">Region</label><select class="finput nb" id="nm-reg"><option value="">— None —</option><option>MY</option><option>PH</option><option>TH</option><option>VN</option><option>ID</option><option>SG</option><option>EP</option></select></div>
         <div><label class="flabel">Reports To</label><select class="finput nb" id="nm-rt"><option value="">— None —</option>${D.members.filter(m=>m.approved&&m.active!==false&&['HOD','Manager','Assist. Manager','Team Lead'].includes(m.role)).map(m=>`<option value="${m.username}">${m.name} (${m.role})</option>`).join('')}</select></div>
       </div>
+      <div class="fg fg2">
+        <div><label class="flabel">Scheduled Start <span style="font-weight:400;color:var(--text3);font-size:11px">(for TOD attendance tracking)</span></label><input class="finput nb" id="nm-schedstart" type="time" value="09:00"/></div>
+        <div><label class="flabel">Scheduled End <span style="font-weight:400;color:var(--text3);font-size:11px">(for TOD attendance tracking)</span></label><input class="finput nb" id="nm-schedend" type="time" value="18:00"/></div>
+      </div>
       <div class="fg"><label class="flabel">Buddy <span style="font-weight:400;color:var(--text3);font-size:11px">(covers this member's trackers — can edit their brand rows)</span></label><select class="finput nb" id="nm-buddy"><option value="">— None —</option>${D.members.filter(m=>m.approved&&m.active!==false).map(m=>`<option value="${m.username}">${m.name}</option>`).join('')}</select></div>
       <div class="form-actions">
         <button class="btn primary" onclick="addM()">Add Member</button>
@@ -3218,9 +3225,10 @@ function renderMembers(){
 
 async function addM(){
   const name=document.getElementById('nm-n')?.value.trim(),user=document.getElementById('nm-u')?.value.trim().toLowerCase(),pass=document.getElementById('nm-p')?.value,role=document.getElementById('nm-r')?.value||'Member',region=document.getElementById('nm-reg')?.value||'',rt=document.getElementById('nm-rt')?.value||'',buddy=document.getElementById('nm-buddy')?.value||'';
+  const schedStart=document.getElementById('nm-schedstart')?.value||'',schedEnd=document.getElementById('nm-schedend')?.value||'';
   if(!name||!user||!pass){toast('Name, username and password required');return;}
   if(user===ADMIN_UN||D.members.find(m=>m.username===user)){toast('Username already taken');return;}
-  await fbPush('members',{name,username:user,password:pass,role,region,reportsTo:rt,buddy,approved:true});
+  await fbPush('members',{name,username:user,password:pass,role,region,reportsTo:rt,buddy,schedStart,schedEnd,approved:true});
   await logAct(0,ds(now()),CU.name,'Member Added: '+name,'MEMBER_ADDED');
   ['nm-n','nm-u','nm-p'].forEach(id=>document.getElementById(id).value='');
   toast('Member added');
@@ -3242,6 +3250,10 @@ function editMember(username){
       <div><label class="flabel">Region</label><select class="finput nb" id="em-region"><option value="">— None —</option><option${m.region==='MY'?' selected':''}>MY</option><option${m.region==='PH'?' selected':''}>PH</option><option${m.region==='TH'?' selected':''}>TH</option><option${m.region==='VN'?' selected':''}>VN</option><option${m.region==='ID'?' selected':''}>ID</option><option${m.region==='SG'?' selected':''}>SG</option><option${m.region==='EP'?' selected':''}>EP</option></select></div>
       <div><label class="flabel">Reports To</label><select class="finput nb" id="em-rt"><option value="">— None —</option>${memberOpts}</select></div>
     </div>
+    <div class="fg fg2">
+      <div><label class="flabel">Scheduled Start <span style="font-weight:400;color:var(--text3);font-size:11px">(for TOD attendance tracking)</span></label><input class="finput nb" id="em-schedstart" type="time" value="${m.schedStart||'09:00'}"/></div>
+      <div><label class="flabel">Scheduled End <span style="font-weight:400;color:var(--text3);font-size:11px">(for TOD attendance tracking)</span></label><input class="finput nb" id="em-schedend" type="time" value="${m.schedEnd||'18:00'}"/></div>
+    </div>
     <div class="fg"><label class="flabel">Buddy <span style="font-weight:400;color:var(--text3);font-size:11px">(covers this member's trackers — can edit their brand rows)</span></label><select class="finput nb" id="em-buddy"><option value="">— None —</option>${buddyOpts}</select></div>
     <div class="fg"><label class="flabel">New Password (optional)</label><input class="finput nb" id="em-pass" type="password" placeholder="Leave blank to keep"/></div>
     <div class="form-actions"><button class="btn primary" onclick="saveMemberEdit('${username}')">Save</button><button class="btn" onclick="closeModal('modal-task')">Cancel</button></div>`;
@@ -3251,7 +3263,7 @@ async function saveMemberEdit(username){
   const mems=await fbGet('members')||{};
   for(const[k,m]of Object.entries(mems)){
     if(m.username===username){
-      const upd={name:document.getElementById('em-name').value.trim(),role:document.getElementById('em-role').value,region:document.getElementById('em-region')?.value||'',reportsTo:document.getElementById('em-rt')?.value||'',buddy:document.getElementById('em-buddy')?.value||''};
+      const upd={name:document.getElementById('em-name').value.trim(),role:document.getElementById('em-role').value,region:document.getElementById('em-region')?.value||'',reportsTo:document.getElementById('em-rt')?.value||'',buddy:document.getElementById('em-buddy')?.value||'',schedStart:document.getElementById('em-schedstart')?.value||'',schedEnd:document.getElementById('em-schedend')?.value||''};
       const np=document.getElementById('em-pass').value;if(np)upd.password=np;
       await fbUpd(`members/${k}`,upd);toast('Member updated');break;
     }
@@ -3299,13 +3311,14 @@ async function saveMemberPasswordReset(username){
   showErr('Member not found.');
 }
 function downloadMemberTemplate(){
-  const headers=['Name','Username','Password','Role','ReportsTo(username)','Region','WorkingHours'];
-  const example=['Jane Doe','janedoe','pass123','Team Lead','john_manager','MY','9AM-6PM'];
+  const headers=['Name','Username','Password','Role','ReportsTo(username)','Region','WorkingHours','ScheduleStart(HH:MM)','ScheduleEnd(HH:MM)'];
+  const example=['Jane Doe','janedoe','pass123','Talent on Demand','john_manager','MY','9AM-6PM','09:00','18:00'];
   const notes=[
     '\u2192 Roles: HOD / Manager / Assist. Manager / Team Lead / Executive / Talent on Demand',
     '\u2192 ReportsTo: username of their direct manager/team lead (leave blank if none)',
     '\u2192 Regions: MY PH TH VN ID SG EP',
-    '\u2192 WorkingHours: free text e.g. 9AM-6PM (mainly for TOD members)',
+    '\u2192 WorkingHours: free text e.g. 9AM-6PM (display only)',
+    '\u2192 ScheduleStart/ScheduleEnd: 24-hour HH:MM (e.g. 09:00, 18:00) — used to flag lateness and compute hours for TOD attendance tracking',
     '\u2192 Delete this row and the note rows before importing. Keep the header row.',
   ];
   const wb=XLSX.utils.book_new();
@@ -3324,8 +3337,8 @@ async function bulkImport(evt){
       const wb=XLSX.read(e.target.result,{type:'binary'}),ws=wb.Sheets[wb.SheetNames[0]],data=XLSX.utils.sheet_to_json(ws,{header:1});
       let added=0;
       for(const row of data){
-        const name=(row[0]||'').toString().trim(),user=(row[1]||'').toString().trim().toLowerCase(),pass=(row[2]||'').toString().trim(),role=(row[3]||'Member').toString().trim(),rt=(row[4]||'').toString().trim(),region=(row[5]||'').toString().trim(),wh=(row[6]||'').toString().trim();
-        if(name&&user&&pass&&user!==ADMIN_UN&&!D.members.find(m=>m.username===user)){await fbPush('members',{name,username:user,password:pass,role,reportsTo:rt,region,workingHours:wh,approved:true,active:true});added++;}
+        const name=(row[0]||'').toString().trim(),user=(row[1]||'').toString().trim().toLowerCase(),pass=(row[2]||'').toString().trim(),role=(row[3]||'Member').toString().trim(),rt=(row[4]||'').toString().trim(),region=(row[5]||'').toString().trim(),wh=(row[6]||'').toString().trim(),schedStart=(row[7]||'').toString().trim(),schedEnd=(row[8]||'').toString().trim();
+        if(name&&user&&pass&&user!==ADMIN_UN&&!D.members.find(m=>m.username===user)){await fbPush('members',{name,username:user,password:pass,role,reportsTo:rt,region,workingHours:wh,schedStart,schedEnd,approved:true,active:true});added++;}
       }
       toast(`Imported ${added} member(s)`);
     }catch(e){toast('Could not read file');}
@@ -6457,6 +6470,72 @@ function todWeekLabel(){const d=todWeekDates();return fmtD(d[0])+' \u2013 '+fmtD
 function todPrevWeek(){_todWeekStart.setDate(_todWeekStart.getDate()-7);renderTOD();}
 function todNextWeek(){_todWeekStart.setDate(_todWeekStart.getDate()+7);renderTOD();}
 
+// ─── TOD monthly helpers ───
+// Returns Mon–Fri dates only for the month of `monthDate` (weekends auto-excluded).
+function todMonthWeekdays(monthDate){
+  const y=monthDate.getFullYear(),mo=monthDate.getMonth();
+  const dim=new Date(y,mo+1,0).getDate();
+  const out=[];
+  for(let d=1;d<=dim;d++){
+    const dt=new Date(y,mo,d);
+    const dow=dt.getDay();
+    if(dow!==0&&dow!==6)out.push(dt);
+  }
+  return out;
+}
+function todMonthLabel(){return fmtM(_todMonthDate||now());}
+function todPrevMonth(){if(!_todMonthDate)_todMonthDate=new Date(now().getFullYear(),now().getMonth(),1);_todMonthDate.setMonth(_todMonthDate.getMonth()-1);renderTOD();}
+function todNextMonth(){if(!_todMonthDate)_todMonthDate=new Date(now().getFullYear(),now().getMonth(),1);_todMonthDate.setMonth(_todMonthDate.getMonth()+1);renderTOD();}
+function todSetView(mode){_todViewMode=mode;renderTOD();}
+function todSelectMember(u){_todSelectedMember=u;renderTOD();}
+
+// Parses "HH:MM" (24h, from <input type=time>) into {h,m}. Returns null if blank/invalid.
+function parseHHMM(str){
+  if(!str)return null;
+  const parts=str.split(':');
+  if(parts.length<2)return null;
+  const h=parseInt(parts[0],10),m=parseInt(parts[1],10);
+  if(isNaN(h)||isNaN(m))return null;
+  return{h,m};
+}
+// Combines a "YYYY-MM-DD" date string with an "HH:MM" schedule time into a real Date.
+function schedDateTime(dds,hhmm){
+  const t=parseHHMM(hhmm);if(!t)return null;
+  const parts=dds.split('-');
+  return new Date(parseInt(parts[0],10),parseInt(parts[1],10)-1,parseInt(parts[2],10),t.h,t.m,0,0);
+}
+function fmtMinsShort(mins){
+  if(mins<60)return mins+'m';
+  const h=Math.floor(mins/60),m=mins%60;
+  return h+'h '+(m?m+'m':'');
+}
+// Core attendance computation for one member on one date. Login-vs-schedule lateness is always
+// docked from the hour count: if there's no logout, the assumed clock-out is the member's
+// scheduled end time, so a late arrival naturally shortens the computed hours in both cases.
+function computeDayRecord(m,dds){
+  const att=D.todAttendance||{};
+  const rec=(att[m.username]||{})[dds]||{};
+  const out={timeIn:null,timeOut:null,lateMins:0,hoursMs:0,estimated:false,status:'Absent',hasSchedule:!!(m.schedStart)};
+  if(!rec.timeIn)return out;
+  const inDate=new Date(rec.timeIn);
+  out.timeIn=inDate;
+  const schedStart=m.schedStart?schedDateTime(dds,m.schedStart):null;
+  if(schedStart&&inDate>schedStart){
+    out.lateMins=Math.round((inDate-schedStart)/60000);
+  }
+  let outDate=null;
+  if(rec.timeOut){
+    outDate=new Date(rec.timeOut);
+    out.timeOut=outDate;
+  } else if(m.schedEnd){
+    outDate=schedDateTime(dds,m.schedEnd);
+    out.estimated=true;
+  }
+  if(outDate&&outDate>inDate)out.hoursMs=outDate-inDate;
+  out.status=out.lateMins>0?('Late by '+fmtMinsShort(out.lateMins)):(out.hasSchedule?'On time':'Logged in');
+  return out;
+}
+
 function renderTOD(){
   var el=document.getElementById('pg-tod');
   if(!el)return;
@@ -6469,6 +6548,51 @@ function renderTOD(){
     _todWeekStart.setDate(td.getDate()+diff);
     _todWeekStart.setHours(0,0,0,0);
   }
+  if(!_todMonthDate){_todMonthDate=new Date(now().getFullYear(),now().getMonth(),1);}
+
+  // Quick log in/out for TOD members (shown in header, both view modes)
+  var todayStr2=ds(now());
+  var myRec=isTOD()?(D.todAttendance&&D.todAttendance[CU.username]&&D.todAttendance[CU.username][todayStr2])||{}:{};
+  var quickBtns='';
+  if(isTOD()){
+    if(!myRec.timeIn){
+      quickBtns='<button class="tod-btn-in" data-action="login" data-user="'+CU.username+'" data-date="'+todayStr2+'" style="padding:6px 16px;font-size:13px">Log In</button>';
+    } else if(!myRec.timeOut){
+      var inT=new Date(myRec.timeIn).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'});
+      quickBtns='<span style="font-size:12px;color:var(--green);font-weight:600;margin-right:8px">IN '+inT+'</span>'
+        +'<button class="tod-btn-out" data-action="logout" data-user="'+CU.username+'" data-date="'+todayStr2+'" style="padding:6px 16px;font-size:13px">Log Out</button>';
+    } else {
+      var inT2=new Date(myRec.timeIn).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'});
+      var outT2=new Date(myRec.timeOut).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'});
+      quickBtns='<span style="font-size:12px;color:var(--green);font-weight:600">IN '+inT2+'</span>'
+        +'<span style="font-size:12px;color:var(--text3);margin:0 6px">→</span>'
+        +'<span style="font-size:12px;color:var(--red);font-weight:600">OUT '+outT2+'</span>'
+        +'<span style="font-size:12px;color:var(--text3);margin-left:8px">'+fmtHours(new Date(myRec.timeOut)-new Date(myRec.timeIn))+'</span>';
+    }
+  }
+
+  var viewToggle='<div style="display:flex;background:#f1f5f9;border-radius:var(--radius);padding:2px;gap:2px">'
+    +'<button class="btn sm'+(_todViewMode==='weekly'?' primary':'')+'" style="padding:5px 12px" onclick="todSetView(\'weekly\')">Weekly</button>'
+    +'<button class="btn sm'+(_todViewMode==='monthly'?' primary':'')+'" style="padding:5px 12px" onclick="todSetView(\'monthly\')">Monthly</button>'
+    +'</div>';
+
+  el.innerHTML=''
+    +'<div class="page-header">'
+      +'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+        +'<div class="page-title">'+(isTOD()?'My Attendance':'TOD Attendance')+'</div>'
+        +quickBtns
+      +'</div>'
+      +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+viewToggle+'</div>'
+    +'</div>'
+    +'<div id="tod-body"></div>';
+
+  if(_todViewMode==='monthly')renderTODMonthly();
+  else renderTODWeekly();
+}
+
+function renderTODWeekly(){
+  var body=document.getElementById('tod-body');
+  if(!body)return;
   var att=D.todAttendance||{};
   var dates=todWeekDates();
   var todMems=D.members.filter(function(m){return m.role==='Talent on Demand'&&m.approved;});
@@ -6499,21 +6623,24 @@ function renderTOD(){
     dates.forEach(function(d){
       var dds=ds(d);
       var rec=(att[m.username]||{})[dds]||{};
+      var dayC=computeDayRecord(m,dds);
       var isT=dds===todayStr;
       var isMe=m.username===CU.username;
-      var durMs=rec.timeIn&&rec.timeOut?(new Date(rec.timeOut)-new Date(rec.timeIn)):0;
-      var hrs=durMs?fmtHours(durMs):'';
+      var hrs=dayC.hoursMs?fmtHours(dayC.hoursMs)+(dayC.estimated?' (est.)':''):'';
       var inner='';
       if(rec.timeIn){
         var inTime=new Date(rec.timeIn).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'});
         inner='<div style="display:flex;flex-direction:column;align-items:center;gap:2px">'
           +'<div style="font-size:11px;font-weight:600;color:var(--green)">IN '+inTime+'</div>';
+        if(dayC.lateMins>0){
+          inner+='<div style="font-size:10px;font-weight:700;color:var(--red)">Late '+fmtMinsShort(dayC.lateMins)+'</div>';
+        }
         if(rec.timeOut){
           var outTime=new Date(rec.timeOut).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'});
           inner+='<div style="font-size:11px;font-weight:600;color:var(--red)">OUT '+outTime+'</div>'
             +'<div style="font-size:10px;color:var(--text3)">'+hrs+'</div>';
         } else {
-          inner+='<div style="font-size:10px;color:var(--yellow)">No logout</div>';
+          inner+='<div style="font-size:10px;color:var(--yellow)">No logout'+(dayC.estimated?' — est. '+hrs:'')+'</div>';
         }
         if(isT&&isMe&&rec.timeIn&&!rec.timeOut){
           inner+='<button class="tod-btn-out" data-action="logout" data-user="'+m.username+'" data-date="'+dds+'">Log Out</button>';
@@ -6527,11 +6654,18 @@ function renderTOD(){
       cells+='<td style="text-align:center;vertical-align:middle;background:'+(isT?'#fffbeb':'')+';padding:8px 6px;border-bottom:1px solid #f1f3f5;border-right:1px solid var(--border)">'+inner+'</td>';
     });
 
-    // Weekly summary
-    var totalMs=0,daysP=0;
+    // Weekly summary (uses the same schedule-aware calc, so a missing logout still counts
+    // toward the total via the member's scheduled end time, minus any late minutes)
+    var totalMs=0,daysP=0,daysLate=0;
     dates.forEach(function(d){
-      var rec=(att[m.username]||{})[ds(d)]||{};
-      if(rec.timeIn&&rec.timeOut){totalMs+=(new Date(rec.timeOut)-new Date(rec.timeIn));daysP++;}
+      var dds=ds(d);
+      var rec=(att[m.username]||{})[dds]||{};
+      if(rec.timeIn){
+        daysP++;
+        var dc=computeDayRecord(m,dds);
+        totalMs+=dc.hoursMs;
+        if(dc.lateMins>0)daysLate++;
+      }
     });
 
     rows+='<tr>'
@@ -6544,7 +6678,7 @@ function renderTOD(){
       +cells
       +'<td style="text-align:center;background:#f8fafc;font-weight:600;padding:10px 12px;border-bottom:1px solid #f1f3f5">'
         +'<div style="font-size:13px;color:var(--green)">'+fmtHours(totalMs)+'</div>'
-        +'<div style="font-size:11px;color:var(--text3)">'+daysP+'/7d</div>'
+        +'<div style="font-size:11px;color:var(--text3)">'+daysP+'/5d'+(daysLate?' · '+daysLate+' late':'')+'</div>'
       +'</td>'
     +'</tr>';
   });
@@ -6567,38 +6701,12 @@ function renderTOD(){
 
   var exportBtn=CU.isAdmin?'<button class="btn sm" onclick="exportTOD()">Export Excel</button>':'';
 
-  // Quick log in/out for TOD members
-  var todayStr2=ds(now());
-  var myRec=isTOD()?(D.todAttendance&&D.todAttendance[CU.username]&&D.todAttendance[CU.username][todayStr2])||{}:{};
-  var quickBtns='';
-  if(isTOD()){
-    if(!myRec.timeIn){
-      quickBtns='<button class="tod-btn-in" data-action="login" data-user="'+CU.username+'" data-date="'+todayStr2+'" style="padding:6px 16px;font-size:13px">Log In</button>';
-    } else if(!myRec.timeOut){
-      var inT=new Date(myRec.timeIn).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'});
-      quickBtns='<span style="font-size:12px;color:var(--green);font-weight:600;margin-right:8px">IN '+inT+'</span>'
-        +'<button class="tod-btn-out" data-action="logout" data-user="'+CU.username+'" data-date="'+todayStr2+'" style="padding:6px 16px;font-size:13px">Log Out</button>';
-    } else {
-      var inT2=new Date(myRec.timeIn).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'});
-      var outT2=new Date(myRec.timeOut).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'});
-      quickBtns='<span style="font-size:12px;color:var(--green);font-weight:600">IN '+inT2+'</span>'
-        +'<span style="font-size:12px;color:var(--text3);margin:0 6px">→</span>'
-        +'<span style="font-size:12px;color:var(--red);font-weight:600">OUT '+outT2+'</span>'
-        +'<span style="font-size:12px;color:var(--text3);margin-left:8px">'+fmtHours(new Date(myRec.timeOut)-new Date(myRec.timeIn))+'</span>';
-    }
-  }
-  el.innerHTML=''
-    +'<div class="page-header">'
-      +'<div style="display:flex;align-items:center;gap:12px">'
-        +'<div class="page-title">'+(isTOD()?'My Attendance':'TOD Attendance')+'</div>'
-        +quickBtns
-      +'</div>'
-      +'<div class="date-nav">'
-        +'<button class="nav-arrow" onclick="todPrevWeek()">&#8592;</button>'
-        +'<span style="font-size:13px;font-weight:500;padding:6px 10px">'+todWeekLabel()+'</span>'
-        +'<button class="nav-arrow" onclick="todNextWeek()">&#8594;</button>'
-        +exportBtn
-      +'</div>'
+  body.innerHTML=''
+    +'<div class="date-nav" style="margin-bottom:12px">'
+      +'<button class="nav-arrow" onclick="todPrevWeek()">&#8592;</button>'
+      +'<span style="font-size:13px;font-weight:500;padding:6px 10px">'+todWeekLabel()+'</span>'
+      +'<button class="nav-arrow" onclick="todNextWeek()">&#8594;</button>'
+      +exportBtn
     +'</div>'
     +summaryHtml
     +'<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--shadow)">'
@@ -6615,6 +6723,87 @@ function renderTOD(){
     +'</div>';
 }
 
+function renderTODMonthly(){
+  var body=document.getElementById('tod-body');
+  if(!body)return;
+  var todMems=D.members.filter(function(m){return m.role==='Talent on Demand'&&m.approved;});
+  var canPickMember=CU.isAdmin||isLead();
+  var selUser=isTOD()?CU.username:(_todSelectedMember||(todMems[0]&&todMems[0].username)||'');
+  var selMember=todMems.find(function(m){return m.username===selUser;});
+  var weekdays=todMonthWeekdays(_todMonthDate);
+
+  var memberPicker='';
+  if(canPickMember){
+    memberPicker='<select class="finput nb" style="width:auto;padding:6px 10px;font-size:13px" onchange="todSelectMember(this.value)">'
+      +todMems.map(function(m){return '<option value="'+m.username+'"'+(m.username===selUser?' selected':'')+'>'+m.name+'</option>';}).join('')
+    +'</select>';
+  }
+
+  var monthNav='<div class="date-nav" style="margin-bottom:12px">'
+    +'<button class="nav-arrow" onclick="todPrevMonth()">&#8592;</button>'
+    +'<span style="font-size:13px;font-weight:500;padding:6px 10px">'+todMonthLabel()+'</span>'
+    +'<button class="nav-arrow" onclick="todNextMonth()">&#8594;</button>'
+    +memberPicker
+    +(selMember?'<button class="btn sm" onclick="exportTODMonth(\''+selMember.username+'\')">Export Excel</button>':'')
+  +'</div>';
+
+  if(!selMember){
+    body.innerHTML=monthNav+'<div class="empty-state" style="padding:40px">No TOD members yet.</div>';
+    return;
+  }
+  if(!selMember.schedStart||!selMember.schedEnd){
+    body.innerHTML=monthNav+'<div class="empty-state" style="padding:20px;text-align:left;background:var(--yellow-light);border-radius:var(--radius);color:#92400e;font-size:12px">'+selMember.name+' doesn\'t have a scheduled start/end time set yet, so lateness and estimated hours can\'t be computed. Set it in <b>Members → Edit</b>.</div>';
+  }
+
+  var todayStr=ds(now());
+  var trows='',daysPresent=0,daysLate=0,totalMs=0,totalLateMins=0;
+  weekdays.forEach(function(d){
+    var dds=ds(d);
+    var dc=computeDayRecord(selMember,dds);
+    var isFuture=dds>todayStr;
+    if(dc.timeIn){
+      daysPresent++;
+      totalMs+=dc.hoursMs;
+      if(dc.lateMins>0){daysLate++;totalLateMins+=dc.lateMins;}
+    }
+    var statusColor=dc.lateMins>0?'var(--red)':(dc.timeIn?'var(--green)':(isFuture?'var(--text4)':'var(--text3)'));
+    var statusLabel=dc.timeIn?dc.status:(isFuture?'—':'Absent');
+    var inLabel=dc.timeIn?dc.timeIn.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}):'—';
+    var outLabel=dc.timeOut?dc.timeOut.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}):(dc.estimated?'(est. from schedule)':'—');
+    var hoursLabel=dc.hoursMs?fmtHours(dc.hoursMs)+(dc.estimated?' *':''):'—';
+    trows+='<tr>'
+      +'<td style="padding:8px 12px;border-bottom:1px solid #f1f3f5">'+DOW[d.getDay()]+', '+d.toLocaleDateString('en-PH',{month:'short',day:'numeric'})+(dds===todayStr?' <span style="color:var(--blue);font-weight:700">(Today)</span>':'')+'</td>'
+      +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5">'+inLabel+'</td>'
+      +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5">'+outLabel+'</td>'
+      +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5;color:'+statusColor+';font-weight:600">'+statusLabel+'</td>'
+      +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5;font-weight:600">'+hoursLabel+'</td>'
+    +'</tr>';
+  });
+
+  var summaryHtml='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">'
+    +'<div class="metric-card mc-blue"><div class="mc-label">Days Worked</div><div class="mc-val">'+daysPresent+'/'+weekdays.length+'</div></div>'
+    +'<div class="metric-card mc-black"><div class="mc-label">Days Late</div><div class="mc-val">'+daysLate+'</div></div>'
+    +'<div class="metric-card mc-green"><div class="mc-label">Total Hours</div><div class="mc-val">'+fmtHours(totalMs)+'</div></div>'
+    +'<div class="metric-card mc-blue"><div class="mc-label">Total Late Time</div><div class="mc-val">'+(totalLateMins?fmtMinsShort(totalLateMins):'0m')+'</div></div>'
+  +'</div>';
+
+  body.innerHTML=monthNav+summaryHtml
+    +'<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--shadow)">'
+      +'<table style="width:100%;border-collapse:collapse;font-size:13px">'
+        +'<thead><tr>'
+          +'<th style="text-align:left;padding:9px 12px;background:#f8fafc;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Date</th>'
+          +'<th style="text-align:center;padding:9px 12px;background:#f8fafc;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Time In</th>'
+          +'<th style="text-align:center;padding:9px 12px;background:#f8fafc;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Time Out</th>'
+          +'<th style="text-align:center;padding:9px 12px;background:#f8fafc;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Status</th>'
+          +'<th style="text-align:center;padding:9px 12px;background:#f8fafc;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Hours</th>'
+        +'</tr></thead>'
+        +'<tbody>'+trows+'</tbody>'
+      +'</table>'
+    +'</div>'
+    +'<div style="font-size:11px;color:var(--text3);margin-top:8px">* Estimated using scheduled end time — no logout was recorded that day. Use this table to cross-check against the submitted timesheet.</div>'
+    +(CU.isAdmin?'<div style="margin-top:14px"><button class="btn sm" onclick="exportTODMonthSummary()">Export All TOD Members — Monthly Summary</button></div>':'');
+}
+
 
 async function todLogIn(username,date){
   // date is passed as ds(d) which is local date string - use ISO for timestamp
@@ -6627,24 +6816,80 @@ async function todLogOut(username,date){
 }
 
 function exportTOD(){
-  const dates=todWeekDates(),att=D.todAttendance||{};
+  const dates=todWeekDates();
   const todMems=D.members.filter(m=>m.role==='Talent on Demand'&&m.approved);
   const rows=[];
   todMems.forEach(m=>{
-    const row={Name:m.name};let totalH=0;
+    const row={Name:m.name};let totalH=0,totalLate=0;
     dates.forEach(d=>{
-      const dds=ds(d),rec=(att[m.username]||{})[dds]||{};
-      row[DOW[d.getDay()]+' In']=rec.timeIn?new Date(rec.timeIn).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}):'';
-      row[DOW[d.getDay()]+' Out']=rec.timeOut?new Date(rec.timeOut).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}):'';
-      const durMs2=rec.timeIn&&rec.timeOut?(new Date(rec.timeOut)-new Date(rec.timeIn)):0;
-      const hStr=durMs2?fmtHours(durMs2):'';
-      row[DOW[d.getDay()]+' Hrs']=hStr;if(durMs2)totalH+=durMs2;
+      const dds=ds(d),dc=computeDayRecord(m,dds);
+      row[DOW[d.getDay()]+' In']=dc.timeIn?dc.timeIn.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}):'';
+      row[DOW[d.getDay()]+' Out']=dc.timeOut?dc.timeOut.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}):(dc.estimated?'(est.)':'');
+      row[DOW[d.getDay()]+' Late']=dc.lateMins>0?fmtMinsShort(dc.lateMins):'';
+      row[DOW[d.getDay()]+' Hrs']=dc.hoursMs?fmtHours(dc.hoursMs):'';
+      totalH+=dc.hoursMs;if(dc.lateMins>0)totalLate+=dc.lateMins;
     });
-    row['Total Hrs']=fmtHours(totalH);rows.push(row);
+    row['Total Hrs']=fmtHours(totalH);row['Total Late']=totalLate?fmtMinsShort(totalLate):'';rows.push(row);
   });
   const ws=XLSX.utils.json_to_sheet(rows),wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,'TOD');
-  XLSX.writeFile(wb,`TOD_${ds(_todWeekStart)}.xlsx`);toast('Exported!');
+  XLSX.writeFile(wb,`TOD_Week_${ds(_todWeekStart)}.xlsx`);toast('Exported!');
+}
+
+// Monthly per-day detail for one member — mirrors renderTODMonthly, meant to be placed
+// alongside their submitted PDF timesheet for comparison.
+function exportTODMonth(username){
+  const m=D.members.find(x=>x.username===username);if(!m)return;
+  const weekdays=todMonthWeekdays(_todMonthDate);
+  const rows=[];
+  let totalH=0,daysPresent=0,daysLate=0,totalLate=0;
+  weekdays.forEach(d=>{
+    const dds=ds(d),dc=computeDayRecord(m,dds);
+    if(dc.timeIn){daysPresent++;totalH+=dc.hoursMs;if(dc.lateMins>0){daysLate++;totalLate+=dc.lateMins;}}
+    rows.push({
+      Date:dds,
+      Day:DOW[d.getDay()],
+      'Time In':dc.timeIn?dc.timeIn.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}):'',
+      'Time Out':dc.timeOut?dc.timeOut.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}):(dc.estimated?'(est. from schedule)':''),
+      Status:dc.timeIn?dc.status:'Absent',
+      Hours:dc.hoursMs?fmtHours(dc.hoursMs)+(dc.estimated?' (est.)':''):''
+    });
+  });
+  rows.push({Date:'',Day:'',
+    'Time In':'','Time Out':'',
+    Status:'TOTAL: '+daysPresent+'/'+weekdays.length+' days · '+daysLate+' late',
+    Hours:fmtHours(totalH)+(totalLate?' (docked '+fmtMinsShort(totalLate)+' late)':'')
+  });
+  const ws=XLSX.utils.json_to_sheet(rows),wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'TOD Monthly');
+  XLSX.writeFile(wb,`TOD_${m.name.replace(/\s+/g,'_')}_${fmtM(_todMonthDate).replace(/\s+/g,'_')}.xlsx`);
+  toast('Exported!');
+}
+
+// Admin-only: one row per TOD member for the currently viewed month — the quick cross-check
+// summary against everyone's submitted timesheets.
+function exportTODMonthSummary(){
+  const todMems=D.members.filter(m=>m.role==='Talent on Demand'&&m.approved);
+  const weekdays=todMonthWeekdays(_todMonthDate);
+  const rows=todMems.map(m=>{
+    let totalH=0,daysPresent=0,daysLate=0,totalLate=0;
+    weekdays.forEach(d=>{
+      const dc=computeDayRecord(m,ds(d));
+      if(dc.timeIn){daysPresent++;totalH+=dc.hoursMs;if(dc.lateMins>0){daysLate++;totalLate+=dc.lateMins;}}
+    });
+    return{
+      Name:m.name,
+      'Scheduled Hours':(m.schedStart&&m.schedEnd)?(m.schedStart+' – '+m.schedEnd):'Not set',
+      'Days Worked':daysPresent+'/'+weekdays.length,
+      'Days Late':daysLate,
+      'Total Late Time':totalLate?fmtMinsShort(totalLate):'0m',
+      'Total Hours':fmtHours(totalH)
+    };
+  });
+  const ws=XLSX.utils.json_to_sheet(rows),wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'TOD Monthly Summary');
+  XLSX.writeFile(wb,`TOD_Monthly_Summary_${fmtM(_todMonthDate).replace(/\s+/g,'_')}.xlsx`);
+  toast('Exported!');
 }
 
 // ─── LIVE TRACKERS ───
@@ -11110,6 +11355,7 @@ function buildNav(){
       +sItem('tasks',ICONS.tasks,'Task Management',badges.tasks||0)
       +sItem('live-trackers',ICONS.trackers,'Live Trackers',0)
       +sItem('audit',ICONS.audit,'Audit Log',0)
+      +sItem('tod',ICONS.tod,'Time on Duty',0)
       +sItem('calendar',ICONS.calendar,'My Calendar',0)
       +'</div>';
     html+='<div class="sidebar-section"><div class="sidebar-section-label">Data & Activity</div>'
@@ -11130,6 +11376,7 @@ function buildNav(){
       +sItem('tasks',ICONS.tasks,'Task Management',badges.tasks||0)
       +sItem('live-trackers',ICONS.trackers,'Live Trackers',0)
       +sItem('audit',ICONS.audit,'Audit Log',0)
+      +sItem('tod',ICONS.tod,'Time on Duty',0)
       +sItem('calendar',ICONS.calendar,'My Calendar',0)
       +'</div>';
     html+='<div class="sidebar-section"><div class="sidebar-section-label">Data & Activity</div>'
@@ -11145,6 +11392,7 @@ function buildNav(){
   } else if(isTOD()){
     html+='<div class="sidebar-section">'
       +sItem('dashboard',ICONS.dashboard,'Dashboard',badges.dashboard||badges['my-tasks']||0)
+      +sItem('tod',ICONS.tod,'Time on Duty',0)
       +sItem('leaves',ICONS.leaves,'Leaves',0)
       +sItem('calendar',ICONS.calendar,'My Calendar',0)
       +'</div>';
