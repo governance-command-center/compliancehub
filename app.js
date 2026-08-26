@@ -6616,7 +6616,7 @@ function renderTOD(){
 
   var viewToggle='<div style="display:flex;background:#f1f5f9;border-radius:var(--radius);padding:2px;gap:2px">'
     +'<button class="btn sm'+(_todViewMode==='weekly'?' primary':'')+'" style="padding:5px 12px" onclick="todSetView(\'weekly\')">Weekly</button>'
-    +'<button class="btn sm'+(_todViewMode==='monthly'?' primary':'')+'" style="padding:5px 12px" onclick="todSetView(\'monthly\')">Monthly</button>'
+    +'<button class="btn sm'+(_todViewMode==='monthly'?' primary':'')+'" style="padding:5px 12px" onclick="todSetView(\'monthly\')">Summary</button>'
     +'</div>';
 
   el.innerHTML=''
