@@ -3195,6 +3195,10 @@ function renderMembers(){
         <div><label class="flabel">Scheduled Start <span style="font-weight:400;color:var(--text3);font-size:11px">(for TOD attendance tracking)</span></label><input class="finput nb" id="nm-schedstart" type="time" value="09:00"/></div>
         <div><label class="flabel">Scheduled End <span style="font-weight:400;color:var(--text3);font-size:11px">(for TOD attendance tracking)</span></label><input class="finput nb" id="nm-schedend" type="time" value="18:00"/></div>
       </div>
+      <div class="fg fg2">
+        <div><label class="flabel">Service <span style="font-weight:400;color:var(--text3);font-size:11px">(TOD billing label — admin only)</span></label><input class="finput nb" id="nm-service" placeholder="e.g. Dulux Manual Processing Order Task"/></div>
+        <div><label class="flabel">Rate (PHP/hr) <span style="font-weight:400;color:var(--text3);font-size:11px">(TOD billing — admin only, never shown to the member)</span></label><input class="finput nb" id="nm-rate" type="number" min="0" step="0.01" placeholder="e.g. 100"/></div>
+      </div>
       <div class="fg"><label class="flabel">Buddy <span style="font-weight:400;color:var(--text3);font-size:11px">(covers this member's trackers — can edit their brand rows)</span></label><select class="finput nb" id="nm-buddy"><option value="">— None —</option>${D.members.filter(m=>m.approved&&m.active!==false).map(m=>`<option value="${m.username}">${m.name}</option>`).join('')}</select></div>
       <div class="form-actions">
         <button class="btn primary" onclick="addM()">Add Member</button>
@@ -3226,11 +3230,12 @@ function renderMembers(){
 async function addM(){
   const name=document.getElementById('nm-n')?.value.trim(),user=document.getElementById('nm-u')?.value.trim().toLowerCase(),pass=document.getElementById('nm-p')?.value,role=document.getElementById('nm-r')?.value||'Member',region=document.getElementById('nm-reg')?.value||'',rt=document.getElementById('nm-rt')?.value||'',buddy=document.getElementById('nm-buddy')?.value||'';
   const schedStart=document.getElementById('nm-schedstart')?.value||'',schedEnd=document.getElementById('nm-schedend')?.value||'';
+  const service=document.getElementById('nm-service')?.value.trim()||'',rateRaw=document.getElementById('nm-rate')?.value,rate=rateRaw?parseFloat(rateRaw):0;
   if(!name||!user||!pass){toast('Name, username and password required');return;}
   if(user===ADMIN_UN||D.members.find(m=>m.username===user)){toast('Username already taken');return;}
-  await fbPush('members',{name,username:user,password:pass,role,region,reportsTo:rt,buddy,schedStart,schedEnd,approved:true});
+  await fbPush('members',{name,username:user,password:pass,role,region,reportsTo:rt,buddy,schedStart,schedEnd,service,rate,approved:true});
   await logAct(0,ds(now()),CU.name,'Member Added: '+name,'MEMBER_ADDED');
-  ['nm-n','nm-u','nm-p'].forEach(id=>document.getElementById(id).value='');
+  ['nm-n','nm-u','nm-p','nm-service','nm-rate'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
   toast('Member added');
 }
 
@@ -3254,6 +3259,10 @@ function editMember(username){
       <div><label class="flabel">Scheduled Start <span style="font-weight:400;color:var(--text3);font-size:11px">(for TOD attendance tracking)</span></label><input class="finput nb" id="em-schedstart" type="time" value="${m.schedStart||'09:00'}"/></div>
       <div><label class="flabel">Scheduled End <span style="font-weight:400;color:var(--text3);font-size:11px">(for TOD attendance tracking)</span></label><input class="finput nb" id="em-schedend" type="time" value="${m.schedEnd||'18:00'}"/></div>
     </div>
+    <div class="fg fg2">
+      <div><label class="flabel">Service <span style="font-weight:400;color:var(--text3);font-size:11px">(TOD billing label — admin only)</span></label><input class="finput nb" id="em-service" value="${escHtml(m.service||'')}" placeholder="e.g. Dulux Manual Processing Order Task"/></div>
+      <div><label class="flabel">Rate (PHP/hr) <span style="font-weight:400;color:var(--text3);font-size:11px">(TOD billing — admin only, never shown to the member)</span></label><input class="finput nb" id="em-rate" type="number" min="0" step="0.01" value="${m.rate||''}" placeholder="e.g. 100"/></div>
+    </div>
     <div class="fg"><label class="flabel">Buddy <span style="font-weight:400;color:var(--text3);font-size:11px">(covers this member's trackers — can edit their brand rows)</span></label><select class="finput nb" id="em-buddy"><option value="">— None —</option>${buddyOpts}</select></div>
     <div class="fg"><label class="flabel">New Password (optional)</label><input class="finput nb" id="em-pass" type="password" placeholder="Leave blank to keep"/></div>
     <div class="form-actions"><button class="btn primary" onclick="saveMemberEdit('${username}')">Save</button><button class="btn" onclick="closeModal('modal-task')">Cancel</button></div>`;
@@ -3263,7 +3272,8 @@ async function saveMemberEdit(username){
   const mems=await fbGet('members')||{};
   for(const[k,m]of Object.entries(mems)){
     if(m.username===username){
-      const upd={name:document.getElementById('em-name').value.trim(),role:document.getElementById('em-role').value,region:document.getElementById('em-region')?.value||'',reportsTo:document.getElementById('em-rt')?.value||'',buddy:document.getElementById('em-buddy')?.value||'',schedStart:document.getElementById('em-schedstart')?.value||'',schedEnd:document.getElementById('em-schedend')?.value||''};
+      const rateRaw=document.getElementById('em-rate')?.value;
+      const upd={name:document.getElementById('em-name').value.trim(),role:document.getElementById('em-role').value,region:document.getElementById('em-region')?.value||'',reportsTo:document.getElementById('em-rt')?.value||'',buddy:document.getElementById('em-buddy')?.value||'',schedStart:document.getElementById('em-schedstart')?.value||'',schedEnd:document.getElementById('em-schedend')?.value||'',service:document.getElementById('em-service')?.value.trim()||'',rate:rateRaw?parseFloat(rateRaw):0};
       const np=document.getElementById('em-pass').value;if(np)upd.password=np;
       await fbUpd(`members/${k}`,upd);toast('Member updated');break;
     }
@@ -6509,6 +6519,38 @@ function fmtMinsShort(mins){
   const h=Math.floor(mins/60),m=mins%60;
   return h+'h '+(m?m+'m':'');
 }
+// Plain decimal hour count for billing rows, e.g. 4, 3.5, 0 (no "h m" suffix).
+function hoursDecimal(ms){
+  if(!ms||ms<=0)return 0;
+  return Math.round((ms/3600000)*100)/100;
+}
+function fmtPeso(n){
+  return 'PHP '+(n||0).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+// Billing-specific attendance calc for the monthly Service/Rate/Amount table.
+// Unlike computeDayRecord (used for the plain attendance grid, which estimates
+// hours from the schedule when there's no logout), this NEVER estimates — a day
+// only "qualifies" for pay if the member actually logged out between their
+// scheduled end time and exactly 1 hour after it. Anything earlier, later, or
+// missing a logout entirely is not qualified and pays 0, even though the
+// clock-in/out (if any) is still shown for reference.
+function computeBillingDayRecord(m,dds){
+  const att=D.todAttendance||{};
+  const rec=(att[m.username]||{})[dds]||{};
+  const out={timeIn:null,timeOut:null,hoursMs:0,qualified:false,attended:!!rec.timeIn};
+  if(!rec.timeIn)return out;
+  out.timeIn=new Date(rec.timeIn);
+  if(!rec.timeOut)return out;
+  out.timeOut=new Date(rec.timeOut);
+  const schedEndDT=m.schedEnd?schedDateTime(dds,m.schedEnd):null;
+  if(!schedEndDT)return out;
+  const graceEnd=new Date(schedEndDT.getTime()+60*60000);
+  if(out.timeOut>=schedEndDT&&out.timeOut<=graceEnd&&out.timeOut>out.timeIn){
+    out.qualified=true;
+    out.hoursMs=out.timeOut-out.timeIn;
+  }
+  return out;
+}
 // Core attendance computation for one member on one date. Login-vs-schedule lateness is always
 // docked from the hour count: if there's no logout, the assumed clock-out is the member's
 // scheduled end time, so a late arrival naturally shortens the computed hours in both cases.
@@ -6539,6 +6581,7 @@ function computeDayRecord(m,dds){
 function renderTOD(){
   var el=document.getElementById('pg-tod');
   if(!el)return;
+  if(!CU.isAdmin&&!isTOD()){el.innerHTML='<div class="empty-state" style="padding:60px"><div style="font-size:32px;margin-bottom:12px">🔒</div><div style="font-weight:700;font-size:16px;color:var(--text2)">Access Restricted</div><div style="font-size:13px;color:var(--text3);margin-top:6px">Talent on Demand is only available to admins and TOD members.</div></div>';return;}
   if(!_todWeekStart){
     var td=now();
     _todWeekStart=new Date(td);
@@ -6579,7 +6622,7 @@ function renderTOD(){
   el.innerHTML=''
     +'<div class="page-header">'
       +'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
-        +'<div class="page-title">'+(isTOD()?'My Attendance':'TOD Attendance')+'</div>'
+        +'<div class="page-title">'+(isTOD()?'My Attendance':'Talent on Demand')+'</div>'
         +quickBtns
       +'</div>'
       +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+viewToggle+'</div>'
@@ -6727,7 +6770,7 @@ function renderTODMonthly(){
   var body=document.getElementById('tod-body');
   if(!body)return;
   var todMems=D.members.filter(function(m){return m.role==='Talent on Demand'&&m.approved;});
-  var canPickMember=CU.isAdmin||isLead();
+  var canPickMember=CU.isAdmin;
   var selUser=isTOD()?CU.username:(_todSelectedMember||(todMems[0]&&todMems[0].username)||'');
   var selMember=todMems.find(function(m){return m.username===selUser;});
   var weekdays=todMonthWeekdays(_todMonthDate);
@@ -6752,9 +6795,93 @@ function renderTODMonthly(){
     return;
   }
   if(!selMember.schedStart||!selMember.schedEnd){
-    body.innerHTML=monthNav+'<div class="empty-state" style="padding:20px;text-align:left;background:var(--yellow-light);border-radius:var(--radius);color:#92400e;font-size:12px">'+selMember.name+' doesn\'t have a scheduled start/end time set yet, so lateness and estimated hours can\'t be computed. Set it in <b>Members → Edit</b>.</div>';
+    body.innerHTML=monthNav+'<div class="empty-state" style="padding:20px;text-align:left;background:var(--yellow-light);border-radius:var(--radius);color:#92400e;font-size:12px">'+selMember.name+' doesn\'t have a scheduled start/end time set yet, so on-time logout (and therefore duration/pay) can\'t be computed. Set it in <b>Members → Edit</b>.</div>';
   }
 
+  if(CU.isAdmin){renderTODMonthlyBilling(body,monthNav,selMember,weekdays);}
+  else{renderTODMonthlySelf(body,monthNav,selMember,weekdays);}
+}
+
+// Admin view: the Service / Date / Time In / Time Out / Duration / Rate / Amount billing
+// table. Duration (and therefore Amount) is only counted for days where the member logged
+// out on time — at or after their scheduled end, but no more than 1 hour after it. Every
+// other logged day (early logout, very late logout, or no logout at all) shows as a
+// "Not Qualified" line with 0 duration and 0 amount, same as the reference timesheet.
+function renderTODMonthlyBilling(body,monthNav,selMember,weekdays){
+  var todayStr=ds(now());
+  var trows='',daysPresent=0,daysQualified=0,totalMs=0,totalAmount=0;
+  var rate=selMember.rate||0;
+  var serviceLabel=escHtml(selMember.service||'—');
+
+  weekdays.forEach(function(d){
+    var dds=ds(d);
+    var bc=computeBillingDayRecord(selMember,dds);
+    if(!bc.attended)return; // only show days the member actually clocked in on, like the reference sheet
+
+    daysPresent++;
+    var dateLabel=d.toLocaleDateString('en-PH',{month:'long',day:'2-digit',year:'numeric'})+(dds===todayStr?' <span style="color:var(--blue);font-weight:700">(Today)</span>':'');
+
+    if(bc.qualified){
+      daysQualified++;
+      var hrs=hoursDecimal(bc.hoursMs);
+      var amt=Math.round(hrs*rate*100)/100;
+      totalMs+=bc.hoursMs;totalAmount+=amt;
+      var inLabel=bc.timeIn.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'});
+      var outLabel=bc.timeOut.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'});
+      trows+='<tr>'
+        +'<td style="padding:8px 12px;border-bottom:1px solid #f1f3f5;color:var(--blue);font-weight:600">'+serviceLabel+'</td>'
+        +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5">'+dateLabel+'</td>'
+        +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5">'+inLabel+'</td>'
+        +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5">'+outLabel+'</td>'
+        +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5;font-weight:600">'+hrs+'</td>'
+        +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5">'+rate+'</td>'
+        +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5;font-weight:600">'+amt.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>'
+      +'</tr>';
+    } else {
+      var reason=!bc.timeOut?'No logout recorded':(bc.timeOut<schedDateTime(dds,selMember.schedEnd||'00:00')?'Logged out early':'Logged out too late');
+      trows+='<tr style="background:var(--green-light,#f0fdf4)">'
+        +'<td colspan="5" style="padding:8px 12px;border-bottom:1px solid #f1f3f5;text-align:center;font-weight:700;color:#166534">Not Qualified <span style="font-weight:400;color:var(--text3)">('+reason+')</span></td>'
+        +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5">'+rate+'</td>'
+        +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5;font-weight:600">0</td>'
+      +'</tr>';
+    }
+  });
+
+  var summaryHtml='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">'
+    +'<div class="metric-card mc-blue"><div class="mc-label">Days Logged</div><div class="mc-val">'+daysPresent+'/'+weekdays.length+'</div></div>'
+    +'<div class="metric-card mc-green"><div class="mc-label">Days Qualified</div><div class="mc-val">'+daysQualified+'</div></div>'
+    +'<div class="metric-card mc-black"><div class="mc-label">Total Hours</div><div class="mc-val">'+hoursDecimal(totalMs)+'</div></div>'
+    +'<div class="metric-card mc-blue"><div class="mc-label">Total Amount</div><div class="mc-val">'+fmtPeso(totalAmount)+'</div></div>'
+  +'</div>';
+
+  body.innerHTML=monthNav+summaryHtml
+    +'<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--shadow)">'
+      +'<table style="width:100%;border-collapse:collapse;font-size:13px">'
+        +'<thead><tr>'
+          +'<th style="text-align:left;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Service</th>'
+          +'<th style="text-align:center;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Date</th>'
+          +'<th style="text-align:center;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Time In</th>'
+          +'<th style="text-align:center;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Time Out</th>'
+          +'<th style="text-align:center;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Duration<br>(# of hours)</th>'
+          +'<th style="text-align:center;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Rate</th>'
+          +'<th style="text-align:center;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Amount</th>'
+        +'</tr></thead>'
+        +'<tbody>'+(trows||'<tr><td colspan="7" class="empty-state">No attendance logged this month.</td></tr>')
+          +'<tr style="background:#f8fafc;font-weight:700">'
+            +'<td colspan="4" style="padding:10px 12px;text-align:center;border-top:2px solid var(--border)">Total</td>'
+            +'<td style="text-align:center;padding:10px 12px;border-top:2px solid var(--border)">'+hoursDecimal(totalMs)+'</td>'
+            +'<td style="text-align:center;padding:10px 12px;border-top:2px solid var(--border)"></td>'
+            +'<td style="text-align:center;padding:10px 12px;border-top:2px solid var(--border)">'+fmtPeso(totalAmount)+'</td>'
+          +'</tr>'
+        +'</tbody>'
+      +'</table>'
+    +'</div>'
+    +'<div style="font-size:11px;color:var(--text3);margin-top:8px">Rate and Amount are only shown here — TOD members do not see this table. A day only qualifies for pay if the logout falls between the scheduled end time and exactly 1 hour after it.</div>'
+    +'<div style="margin-top:14px"><button class="btn sm" onclick="exportTODMonthSummary()">Export All TOD Members — Monthly Summary</button></div>';
+}
+
+// TOD self view: attendance-only, no Service/Rate/Amount — those stay admin-only.
+function renderTODMonthlySelf(body,monthNav,selMember,weekdays){
   var todayStr=ds(now());
   var trows='',daysPresent=0,daysLate=0,totalMs=0,totalLateMins=0;
   weekdays.forEach(function(d){
@@ -6800,8 +6927,7 @@ function renderTODMonthly(){
         +'<tbody>'+trows+'</tbody>'
       +'</table>'
     +'</div>'
-    +'<div style="font-size:11px;color:var(--text3);margin-top:8px">* Estimated using scheduled end time — no logout was recorded that day. Use this table to cross-check against the submitted timesheet.</div>'
-    +(CU.isAdmin?'<div style="margin-top:14px"><button class="btn sm" onclick="exportTODMonthSummary()">Export All TOD Members — Monthly Summary</button></div>':'');
+    +'<div style="font-size:11px;color:var(--text3);margin-top:8px">* Estimated using scheduled end time — no logout was recorded that day.</div>';
 }
 
 
@@ -6836,29 +6962,51 @@ function exportTOD(){
   XLSX.writeFile(wb,`TOD_Week_${ds(_todWeekStart)}.xlsx`);toast('Exported!');
 }
 
-// Monthly per-day detail for one member — mirrors renderTODMonthly, meant to be placed
-// alongside their submitted PDF timesheet for comparison.
+// Monthly per-day billing detail for one member — mirrors the Service/Rate/Amount table in
+// renderTODMonthlyBilling, meant to be placed alongside their submitted timesheet as the
+// invoice/payroll backup. Admin-only (Rate/Amount are never exported for a TOD member's own
+// view).
 function exportTODMonth(username){
   const m=D.members.find(x=>x.username===username);if(!m)return;
+  if(!CU.isAdmin){toast('Admin only.');return;}
   const weekdays=todMonthWeekdays(_todMonthDate);
+  const rate=m.rate||0,service=m.service||'';
   const rows=[];
-  let totalH=0,daysPresent=0,daysLate=0,totalLate=0;
+  let totalH=0,totalAmount=0,daysPresent=0,daysQualified=0;
   weekdays.forEach(d=>{
-    const dds=ds(d),dc=computeDayRecord(m,dds);
-    if(dc.timeIn){daysPresent++;totalH+=dc.hoursMs;if(dc.lateMins>0){daysLate++;totalLate+=dc.lateMins;}}
-    rows.push({
-      Date:dds,
-      Day:DOW[d.getDay()],
-      'Time In':dc.timeIn?dc.timeIn.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}):'',
-      'Time Out':dc.timeOut?dc.timeOut.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}):(dc.estimated?'(est. from schedule)':''),
-      Status:dc.timeIn?dc.status:'Absent',
-      Hours:dc.hoursMs?fmtHours(dc.hoursMs)+(dc.estimated?' (est.)':''):''
-    });
+    const dds=ds(d),bc=computeBillingDayRecord(m,dds);
+    if(!bc.attended)return;
+    daysPresent++;
+    if(bc.qualified){
+      daysQualified++;
+      const hrs=hoursDecimal(bc.hoursMs),amt=Math.round(hrs*rate*100)/100;
+      totalH+=hrs;totalAmount+=amt;
+      rows.push({
+        Service:service,
+        Date:d.toLocaleDateString('en-PH',{month:'long',day:'2-digit',year:'numeric'}),
+        'Time In':bc.timeIn.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}),
+        'Time Out':bc.timeOut.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}),
+        'Duration (# of hours)':hrs,
+        Rate:rate,
+        Amount:amt
+      });
+    } else {
+      rows.push({
+        Service:'Not Qualified',
+        Date:d.toLocaleDateString('en-PH',{month:'long',day:'2-digit',year:'numeric'}),
+        'Time In':bc.timeIn?bc.timeIn.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}):'',
+        'Time Out':bc.timeOut?bc.timeOut.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}):'',
+        'Duration (# of hours)':0,
+        Rate:rate,
+        Amount:0
+      });
+    }
   });
-  rows.push({Date:'',Day:'',
+  rows.push({Service:'',Date:'',
     'Time In':'','Time Out':'',
-    Status:'TOTAL: '+daysPresent+'/'+weekdays.length+' days · '+daysLate+' late',
-    Hours:fmtHours(totalH)+(totalLate?' (docked '+fmtMinsShort(totalLate)+' late)':'')
+    'Duration (# of hours)':totalH,
+    Rate:'',
+    Amount:'PHP '+totalAmount.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})
   });
   const ws=XLSX.utils.json_to_sheet(rows),wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,'TOD Monthly');
@@ -6869,21 +7017,28 @@ function exportTODMonth(username){
 // Admin-only: one row per TOD member for the currently viewed month — the quick cross-check
 // summary against everyone's submitted timesheets.
 function exportTODMonthSummary(){
+  if(!CU.isAdmin){toast('Admin only.');return;}
   const todMems=D.members.filter(m=>m.role==='Talent on Demand'&&m.approved);
   const weekdays=todMonthWeekdays(_todMonthDate);
   const rows=todMems.map(m=>{
-    let totalH=0,daysPresent=0,daysLate=0,totalLate=0;
+    const rate=m.rate||0;
+    let totalH=0,totalAmount=0,daysPresent=0,daysQualified=0;
     weekdays.forEach(d=>{
-      const dc=computeDayRecord(m,ds(d));
-      if(dc.timeIn){daysPresent++;totalH+=dc.hoursMs;if(dc.lateMins>0){daysLate++;totalLate+=dc.lateMins;}}
+      const dds=ds(d),bc=computeBillingDayRecord(m,dds);
+      if(bc.attended){
+        daysPresent++;
+        if(bc.qualified){daysQualified++;const hrs=hoursDecimal(bc.hoursMs);totalH+=hrs;totalAmount+=Math.round(hrs*rate*100)/100;}
+      }
     });
     return{
       Name:m.name,
+      Service:m.service||'',
       'Scheduled Hours':(m.schedStart&&m.schedEnd)?(m.schedStart+' – '+m.schedEnd):'Not set',
-      'Days Worked':daysPresent+'/'+weekdays.length,
-      'Days Late':daysLate,
-      'Total Late Time':totalLate?fmtMinsShort(totalLate):'0m',
-      'Total Hours':fmtHours(totalH)
+      'Days Logged':daysPresent+'/'+weekdays.length,
+      'Days Qualified':daysQualified,
+      'Total Hours':totalH,
+      Rate:rate,
+      'Total Amount':'PHP '+totalAmount.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})
     };
   });
   const ws=XLSX.utils.json_to_sheet(rows),wb=XLSX.utils.book_new();
@@ -11355,7 +11510,7 @@ function buildNav(){
       +sItem('tasks',ICONS.tasks,'Task Management',badges.tasks||0)
       +sItem('live-trackers',ICONS.trackers,'Live Trackers',0)
       +sItem('audit',ICONS.audit,'Audit Log',0)
-      +sItem('tod',ICONS.tod,'Time on Duty',0)
+      +sItem('tod',ICONS.tod,'Talent on Demand',0)
       +sItem('calendar',ICONS.calendar,'My Calendar',0)
       +'</div>';
     html+='<div class="sidebar-section"><div class="sidebar-section-label">Data & Activity</div>'
@@ -11376,7 +11531,6 @@ function buildNav(){
       +sItem('tasks',ICONS.tasks,'Task Management',badges.tasks||0)
       +sItem('live-trackers',ICONS.trackers,'Live Trackers',0)
       +sItem('audit',ICONS.audit,'Audit Log',0)
-      +sItem('tod',ICONS.tod,'Time on Duty',0)
       +sItem('calendar',ICONS.calendar,'My Calendar',0)
       +'</div>';
     html+='<div class="sidebar-section"><div class="sidebar-section-label">Data & Activity</div>'
@@ -11392,7 +11546,7 @@ function buildNav(){
   } else if(isTOD()){
     html+='<div class="sidebar-section">'
       +sItem('dashboard',ICONS.dashboard,'Dashboard',badges.dashboard||badges['my-tasks']||0)
-      +sItem('tod',ICONS.tod,'Time on Duty',0)
+      +sItem('tod',ICONS.tod,'Talent on Demand',0)
       +sItem('leaves',ICONS.leaves,'Leaves',0)
       +sItem('calendar',ICONS.calendar,'My Calendar',0)
       +'</div>';
@@ -11458,7 +11612,7 @@ function cmdFilter(q){
     {p:'leaves',l:'Leaves',sub:'Leave monitoring',icon:'🌴',cat:'Navigate',col:'ci-green'},
     {p:'audit',l:'Audit Log',sub:'Compliance audit trail',icon:'🛡️',cat:'Navigate',col:'ci-purple'},
     {p:'calendar',l:'My Calendar',sub:'Personal schedule',icon:'📅',cat:'Navigate',col:'ci-teal'},
-    {p:'tod',l:'Time on Duty',sub:'TOD attendance tracker',icon:'⏱️',cat:'Navigate',col:'ci-yellow'},
+    ...((CU.isAdmin||isTOD())?[{p:'tod',l:'Talent on Demand',sub:'TOD attendance & billing tracker',icon:'⏱️',cat:'Navigate',col:'ci-yellow'}]:[]),
     {p:'workspace',l:'WorkSpace',sub:'Notes and announcements',icon:'🗂️',cat:'Navigate',col:'ci-blue'},
     {p:'my-tasks',l:'My Dashboard',sub:'Your personal task view',icon:'🎯',cat:'Navigate',col:'ci-green'},
   ];
