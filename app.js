@@ -2620,12 +2620,15 @@ function openTaskForm(taskId,isLeadTask){
         <option value="other"${t?.freq==='other'?' selected':''}>Other</option>
       </select></div>
     </div>
-    <div class="fg fg4">
+    <div class="fg fg2">
       <div id="ft-dow-g" style="display:none"><label class="flabel">Day of Week</label><select class="finput nb" id="ft-dow">${dOpts}</select></div>
       <div id="ft-dom-g" style="display:none"><label class="flabel">Day of Month</label><input class="finput nb" id="ft-dom" type="number" min="1" max="28" value="${t?.dayOfMonth||1}"/></div>
-      <div><label class="flabel">Due Time</label><input class="finput nb" id="ft-time" value="${t?.time||'5:00 PM'}"/></div>
+    </div>
+    <div class="fg fg4">
+      <div><label class="flabel">Start Date <span style="font-weight:400;color:var(--text3)">(optional)</span></label><input class="finput nb" id="ft-startdate" type="date" value="${t?.startDate||''}"/></div>
       <div><label class="flabel">Start Time <span style="font-weight:400;color:var(--text3)">(optional)</span></label><input class="finput nb" id="ft-starttime" type="time" value="${t?.startTime||''}"/></div>
-      <div><label class="flabel">End Time <span style="font-weight:400;color:var(--text3)">(optional)</span></label><input class="finput nb" id="ft-endtime" type="time" value="${t?.endTime||''}" onchange="ftSyncEndTime()"/></div>
+      <div><label class="flabel">End Date <span style="font-weight:400;color:var(--text3)">(optional)</span></label><input class="finput nb" id="ft-enddate" type="date" value="${t?.endDate||''}"/></div>
+      <div><label class="flabel">End Time <span style="font-weight:400;color:var(--text3)">(optional)</span></label><input class="finput nb" id="ft-endtime" type="time" value="${t?.endTime||''}"/></div>
     </div>
     <div class="fg"><label class="flabel">Deadline Label <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)">(shown on dashboard — e.g. "Every Tuesday 5:00 PM" or "5:00 PM")</span></label><input class="finput nb" id="ft-deadline" placeholder="e.g. 5:00 PM" value="${t?.deadline||''}"/></div>
     <div class="fg"><label class="flabel">Notes</label><textarea class="finput" id="ft-note">${t?.note||''}</textarea></div>
@@ -2666,7 +2669,6 @@ function openTaskForm(taskId,isLeadTask){
 }
 function applyGroup(key){if(!key)return;let g;if(key.startsWith('lead_')){g=(D.leadGroups||[]).find(x=>x._key===key.slice(5));}else{g=D.groups.find(x=>x._key===key);}if(!g)return;(g.members||[]).forEach(u=>{if(!_selM.includes(u))_selM.push(u);});ftChips();ftFilt();toast(`Added ${(g.members||[]).length} from "${g.name}"`)}
 function ftToggle(){const f=document.getElementById('ft-freq')?.value;document.getElementById('ft-dow-g').style.display=f==='weekly'?'':'none';document.getElementById('ft-dom-g').style.display=f==='monthly'?'':'none';}
-function ftSyncEndTime(){const et=document.getElementById('ft-endtime')?.value;const ti=document.getElementById('ft-time');if(et&&ti){const[h,m]=et.split(':');const hr=parseInt(h),mn=parseInt(m);const ap=hr>=12?'PM':'AM';const hr12=hr%12||12;ti.value=hr12+':'+(mn<10?'0'+mn:mn)+' '+ap;}}
 function ftChips(){const e=document.getElementById('ft-chips');if(!e)return;e.innerHTML=_selM.map(u=>`<span class="m-chip"><span class="av" style="width:17px;height:17px;font-size:7px">${ini(getMN(u))}</span>${getMN(u)}<span class="rm" onclick="ftRemM('${u}')">&#x2715;</span></span>`).join('');}
 function ftRemM(u){_selM=_selM.filter(x=>x!==u);ftChips();ftFilt();}
 function ftFilt(){
@@ -2684,9 +2686,15 @@ async function saveTask(){
   var dow=freq==='weekly'?parseInt(document.getElementById('ft-dow')?.value):null;
   var dayOfMonth=freq==='monthly'?parseInt(document.getElementById('ft-dom')?.value||1):null;
   var endTimeRaw=document.getElementById('ft-endtime')?.value.trim()||'';
+  var startTimeRaw=document.getElementById('ft-starttime')?.value.trim()||'';
+  var startDateRaw=document.getElementById('ft-startdate')?.value.trim()||'';
+  var endDateRaw=document.getElementById('ft-enddate')?.value.trim()||'';
   var dhVal=17,dmVal=0;
   if(endTimeRaw){var etParts=endTimeRaw.split(':');dhVal=parseInt(etParts[0]||17);dmVal=parseInt(etParts[1]||0);}
-  var dueTime=document.getElementById('ft-time')?.value.trim()||'5:00 PM';
+  // Due Time is no longer a separate field — derive the 12-hour label used for the
+  // auto-generated deadline text from the End Time (falls back to 5:00 PM if unset).
+  var to12h=function(hhmm){if(!hhmm)return'';var p=hhmm.split(':');var hr=parseInt(p[0]||0),mn=parseInt(p[1]||0);var ap=hr>=12?'PM':'AM';var hr12=hr%12||12;return hr12+':'+(mn<10?'0'+mn:mn)+' '+ap;};
+  var dueTime=to12h(endTimeRaw)||'5:00 PM';
   // Read the deadline label; if left blank, auto-generate a sensible one
   var deadlineRaw=(document.getElementById('ft-deadline')?.value||'').trim();
   var deadline=deadlineRaw;
@@ -2701,7 +2709,9 @@ async function saveTask(){
   var data={title,freq,dow:dow!=null?dow:null,dayOfMonth:dayOfMonth!=null?dayOfMonth:null,
     time:dueTime,
     deadline:deadline,
-    startTime:document.getElementById('ft-starttime')?.value.trim()||'',
+    startDate:startDateRaw,
+    startTime:startTimeRaw,
+    endDate:endDateRaw,
     endTime:endTimeRaw,
     dh:dhVal,
     dm:dmVal,
