@@ -179,15 +179,30 @@ function ltStamp(){
 }
 function fmtHours(ms){if(!ms||ms<=0)return'0h 0m';var t=Math.floor(ms/60000);var h=Math.floor(t/60);var m=t%60;return h+'h '+m+'m';}
 
+// Short "Aug 27 → Sep 10" style label for a task's Start/End Date window, for admin tables.
+// Returns '' when no window is set (task remains ongoing, unchanged from before).
+function taskWindowLabel(t){
+  if(!t?.startDate&&!t?.endDate)return'';
+  const fmt=s=>{if(!s)return'';const p=s.split('-');return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString('en-PH',{month:'short',day:'numeric'});};
+  if(t.startDate&&t.endDate)return'<div style="font-size:10px;color:var(--blue);margin-top:2px">🗓 '+fmt(t.startDate)+' → '+fmt(t.endDate)+'</div>';
+  if(t.startDate)return'<div style="font-size:10px;color:var(--blue);margin-top:2px">🗓 From '+fmt(t.startDate)+'</div>';
+  return'<div style="font-size:10px;color:var(--blue);margin-top:2px">🗓 Until '+fmt(t.endDate)+'</div>';
+}
 function isSched(t,d){
   if(!t?.freq)return false;
+  const dds=ds(d);
+  // Start/End Date fence: if set, the task only appears on/after Start Date and on/before
+  // End Date. Outside that window it's treated as not scheduled for that day at all —
+  // it won't show on the assignee's dashboard, calendar, or be counted for compliance.
+  if(t.startDate&&dds<t.startDate)return false;
+  if(t.endDate&&dds>t.endDate)return false;
   const dow=d.getDay(),date=d.getDate(),m=d.getMonth();
   if(t.freq==='daily')return true;
   if(t.freq==='weekly')return parseInt(t.dow)===dow;
   if(t.freq==='monthly')return parseInt(t.dayOfMonth||1)===date;
   if(t.freq==='quarterly')return[0,3,6,9].includes(m)&&date===1;
   if(t.freq==='eom'){const last=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();return date===last;}
-  // occasional and other tasks always appear on the dashboard
+  // occasional and other tasks always appear on the dashboard (within the date fence above)
   if(t.freq==='occasional'||t.freq==='other')return true;
   return false;
 }
@@ -2455,7 +2470,7 @@ function renderTasks(){
     var rowStyle=isInactive?'opacity:0.5;background:#fafafa':'';
     var inactiveBadge=isInactive?'<span style="font-size:9px;background:#f1f5f9;color:#6b7280;padding:1px 6px;border-radius:20px;font-weight:700;margin-left:4px;border:1px solid #e2e6ea">INACTIVE</span>':'';
     return '<tr style="'+rowStyle+'">'
-      +'<td style="padding:10px 12px;border-bottom:1px solid #f1f3f5;vertical-align:middle"><div style="font-weight:600">'+t.title+badge+inactiveBadge+'</div>'+(t.note?'<div style="font-size:11px;color:var(--text3)">'+t.note+'</div>':'')+'</td>'
+      +'<td style="padding:10px 12px;border-bottom:1px solid #f1f3f5;vertical-align:middle"><div style="font-weight:600">'+t.title+badge+inactiveBadge+'</div>'+(t.note?'<div style="font-size:11px;color:var(--text3)">'+t.note+'</div>':'')+taskWindowLabel(t)+'</td>'
       +'<td style="padding:10px 12px;border-bottom:1px solid #f1f3f5;vertical-align:middle;text-align:center"><span class="freq-chip fc-'+t.freq+'">'+schedLabel(t)+'</span></td>'
       +'<td style="padding:10px 12px;border-bottom:1px solid #f1f3f5;vertical-align:middle;text-align:center"><span class="dl-chip">'+(t.deadline||'—')+'</span></td>'
       +'<td style="padding:10px 12px;border-bottom:1px solid #f1f3f5;vertical-align:middle">'+mAv+((t.assignees||[]).length>5?'<span style="font-size:11px;color:var(--text3)">+'+(t.assignees.length-5)+'</span>':'')+(!(t.assignees||[]).length?'<span style="color:var(--text4);font-size:12px">None</span>':'')+'</td>'
@@ -2570,7 +2585,7 @@ function renderTasks(){
               if(canDeleteTask(t)) rowActions+='<button class="btn sm del" onclick="delTask('+JSON.stringify(t.id)+',true)">Delete</button>';
             }
             return'<tr style="'+(isInactive?'opacity:0.5;background:#fafafa':'')+'">'
-              +'<td style="padding:10px 12px;border-bottom:1px solid #f1f3f5;vertical-align:middle"><div style="font-weight:600">'+t.title+inactiveBadge+govBadge+'</div>'+(t.note?'<div style="font-size:11px;color:var(--text3)">'+t.note+'</div>':'')+'</td>'
+              +'<td style="padding:10px 12px;border-bottom:1px solid #f1f3f5;vertical-align:middle"><div style="font-weight:600">'+t.title+inactiveBadge+govBadge+'</div>'+(t.note?'<div style="font-size:11px;color:var(--text3)">'+t.note+'</div>':'')+taskWindowLabel(t)+'</td>'
               +'<td style="padding:10px 12px;border-bottom:1px solid #f1f3f5;vertical-align:middle;font-size:12px;color:var(--text3)">'+ownerName+'</td>'
               +'<td style="padding:10px 12px;border-bottom:1px solid #f1f3f5;vertical-align:middle;text-align:center"><span class="freq-chip fc-'+t.freq+'">'+schedLabel(t)+'</span></td>'
               +'<td style="padding:10px 12px;border-bottom:1px solid #f1f3f5;vertical-align:middle;text-align:center"><span class="dl-chip">'+(t.deadline||'—')+'</span></td>'
@@ -2623,6 +2638,9 @@ function openTaskForm(taskId,isLeadTask){
     <div class="fg fg2">
       <div id="ft-dow-g" style="display:none"><label class="flabel">Day of Week</label><select class="finput nb" id="ft-dow">${dOpts}</select></div>
       <div id="ft-dom-g" style="display:none"><label class="flabel">Day of Month</label><input class="finput nb" id="ft-dom" type="number" min="1" max="28" value="${t?.dayOfMonth||1}"/></div>
+    </div>
+    <div class="fg" style="background:var(--surface2,#f8fafc);border-radius:var(--radius);padding:10px 12px;border:1px solid var(--border);margin-bottom:10px">
+      <div style="font-size:11px;color:var(--text3)">Leave dates blank for an <b>ongoing</b> task with no start/end window. Set them to control exactly when this task starts appearing on assignees' dashboards, and when it stops.</div>
     </div>
     <div class="fg fg4">
       <div><label class="flabel">Start Date <span style="font-weight:400;color:var(--text3)">(optional)</span></label><input class="finput nb" id="ft-startdate" type="date" value="${t?.startDate||''}"/></div>
@@ -2689,6 +2707,7 @@ async function saveTask(){
   var startTimeRaw=document.getElementById('ft-starttime')?.value.trim()||'';
   var startDateRaw=document.getElementById('ft-startdate')?.value.trim()||'';
   var endDateRaw=document.getElementById('ft-enddate')?.value.trim()||'';
+  if(startDateRaw&&endDateRaw&&endDateRaw<startDateRaw){toast('End Date cannot be before Start Date');return;}
   var dhVal=17,dmVal=0;
   if(endTimeRaw){var etParts=endTimeRaw.split(':');dhVal=parseInt(etParts[0]||17);dmVal=parseInt(etParts[1]||0);}
   // Due Time is no longer a separate field — derive the 12-hour label used for the
