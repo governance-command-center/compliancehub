@@ -999,7 +999,7 @@ function initApp(){
   fbGet('members').then(function(mems){
     mems=mems||{};
     const match=Object.values(mems).find(function(m){return m.username===session.username&&m.approved;});
-    if(match){CU=Object.assign({},session,{role:match.role});saveSession();startApp();}
+    if(match){CU=Object.assign({},session,{role:match.role,ltAccess:!!match.ltAccess});saveSession();startApp();}
   }).catch(function(e){console.warn('Session restore failed:',e.message);});
   fbGet('tasks').then(function(existing){
     if(!existing){const obj={};DEFAULT_TASKS.forEach(function(t){obj[t.id]=t;});fbSet('tasks',obj);fbSet('taskNextId',10);}
@@ -1014,7 +1014,7 @@ async function doLogin(){
   if(u===ADMIN_UN&&p===ADMIN_PW){CU={username:'admin',name:ADMIN_NAME,isAdmin:true};saveSession();startApp();return;}
   const mems=await fbGet('members')||{};
   const match=Object.values(mems).find(m=>m.username===u&&m.password===p&&m.approved);
-  if(match){CU={username:match.username,name:match.name,isAdmin:false,role:match.role};saveSession();startApp();return;}
+  if(match){CU={username:match.username,name:match.name,isAdmin:false,role:match.role,ltAccess:!!match.ltAccess};saveSession();startApp();return;}
   showMsg('login-err','Incorrect username or password.');
 }
 function doLogout(){stopListeners();clearSession();CU=null;document.getElementById('app').style.display='none';document.getElementById('auth-screen').style.display='flex';['login-user','login-pass'].forEach(id=>document.getElementById(id).value='');viewDate=new Date();}
@@ -1033,7 +1033,14 @@ function startApp(){
   // Restore sidebar collapse state
   if(localStorage.getItem('gh_sb_collapsed')==='1'){const sb=document.getElementById('sidebar');if(sb)sb.classList.add('collapsed');}
   fbListen('tasks',v=>{D.tasks=v?Object.values(v).filter(Boolean):[];D._tLoaded=true;frRecordCompletions();buildNav();rerender();});
-  fbListen('members',v=>{D.members=v?Object.values(v).filter(Boolean):[];D._mLoaded=true;buildNav();rerender();});
+  fbListen('members',v=>{
+    D.members=v?Object.values(v).filter(Boolean):[];D._mLoaded=true;
+    if(CU&&!CU.isAdmin){
+      const me=D.members.find(m=>m.username===CU.username);
+      if(me){CU.ltAccess=!!me.ltAccess;CU.role=me.role;}
+    }
+    buildNav();rerender();
+  });
   fbListen('statuses',v=>{D.statuses=v||{};rerender();});
   fbListen('actLog',v=>{D.actLog=v?Object.values(v).sort((a,b)=>(b.ts||0)-(a.ts||0)).slice(0,500):[];if(_curPage==='dashboard')renderDashboard();});
   fbListen('extRequests',v=>{
@@ -3200,6 +3207,7 @@ function renderMembers(){
         <div><label class="flabel">Rate (PHP/hr) <span style="font-weight:400;color:var(--text3);font-size:11px">(TOD billing — admin only, never shown to the member)</span></label><input class="finput nb" id="nm-rate" type="number" min="0" step="0.01" placeholder="e.g. 100"/></div>
       </div>
       <div class="fg"><label class="flabel">Buddy <span style="font-weight:400;color:var(--text3);font-size:11px">(covers this member's trackers — can edit their brand rows)</span></label><select class="finput nb" id="nm-buddy"><option value="">— None —</option>${D.members.filter(m=>m.approved&&m.active!==false).map(m=>`<option value="${m.username}">${m.name}</option>`).join('')}</select></div>
+      <div class="fg"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:500;color:var(--text2)"><input type="checkbox" id="nm-ltaccess" style="width:15px;height:15px;cursor:pointer"/>Grant Live Tracker access <span style="font-weight:400;color:var(--text3);font-size:11px">(only matters for TOD role — normally hidden from TOD members)</span></label></div>
       <div class="form-actions">
         <button class="btn primary" onclick="addM()">Add Member</button>
         <button class="btn" onclick="document.getElementById('bulk-f').click()">Bulk Import Excel</button>
@@ -3231,11 +3239,13 @@ async function addM(){
   const name=document.getElementById('nm-n')?.value.trim(),user=document.getElementById('nm-u')?.value.trim().toLowerCase(),pass=document.getElementById('nm-p')?.value,role=document.getElementById('nm-r')?.value||'Member',region=document.getElementById('nm-reg')?.value||'',rt=document.getElementById('nm-rt')?.value||'',buddy=document.getElementById('nm-buddy')?.value||'';
   const schedStart=document.getElementById('nm-schedstart')?.value||'',schedEnd=document.getElementById('nm-schedend')?.value||'';
   const service=document.getElementById('nm-service')?.value.trim()||'',rateRaw=document.getElementById('nm-rate')?.value,rate=rateRaw?parseFloat(rateRaw):0;
+  const ltAccess=document.getElementById('nm-ltaccess')?.checked||false;
   if(!name||!user||!pass){toast('Name, username and password required');return;}
   if(user===ADMIN_UN||D.members.find(m=>m.username===user)){toast('Username already taken');return;}
-  await fbPush('members',{name,username:user,password:pass,role,region,reportsTo:rt,buddy,schedStart,schedEnd,service,rate,approved:true});
+  await fbPush('members',{name,username:user,password:pass,role,region,reportsTo:rt,buddy,schedStart,schedEnd,service,rate,ltAccess,approved:true});
   await logAct(0,ds(now()),CU.name,'Member Added: '+name,'MEMBER_ADDED');
   ['nm-n','nm-u','nm-p','nm-service','nm-rate'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  const ltEl=document.getElementById('nm-ltaccess');if(ltEl)ltEl.checked=false;
   toast('Member added');
 }
 
@@ -3264,6 +3274,7 @@ function editMember(username){
       <div><label class="flabel">Rate (PHP/hr) <span style="font-weight:400;color:var(--text3);font-size:11px">(TOD billing — admin only, never shown to the member)</span></label><input class="finput nb" id="em-rate" type="number" min="0" step="0.01" value="${m.rate||''}" placeholder="e.g. 100"/></div>
     </div>
     <div class="fg"><label class="flabel">Buddy <span style="font-weight:400;color:var(--text3);font-size:11px">(covers this member's trackers — can edit their brand rows)</span></label><select class="finput nb" id="em-buddy"><option value="">— None —</option>${buddyOpts}</select></div>
+    <div class="fg"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:500;color:var(--text2)"><input type="checkbox" id="em-ltaccess" ${m.ltAccess?'checked':''} style="width:15px;height:15px;cursor:pointer"/>Grant Live Tracker access <span style="font-weight:400;color:var(--text3);font-size:11px">(only matters for TOD role — normally hidden from TOD members)</span></label></div>
     <div class="fg"><label class="flabel">New Password (optional)</label><input class="finput nb" id="em-pass" type="password" placeholder="Leave blank to keep"/></div>
     <div class="form-actions"><button class="btn primary" onclick="saveMemberEdit('${username}')">Save</button><button class="btn" onclick="closeModal('modal-task')">Cancel</button></div>`;
   openModal('modal-task');
@@ -3273,7 +3284,7 @@ async function saveMemberEdit(username){
   for(const[k,m]of Object.entries(mems)){
     if(m.username===username){
       const rateRaw=document.getElementById('em-rate')?.value;
-      const upd={name:document.getElementById('em-name').value.trim(),role:document.getElementById('em-role').value,region:document.getElementById('em-region')?.value||'',reportsTo:document.getElementById('em-rt')?.value||'',buddy:document.getElementById('em-buddy')?.value||'',schedStart:document.getElementById('em-schedstart')?.value||'',schedEnd:document.getElementById('em-schedend')?.value||'',service:document.getElementById('em-service')?.value.trim()||'',rate:rateRaw?parseFloat(rateRaw):0};
+      const upd={name:document.getElementById('em-name').value.trim(),role:document.getElementById('em-role').value,region:document.getElementById('em-region')?.value||'',reportsTo:document.getElementById('em-rt')?.value||'',buddy:document.getElementById('em-buddy')?.value||'',schedStart:document.getElementById('em-schedstart')?.value||'',schedEnd:document.getElementById('em-schedend')?.value||'',service:document.getElementById('em-service')?.value.trim()||'',rate:rateRaw?parseFloat(rateRaw):0,ltAccess:document.getElementById('em-ltaccess')?.checked||false};
       const np=document.getElementById('em-pass').value;if(np)upd.password=np;
       await fbUpd(`members/${k}`,upd);toast('Member updated');break;
     }
@@ -6473,6 +6484,9 @@ function buildAOWidget(){return '';}
 
 // ─── isTOD ───
 function isTOD(){return CU&&!CU.isAdmin&&CU.role==='Talent on Demand';}
+// Admin can grant individual TOD members access to Live Trackers (CU.ltAccess is kept in
+// sync with the member record via the 'members' listener and on login).
+function canSeeLiveTrackers(){return CU&&(CU.isAdmin||!isTOD()||!!CU.ltAccess);}
 
 // ─── TOD helpers ───
 function todWeekDates(){const d=[];for(let i=0;i<7;i++){const x=new Date(_todWeekStart);x.setDate(_todWeekStart.getDate()+i);d.push(x);}return d;}
@@ -7062,7 +7076,7 @@ function renderLiveTrackers(){
   // Also save FR table scroll if active
   var _frPrevLeft=0,_frPrevTop=0,_frPrevId=null;
   if(_activeTracker&&_activeTrackerSheet){_frPrevId='fr-tbl-'+_activeTracker+'-'+_activeTrackerSheet;var _frOld=document.getElementById(_frPrevId);if(_frOld){_frPrevLeft=_frOld.scrollLeft;_frPrevTop=_frOld.scrollTop;}}
-  if(isTOD()){el.innerHTML='<div class="empty-state" style="padding:60px"><div style="font-size:32px;margin-bottom:12px">🔒</div><div style="font-weight:700;font-size:16px;color:var(--text2)">Access Restricted</div><div style="font-size:13px;color:var(--text3);margin-top:6px">Live Trackers are not available for TOD members.</div></div>';return;}
+  if(!canSeeLiveTrackers()){el.innerHTML='<div class="empty-state" style="padding:60px"><div style="font-size:32px;margin-bottom:12px">🔒</div><div style="font-weight:700;font-size:16px;color:var(--text2)">Access Restricted</div><div style="font-size:13px;color:var(--text3);margin-top:6px">Live Trackers are not available for TOD members. Ask your admin to grant access.</div></div>';return;}
   var trackers=Object.entries(D.trackers||{}).map(function(e){return Object.assign({},e[1],{_key:e[0]});});
   var qEl=document.getElementById('lt-search-val');
   var q=qEl?qEl.value.toLowerCase():'';
@@ -11547,6 +11561,7 @@ function buildNav(){
     html+='<div class="sidebar-section">'
       +sItem('dashboard',ICONS.dashboard,'Dashboard',badges.dashboard||badges['my-tasks']||0)
       +sItem('tod',ICONS.tod,'Talent on Demand',0)
+      +(CU.ltAccess?sItem('live-trackers',ICONS.trackers,'Live Trackers',0):'')
       +sItem('leaves',ICONS.leaves,'Leaves',0)
       +sItem('calendar',ICONS.calendar,'My Calendar',0)
       +'</div>';
