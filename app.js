@@ -194,8 +194,12 @@ function isSched(t,d){
   // Start/End Date fence: if set, the task only appears on/after Start Date and on/before
   // End Date. Outside that window it's treated as not scheduled for that day at all —
   // it won't show on the assignee's dashboard, calendar, or be counted for compliance.
-  if(t.startDate&&dds<t.startDate)return false;
-  if(t.endDate&&dds>t.endDate)return false;
+  // Weekly tasks are exempt for now (they keep their pre-existing always-recurring behavior,
+  // since fencing interacts badly with their carry-over chain) — revisit if needed later.
+  if(t.freq!=='weekly'){
+    if(t.startDate&&dds<t.startDate)return false;
+    if(t.endDate&&dds>t.endDate)return false;
+  }
   const dow=d.getDay(),date=d.getDate(),m=d.getMonth();
   if(t.freq==='daily')return true;
   if(t.freq==='weekly')return parseInt(t.dow)===dow;
@@ -2641,6 +2645,7 @@ function openTaskForm(taskId,isLeadTask){
     </div>
     <div class="fg" style="background:var(--surface2,#f8fafc);border-radius:var(--radius);padding:10px 12px;border:1px solid var(--border);margin-bottom:10px">
       <div style="font-size:11px;color:var(--text3)">Leave dates blank for an <b>ongoing</b> task with no start/end window. Set them to control exactly when this task starts appearing on assignees' dashboards, and when it stops.</div>
+      <div id="ft-datefence-note" style="display:${t?.freq==='weekly'?'':'none'};font-size:11px;color:var(--orange,#b45309);margin-top:4px">⚠ Not currently applied to Weekly tasks — they'll keep recurring every week regardless of these dates.</div>
     </div>
     <div class="fg fg4">
       <div><label class="flabel">Start Date <span style="font-weight:400;color:var(--text3)">(optional)</span></label><input class="finput nb" id="ft-startdate" type="date" value="${t?.startDate||''}"/></div>
@@ -2686,7 +2691,7 @@ function openTaskForm(taskId,isLeadTask){
   ftChips();ftFilt();ftToggle();openModal('modal-task');
 }
 function applyGroup(key){if(!key)return;let g;if(key.startsWith('lead_')){g=(D.leadGroups||[]).find(x=>x._key===key.slice(5));}else{g=D.groups.find(x=>x._key===key);}if(!g)return;(g.members||[]).forEach(u=>{if(!_selM.includes(u))_selM.push(u);});ftChips();ftFilt();toast(`Added ${(g.members||[]).length} from "${g.name}"`)}
-function ftToggle(){const f=document.getElementById('ft-freq')?.value;document.getElementById('ft-dow-g').style.display=f==='weekly'?'':'none';document.getElementById('ft-dom-g').style.display=f==='monthly'?'':'none';}
+function ftToggle(){const f=document.getElementById('ft-freq')?.value;document.getElementById('ft-dow-g').style.display=f==='weekly'?'':'none';document.getElementById('ft-dom-g').style.display=f==='monthly'?'':'none';const note=document.getElementById('ft-datefence-note');if(note)note.style.display=f==='weekly'?'':'none';}
 function ftChips(){const e=document.getElementById('ft-chips');if(!e)return;e.innerHTML=_selM.map(u=>`<span class="m-chip"><span class="av" style="width:17px;height:17px;font-size:7px">${ini(getMN(u))}</span>${getMN(u)}<span class="rm" onclick="ftRemM('${u}')">&#x2715;</span></span>`).join('');}
 function ftRemM(u){_selM=_selM.filter(x=>x!==u);ftChips();ftFilt();}
 function ftFilt(){
