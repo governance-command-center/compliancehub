@@ -2051,6 +2051,17 @@ function buildDashboardResponseStatus(){
 
 // ── DASHBOARD SECTION BUILDERS ──
 function buildDashboardTaskRows(list, date){
+  const isToday=date===ds(now());
+  // FR/AO-linked tasks pull their status straight from the live tracker sheet — there is no
+  // per-day historical snapshot for them (see the carry-over comment above). That means their
+  // "Done"/completion numbers are IDENTICAL no matter which date you browse to on the dashboard,
+  // which reads as "future" or "impossible" data when viewing a date other than today (e.g. a
+  // Sept 1 view showing a report already 100% done isn't a completion recorded on Sept 1 — it's
+  // just today's real, current tracker status being displayed under whatever date is selected).
+  // Flag this explicitly so it isn't mistaken for a bug or fabricated data.
+  const liveTrackerNote=t=>(t.aoLinked||t.frLinked)&&!isToday
+    ?'<div style="font-size:10px;color:var(--text3);margin-top:2px" title="Finance Report / Abnormal Orders status always reflects the tracker\'s live, current state — it is not a record specific to '+date+'.">🔴 Live tracker status (current, not specific to this date)</div>'
+    :'';
   return list.map(t=>{
     const _cc=t._carryOrigin&&!t._trackerCarry; // cumulative (member-status) carry
     const ov=_cc?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date),rate=_cc?taskCompletionRateCumulative(t,t._carryOrigin,date):taskCompletionRate(t.id,date),isOv=isOverdue(t,date)&&ov!=='Done';
@@ -2101,6 +2112,7 @@ function buildDashboardTaskRows(list, date){
         <span class="freq-chip fc-${t.freq||'other'}">${t.freq||'personal'}</span>
         ${t.aoLinked?buildAOInlineRegions(date):''}
         ${t.frLinked?`<div id="fr-inline-regions-${t.id}">${buildFRInlineRegionsForTask(t)}</div>`:''}
+        ${liveTrackerNote(t)}
       </td>
       <td style="width:13%;text-align:center">${t._isPersonal?'<span style="font-size:11px;color:var(--text3)">—</span>':taskDateChip(t,date)}</td>
       <td style="width:13%;text-align:center"><span class="dl-chip${isOv?' overdue':''}">${t.deadline||'—'}</span></td>
