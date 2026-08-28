@@ -247,6 +247,16 @@ function isOverdue(t,date){
     return n.getHours()>hm[0]||(n.getHours()===hm[0]&&n.getMinutes()>hm[1]);
   }
   if(date!==dds)return false;
+  // One-time tasks ('Other'/'Occasional') with an End Date set: Start/End Date only control when
+  // the task is *visible* on the dashboard (see the "Leave dates blank..." hint in the task
+  // editor) — the actual deadline is a single fixed instant, End Date @ End Time. Without this
+  // guard, a multi-day Start→End window would incorrectly re-trigger "overdue" on every day
+  // inside the window (e.g. Start Sep 10 / End Sep 12 would already flag as overdue on the 10th),
+  // instead of only once the real due date/time (Sep 12, 1am) actually arrives.
+  if((t.freq==='other'||t.freq==='occasional')&&t.endDate){
+    if(dds<t.endDate)return false; // window is open but the real deadline hasn't arrived yet
+    if(dds>t.endDate)return false; // isSched already stops scheduling past End Date; guard anyway
+  }
   return n.getHours()>(t.dh||17)||(n.getHours()===(t.dh||17)&&n.getMinutes()>(t.dm||0));
 }
 
@@ -2738,6 +2748,13 @@ async function saveTask(){
     else if(freq==='monthly'&&dayOfMonth!=null) deadline=(dayOfMonth)+'th of month · '+dueTime;
     else if(freq==='quarterly') deadline='1st of quarter · '+dueTime;
     else if(freq==='eom') deadline='Last day of month · '+dueTime;
+    else if((freq==='other'||freq==='occasional')&&endDateRaw){
+      // Anchor the auto-label to the real End Date (the actual deadline instant used by
+      // isOverdue) rather than just the time, so the visible label can't drift from what's
+      // actually enforced.
+      var p=endDateRaw.split('-'),edLabel=new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+      deadline=edLabel+' · '+dueTime;
+    }
     else deadline=dueTime;
   }
   var data={title,freq,dow:dow!=null?dow:null,dayOfMonth:dayOfMonth!=null?dayOfMonth:null,
