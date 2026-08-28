@@ -279,8 +279,9 @@ function computeTaskOverall(taskId, date){
   if(!task||(task.assignees||[]).length===0) return 'Pending';
   // AO-linked tasks: status from tracker input
   if(task.aoLinked) return getAOStatusForDate(date);
-  // Finance report linked tasks
-  if(task.frLinked){return getFRStatusForTaskObj(task);}
+  // Finance report linked tasks — resolve against THIS date's own reporting cycle, not
+  // whatever cycle happens to be live today (see getFRStatusForTaskObj).
+  if(task.frLinked){return getFRStatusForTaskObj(task,date);}
   const mems=getMemberStatuses(taskId,date);
   const vals=(task.assignees||[]).map(u=>mems[u]||'Pending');
   if(vals.every(v=>v==='Done')) return 'Done';
@@ -628,8 +629,8 @@ function taskCompletionRate(taskId, date){
     });
     return {done,total,pct:total?Math.round(done/total*100):0};
   }
-  // Finance report linked tasks
-  if(task.frLinked){return getFRCompletionForTaskObj(task);}
+  // Finance report linked tasks — same date-scoped cycle lookup as computeTaskOverall.
+  if(task.frLinked){return getFRCompletionForTaskObj(task,date);}
   const mems=getMemberStatuses(taskId,date);
   const total=(task.assignees||[]).length;
   const done=(task.assignees||[]).filter(u=>(mems[u]||'Pending')==='Done').length;
@@ -2052,16 +2053,11 @@ function buildDashboardResponseStatus(){
 // ── DASHBOARD SECTION BUILDERS ──
 function buildDashboardTaskRows(list, date){
   const isToday=date===ds(now());
-  // FR/AO-linked tasks pull their status straight from the live tracker sheet — there is no
-  // per-day historical snapshot for them (see the carry-over comment above). That means their
-  // "Done"/completion numbers are IDENTICAL no matter which date you browse to on the dashboard,
-  // which reads as "future" or "impossible" data when viewing a date other than today (e.g. a
-  // Sept 1 view showing a report already 100% done isn't a completion recorded on Sept 1 — it's
-  // just today's real, current tracker status being displayed under whatever date is selected).
-  // Flag this explicitly so it isn't mistaken for a bug or fabricated data.
-  const liveTrackerNote=t=>(t.aoLinked||t.frLinked)&&!isToday
-    ?'<div style="font-size:10px;color:var(--text3);margin-top:2px" title="Finance Report / Abnormal Orders status always reflects the tracker\'s live, current state — it is not a record specific to '+date+'.">🔴 Live tracker status (current, not specific to this date)</div>'
-    :'';
+  // FR/AO-linked tasks now resolve their status against the SPECIFIC cycle covering the date
+  // being viewed (see _frResolveColByCadence / aoFindDateCols), so no "always live, not
+  // specific to this date" caveat is needed any more — browsing to a past Thursday correctly
+  // shows that Thursday's own report status, not today's.
+  const liveTrackerNote=t=>'';
   return list.map(t=>{
     const _cc=t._carryOrigin&&!t._trackerCarry; // cumulative (member-status) carry
     const ov=_cc?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date),rate=_cc?taskCompletionRateCumulative(t,t._carryOrigin,date):taskCompletionRate(t.id,date),isOv=isOverdue(t,date)&&ov!=='Done';
@@ -2071,7 +2067,7 @@ function buildDashboardTaskRows(list, date){
     if(t._isPersonal){
       completionCell=`<button class="btn sm del" onclick="deletePersonalTask('${t._key}')" style="font-size:11px">Delete</button>`;
     } else if(t.frLinked){
-      const _fc=getFRCompletionForTaskObj(t);
+      const _fc=getFRCompletionForTaskObj(t,date);
       const _fcCol=_fc.pct>=100?'var(--green)':_fc.pct>0?'var(--blue)':'var(--red)';
       const _fcBar=`<div class="rate-bar-wrap"><div class="rate-bar"><div class="rate-bar-fill" style="width:${_fc.pct}%;background:${_fcCol}"></div></div><div style="font-size:11px;font-weight:700;color:${_fcCol};text-align:right">${_fc.pct}%</div></div>`;
       completionCell=_fcBar+`<div style="font-size:10px;color:var(--text3)">${_fc.done}/${_fc.total} done</div>`;
@@ -2111,7 +2107,7 @@ function buildDashboardTaskRows(list, date){
         <div style="font-weight:600">${t.title}${isOv?'&nbsp;<span style="color:var(--red);font-size:10px;font-weight:700">OVERDUE</span>':''}${carryBadge(t)}${t.aoLinked?'&nbsp;<span style="font-size:10px;background:var(--orange-light);color:var(--orange);padding:1px 6px;border-radius:20px;font-weight:700">📊 Abnormal Orders</span>':''}${t.frLinked?'&nbsp;<span style="font-size:10px;background:var(--blue-light);color:var(--blue);padding:1px 6px;border-radius:20px;font-weight:700">💰 Finance Report</span>':''}${t._isPersonal?'&nbsp;<span style="font-size:10px;background:var(--green-light);color:var(--green);padding:1px 6px;border-radius:20px;font-weight:700">✅ Personal</span>':''}</div>
         <span class="freq-chip fc-${t.freq||'other'}">${t.freq||'personal'}</span>
         ${t.aoLinked?buildAOInlineRegions(date):''}
-        ${t.frLinked?`<div id="fr-inline-regions-${t.id}">${buildFRInlineRegionsForTask(t)}</div>`:''}
+        ${t.frLinked?`<div id="fr-inline-regions-${t.id}">${buildFRInlineRegionsForTask(t,date)}</div>`:''}
         ${liveTrackerNote(t)}
       </td>
       <td style="width:13%;text-align:center">${t._isPersonal?'<span style="font-size:11px;color:var(--text3)">—</span>':taskDateChip(t,date)}</td>
@@ -5115,7 +5111,7 @@ function renderMyTasks(){
         ?`<div>${buildAOInlineRegions(date)}<button class="btn sm" onclick="showPage('live-trackers')" style="margin-top:4px;font-size:11px">Edit in Tracker →</button></div>`
         :t.frLinked
         ?(function(){
-            const frComp=getFRCompletionForTaskObj(t);
+            const frComp=getFRCompletionForTaskObj(t,date);
             const col=frComp.total===0?'var(--text3)':frComp.pct>=100?'var(--green)':frComp.pct>0?'var(--yellow)':'var(--red)';
             const pctLabel=frComp.total?`${frComp.done}/${frComp.total} = ${frComp.pct}%`:'No data';
             return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -9203,9 +9199,9 @@ function frTaskIsMonthly(task){
 // Completion for one sheet against a chosen cadence column (weekly or monthly).
 // Mirrors frGetSheetCompletion but lets the caller pick the column resolver so
 // monthly tasks read the monthly column.
-function frGetSheetCompletionCadence(sheet,platform,wantMonthly){
+function frGetSheetCompletionCadence(sheet,platform,wantMonthly,refDateStr){
   if(!sheet)return{done:0,total:0,pct:0,regions:{}};
-  const colIdx=wantMonthly?frActiveMonthlyColIdx(sheet,platform):frActiveColIdx(sheet,platform);
+  const colIdx=wantMonthly?frActiveMonthlyColIdx(sheet,platform,refDateStr):frActiveColIdx(sheet,platform,refDateStr);
   if(colIdx===-1)return{done:0,total:0,pct:0,regions:{}};
   const regionCol=frFixedColIdx(sheet,platform,'region');
   const acctCol=frFixedColIdx(sheet,platform,'acct');
@@ -9231,7 +9227,11 @@ function frGetSheetCompletionCadence(sheet,platform,wantMonthly){
 // Aggregate completion for a task across ALL of its platforms and the correct
 // cadence column. Each brand-row per platform counts as one unit (1:1), which
 // is exactly how the roll-up should sum Lazada + Shopee + TikTok.
-function getFRCompletionForTaskObj(task){
+// `refDateStr` (optional): resolve completion against the cycle covering that specific
+// date instead of today's live cycle — see _frResolveColByCadence. This is what lets the
+// dashboard show a PAST week's Shopee/TikTok report as Pending again once a new week's
+// cycle has started, instead of always echoing today's live tracker state.
+function getFRCompletionForTaskObj(task,refDateStr){
   const linked=getFRLinked();
   if(!linked)return{done:0,total:0,pct:0};
   const wantMonthly=frTaskIsMonthly(task);
@@ -9239,14 +9239,14 @@ function getFRCompletionForTaskObj(task){
   frTaskPlatforms(task).forEach(function(plat){
     const sheet=getFRSheet(linked,plat);
     if(!sheet)return;
-    const c=frGetSheetCompletionCadence(sheet,plat,wantMonthly);
+    const c=frGetSheetCompletionCadence(sheet,plat,wantMonthly,refDateStr);
     done+=c.done;total+=c.total;
   });
   return{done,total,pct:total?Math.round(done/total*100):0};
 }
 
-function getFRStatusForTaskObj(task){
-  const c=getFRCompletionForTaskObj(task);
+function getFRStatusForTaskObj(task,refDateStr){
+  const c=getFRCompletionForTaskObj(task,refDateStr);
   if(!c.total)return'Pending';
   if(c.pct>=100)return'Done';
   if(c.pct>0)return'Ongoing';
@@ -9290,7 +9290,7 @@ function frGetMySectionCompletion(sheet,platform){
 // otherwise a monthly task shows its right-side bar from the monthly column while these region
 // chips read the (still-empty) weekly column — the exact mismatch that made Lazada look 36%
 // incomplete here while the completion cell correctly read 100% from the monthly column.
-function buildFRInlineRegions(platform,wantMonthly){
+function buildFRInlineRegions(platform,wantMonthly,refDateStr){
   if(!platform)return'';
   const linked=getFRLinked();
   if(!linked){
@@ -9299,8 +9299,8 @@ function buildFRInlineRegions(platform,wantMonthly){
   }
   const sheet=getFRSheet(linked,platform);
   if(!sheet)return'<div style="font-size:11px;color:var(--text3);margin-top:4px">No '+platform+' sheet in tracker</div>';
-  const comp=frGetSheetCompletionCadence(sheet,platform,!!wantMonthly);
-  if(!comp.total)return'<div style="font-size:11px;color:var(--text3);margin-top:4px">No data for current cycle</div>';
+  const comp=frGetSheetCompletionCadence(sheet,platform,!!wantMonthly,refDateStr);
+  if(!comp.total)return'<div style="font-size:11px;color:var(--text3);margin-top:4px">No data for '+(refDateStr?'that cycle':'current cycle')+'</div>';
 
   // Overall progress
   const totalDone=comp.done,totalAll=comp.total;
@@ -9367,16 +9367,16 @@ function buildFRInlineRegions(platform,wantMonthly){
 // Inline region breakdown for a task, spanning every platform it applies to.
 // Single-platform tasks render exactly as before; multi-platform tasks stack
 // one labelled block per platform (Lazada / Shopee / TikTok).
-function buildFRInlineRegionsForTask(task){
+function buildFRInlineRegionsForTask(task,refDateStr){
   const plats=frTaskPlatforms(task);
   const wantMonthly=frTaskIsMonthly(task);
-  if(plats.length<=1)return buildFRInlineRegions(plats[0]||null,wantMonthly);
+  if(plats.length<=1)return buildFRInlineRegions(plats[0]||null,wantMonthly,refDateStr);
   return plats.map(function(p){
     const sheet=getFRSheet(getFRLinked()||{},p);
     if(!sheet)return'';
     return'<div style="margin-top:6px">'
       +'<div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">'+p+'</div>'
-      +buildFRInlineRegions(p,wantMonthly)
+      +buildFRInlineRegions(p,wantMonthly,refDateStr)
     +'</div>';
   }).join('');
 }
@@ -10565,22 +10565,35 @@ function _frScanDateCols(sheet,platform){
 //   • weekly 20–26 Jul → Report Date Tue Jul 28 (yesterday) → CURRENT weekly (yellow)
 //   • weekly 27 Jul–02 Aug → Report Date Tue Aug 4 (upcoming) → not yet
 //   • monthly Jul 01–31 → Report Date Aug 1 → resolved on the MONTHLY track (green), not here
-function _frResolveColByCadence(sheet,platform,wantMonthly){
+// `refDateStr` (optional, 'YYYY-MM-DD') picks which day's cycle to resolve against.
+// Omitted → today (live/current — used everywhere edits happen: the table highlight,
+// edit-locking, mass-update, etc). Passed → the column whose Report Date covers that
+// SPECIFIC day, so a dashboard viewing a past or future week's occurrence of a
+// Finance-Report task reads that occurrence's own cycle instead of today's live column.
+// Future dates (beyond today) have no column yet — return -1 (Pending), mirroring
+// how the AO tracker already treats future dates as having no data.
+function _frResolveColByCadence(sheet,platform,wantMonthly,refDateStr){
   const groups=_frScanDateCols(sheet,platform).filter(function(g){return g.isMonthly===wantMonthly;});
-  const todayMid=new Date(now().getFullYear(),now().getMonth(),now().getDate());
-  // Nearest Report Date on-or-before today.
+  const refD=refDateStr?new Date(refDateStr+'T00:00:00'):now();
+  const refMid=new Date(refD.getFullYear(),refD.getMonth(),refD.getDate());
+  if(refDateStr){
+    const todayMid=new Date(now().getFullYear(),now().getMonth(),now().getDate());
+    if(refMid>todayMid)return -1; // future occurrence — nothing reported yet
+  }
+  // Nearest Report Date on-or-before the reference day.
   let idx=-1,bestPast=Infinity;
   groups.forEach(function(g,i){
     if(!g.dueDate)return;
-    const diff=todayMid-g.dueDate;               // >=0 → due today or already passed
+    const diff=refMid-g.dueDate;               // >=0 → due on/before the reference day
     if(diff>=0&&diff<bestPast){bestPast=diff;idx=i;}
   });
-  if(idx===-1){
-    // Nothing due yet — fall back to the soonest upcoming Report Date.
+  if(idx===-1&&!refDateStr){
+    // Nothing due yet — fall back to the soonest upcoming Report Date. (Only for the
+    // "today" case — a historical refDateStr with nothing due yet genuinely has no cycle.)
     let bestFuture=Infinity;
     groups.forEach(function(g,i){
       if(!g.dueDate)return;
-      const diff=g.dueDate-todayMid;
+      const diff=g.dueDate-refMid;
       if(diff>=0&&diff<bestFuture){bestFuture=diff;idx=i;}
     });
   }
@@ -10590,16 +10603,17 @@ function _frResolveColByCadence(sheet,platform,wantMonthly){
 // Current WEEKLY column (yellow highlight). Used everywhere the "active column" is
 // read: the table highlight, the reporting-week banner, edit-locking, the visible-week
 // window, and the completion dashboard — all of which track the weekly cadence.
-function frActiveColIdx(sheet,platform){
+// Pass `refDateStr` to resolve a PAST/FUTURE occurrence's own column instead of today's.
+function frActiveColIdx(sheet,platform,refDateStr){
   if(!sheet)return -1;
-  return _frResolveColByCadence(sheet,platform,false);
+  return _frResolveColByCadence(sheet,platform,false,refDateStr);
 }
 
 // Current MONTHLY column (green highlight). Independent of the weekly resolver so both
 // can be current in the same view (e.g. a Jul-28 weekly and an Aug-1 monthly both shown).
-function frActiveMonthlyColIdx(sheet,platform){
+function frActiveMonthlyColIdx(sheet,platform,refDateStr){
   if(!sheet)return -1;
-  return _frResolveColByCadence(sheet,platform,true);
+  return _frResolveColByCadence(sheet,platform,true,refDateStr);
 }
 
 async function frApplySelToDone(trackerKey,sheetKey){
