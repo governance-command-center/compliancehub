@@ -188,6 +188,15 @@ function taskWindowLabel(t){
   if(t.startDate)return'<div style="font-size:10px;color:var(--blue);margin-top:2px">🗓 From '+fmt(t.startDate)+'</div>';
   return'<div style="font-size:10px;color:var(--blue);margin-top:2px">🗓 Until '+fmt(t.endDate)+'</div>';
 }
+// True if `dateStr` still falls inside the task's Start/End Date window (weekly tasks are
+// exempt, per isSched). Used to cut off carry-over once a task's End Date has passed — isSched
+// alone stops NEW occurrences, but an already-open carry chain needs this extra check too.
+function inDateFence(t,dateStr){
+  if(t.freq==='weekly')return true;
+  if(t.startDate&&dateStr<t.startDate)return false;
+  if(t.endDate&&dateStr>t.endDate)return false;
+  return true;
+}
 function isSched(t,d){
   if(!t?.freq)return false;
   const dds=ds(d);
@@ -2191,12 +2200,13 @@ function renderDashboard(){
     // 100% complete, using the simpler tracker-carry rule.
     if(t.aoLinked||t.frLinked){
       const to=trackerCarryOrigin(t,viewDate);
-      if(to)carried.push({...t,_carryOrigin:to,_trackerCarry:true});
+      if(to&&inDateFence(t,date))carried.push({...t,_carryOrigin:to,_trackerCarry:true});
       return;
     }
     if(!(t.assignees||[]).length)return;
     const origin=carryOriginDate(t,viewDate);
     if(!origin||origin===date)return;           // nothing open from a prior day
+    if(!inDateFence(t,date))return;              // past this task's End Date — stop carrying
     if(computeTaskOverallCumulative(t,origin,date)==='Done')return; // already completed
     carried.push({...t,_carryOrigin:origin});
   });
