@@ -128,7 +128,7 @@ const DOWF=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturda
 const CARRYOVER_LOOKBACK_DAYS=120;
 
 let CU=null;
-let D={tasks:[],members:[],statuses:{},actLog:[],calEntries:{},broadcast:null,incidents:[],extRequests:{},groups:[],trackers:{},todAttendance:{},auditLog:[],leaves:[],leadTasks:[],weeklyReports:[],personalTasks:[],nonCompliance:{},frCompletions:{},_tLoaded:false,_mLoaded:false};
+let D={tasks:[],members:[],statuses:{},actLog:[],calEntries:{},broadcast:null,incidents:[],extRequests:{},groups:[],trackers:{},todAttendance:{},todOvertime:{},auditLog:[],leaves:[],leadTasks:[],weeklyReports:[],personalTasks:[],nonCompliance:{},frCompletions:{},_tLoaded:false,_mLoaded:false};
 // FR_WEEK_OFFSET declared early: Finance-tracker render helpers reference it well before its
 // former mid-file declaration, which threw "Cannot access 'FR_WEEK_OFFSET' before initialization".
 // Defaults live here; loadFRConfig() later merges admin overrides from Firebase into this same object.
@@ -1162,6 +1162,7 @@ function startApp(){
     }
     if(_curPage==='dashboard')renderDashboard();if(_curPage==='my-tasks')renderMyTasks();});
   fbListen('todAttendance',v=>{D.todAttendance=v||{};if(_curPage==='tod')renderTOD();});
+  fbListen('todOvertime',v=>{D.todOvertime=v||{};if(_curPage==='tod')renderTOD();});
   fbListen('auditLog',v=>{D.auditLog=v?Object.entries(v).map(([k,e])=>({...e,_key:k})).sort((a,b)=>(b.ts||0)-(a.ts||0)):[];if(_curPage==='audit')renderAudit();if(_curPage==='my-tasks')renderMyTasks();if(_curPage==='incidents')renderIncidents();});
   fbListen('leaves',v=>{D.leaves=v?Object.entries(v).map(([k,e])=>({...e,_key:k})).sort((a,b)=>(b.ts||0)-(a.ts||0)):[];if(_curPage==='leaves')renderLeaves();});
   fbListen('weeklyReports',v=>{D.weeklyReports=v?Object.entries(v).map(([k,r])=>({...r,_key:k})).sort((a,b)=>(b.ts||0)-(a.ts||0)):[];if(_curPage==='incidents')renderIncidents();if(_curPage==='reports')renderReports();if(_curPage==='my-tasks')renderMyTasks();});
@@ -3271,6 +3272,9 @@ function renderMembers(){
         <div><label class="flabel">Scheduled Start <span style="font-weight:400;color:var(--text3);font-size:11px">(for TOD attendance tracking)</span></label><input class="finput nb" id="nm-schedstart" type="time" value="09:00"/></div>
         <div><label class="flabel">Scheduled End <span style="font-weight:400;color:var(--text3);font-size:11px">(for TOD attendance tracking)</span></label><input class="finput nb" id="nm-schedend" type="time" value="18:00"/></div>
       </div>
+      <div class="fg">
+        <div><label class="flabel">Break (minutes) <span style="font-weight:400;color:var(--text3);font-size:11px">(unpaid, subtracted from scheduled hours — e.g. 60 for a 1-hour break)</span></label><input class="finput nb" id="nm-breakmins" type="number" min="0" step="5" value="60"/></div>
+      </div>
       <div class="fg fg2">
         <div><label class="flabel">Service <span style="font-weight:400;color:var(--text3);font-size:11px">(TOD billing label — admin only)</span></label><input class="finput nb" id="nm-service" placeholder="e.g. Dulux Manual Processing Order Task"/></div>
         <div><label class="flabel">Rate (PHP/hr) <span style="font-weight:400;color:var(--text3);font-size:11px">(TOD billing — admin only, never shown to the member)</span></label><input class="finput nb" id="nm-rate" type="number" min="0" step="0.01" placeholder="e.g. 100"/></div>
@@ -3307,11 +3311,12 @@ function renderMembers(){
 async function addM(){
   const name=document.getElementById('nm-n')?.value.trim(),user=document.getElementById('nm-u')?.value.trim().toLowerCase(),pass=document.getElementById('nm-p')?.value,role=document.getElementById('nm-r')?.value||'Member',region=document.getElementById('nm-reg')?.value||'',rt=document.getElementById('nm-rt')?.value||'',buddy=document.getElementById('nm-buddy')?.value||'';
   const schedStart=document.getElementById('nm-schedstart')?.value||'',schedEnd=document.getElementById('nm-schedend')?.value||'';
+  const breakMinsRaw=document.getElementById('nm-breakmins')?.value,breakMins=breakMinsRaw?parseInt(breakMinsRaw,10):0;
   const service=document.getElementById('nm-service')?.value.trim()||'',rateRaw=document.getElementById('nm-rate')?.value,rate=rateRaw?parseFloat(rateRaw):0;
   const ltAccess=document.getElementById('nm-ltaccess')?.checked||false;
   if(!name||!user||!pass){toast('Name, username and password required');return;}
   if(user===ADMIN_UN||D.members.find(m=>m.username===user)){toast('Username already taken');return;}
-  await fbPush('members',{name,username:user,password:pass,role,region,reportsTo:rt,buddy,schedStart,schedEnd,service,rate,ltAccess,approved:true});
+  await fbPush('members',{name,username:user,password:pass,role,region,reportsTo:rt,buddy,schedStart,schedEnd,breakMins,service,rate,ltAccess,approved:true});
   await logAct(0,ds(now()),CU.name,'Member Added: '+name,'MEMBER_ADDED');
   ['nm-n','nm-u','nm-p','nm-service','nm-rate'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
   const ltEl=document.getElementById('nm-ltaccess');if(ltEl)ltEl.checked=false;
@@ -3338,6 +3343,9 @@ function editMember(username){
       <div><label class="flabel">Scheduled Start <span style="font-weight:400;color:var(--text3);font-size:11px">(for TOD attendance tracking)</span></label><input class="finput nb" id="em-schedstart" type="time" value="${m.schedStart||'09:00'}"/></div>
       <div><label class="flabel">Scheduled End <span style="font-weight:400;color:var(--text3);font-size:11px">(for TOD attendance tracking)</span></label><input class="finput nb" id="em-schedend" type="time" value="${m.schedEnd||'18:00'}"/></div>
     </div>
+    <div class="fg">
+      <div><label class="flabel">Break (minutes) <span style="font-weight:400;color:var(--text3);font-size:11px">(unpaid, subtracted from scheduled hours — e.g. 60 for a 1-hour break)</span></label><input class="finput nb" id="em-breakmins" type="number" min="0" step="5" value="${m.breakMins!=null?m.breakMins:60}"/></div>
+    </div>
     <div class="fg fg2">
       <div><label class="flabel">Service <span style="font-weight:400;color:var(--text3);font-size:11px">(TOD billing label — admin only)</span></label><input class="finput nb" id="em-service" value="${escHtml(m.service||'')}" placeholder="e.g. Dulux Manual Processing Order Task"/></div>
       <div><label class="flabel">Rate (PHP/hr) <span style="font-weight:400;color:var(--text3);font-size:11px">(TOD billing — admin only, never shown to the member)</span></label><input class="finput nb" id="em-rate" type="number" min="0" step="0.01" value="${m.rate||''}" placeholder="e.g. 100"/></div>
@@ -3353,7 +3361,8 @@ async function saveMemberEdit(username){
   for(const[k,m]of Object.entries(mems)){
     if(m.username===username){
       const rateRaw=document.getElementById('em-rate')?.value;
-      const upd={name:document.getElementById('em-name').value.trim(),role:document.getElementById('em-role').value,region:document.getElementById('em-region')?.value||'',reportsTo:document.getElementById('em-rt')?.value||'',buddy:document.getElementById('em-buddy')?.value||'',schedStart:document.getElementById('em-schedstart')?.value||'',schedEnd:document.getElementById('em-schedend')?.value||'',service:document.getElementById('em-service')?.value.trim()||'',rate:rateRaw?parseFloat(rateRaw):0,ltAccess:document.getElementById('em-ltaccess')?.checked||false};
+      const breakMinsRaw=document.getElementById('em-breakmins')?.value;
+      const upd={name:document.getElementById('em-name').value.trim(),role:document.getElementById('em-role').value,region:document.getElementById('em-region')?.value||'',reportsTo:document.getElementById('em-rt')?.value||'',buddy:document.getElementById('em-buddy')?.value||'',schedStart:document.getElementById('em-schedstart')?.value||'',schedEnd:document.getElementById('em-schedend')?.value||'',breakMins:breakMinsRaw?parseInt(breakMinsRaw,10):0,service:document.getElementById('em-service')?.value.trim()||'',rate:rateRaw?parseFloat(rateRaw):0,ltAccess:document.getElementById('em-ltaccess')?.checked||false};
       const np=document.getElementById('em-pass').value;if(np)upd.password=np;
       await fbUpd(`members/${k}`,upd);toast('Member updated');break;
     }
@@ -6611,36 +6620,48 @@ function fmtPeso(n){
   return 'PHP '+(n||0).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
 }
 // Scheduled duration for a member on a given date, derived from their Scheduled Start/End
-// (e.g. 09:00–18:00 = 8h, 09:00–13:00 = 4h). Returns 0 if no schedule is set.
+// minus their unpaid break (e.g. 09:00–18:00 with a 60-min break = 8h). Returns 0 if no
+// schedule is set. breakMins defaults to 0 if not configured on the member.
 function schedHoursMs(m,dds){
   if(!m.schedStart||!m.schedEnd)return 0;
   const s=schedDateTime(dds,m.schedStart),e=schedDateTime(dds,m.schedEnd);
   if(!s||!e)return 0;
   let diff=e-s;
   if(diff<=0)diff+=24*3600000; // schedule crosses midnight
-  return diff;
+  diff-=(m.breakMins||0)*60000;
+  return diff>0?diff:0;
+}
+// Overtime logged for a member on a given date (admin or the member themselves can log it).
+// Stored as a decimal hour count in D.todOvertime[username][date].hours.
+function otHoursMs(username,dds){
+  const rec=(D.todOvertime[username]||{})[dds];
+  if(!rec||!rec.hours)return 0;
+  return Math.round(rec.hours*3600000);
 }
 // Billing calc for the monthly Service/Rate/Amount table. TOD members only clock in — no
 // logout is required. A day "qualifies" for pay simply by logging in, and the hours paid are
-// the member's full scheduled duration for that day (e.g. 8h or 4h), not actual clock time.
-// A day with no schedule configured can't be priced, so it's not qualified even if attended.
+// the member's full scheduled duration for that day (e.g. 8h or 4h, minus break) plus any
+// overtime logged for that date. A day with no schedule configured can't be priced, so it's
+// not qualified even if attended (unless overtime alone was logged).
 function computeBillingDayRecord(m,dds){
   const att=D.todAttendance||{};
   const rec=(att[m.username]||{})[dds]||{};
-  const out={timeIn:null,hoursMs:0,qualified:false,attended:!!rec.timeIn};
+  const out={timeIn:null,hoursMs:0,otMs:0,qualified:false,attended:!!rec.timeIn};
   if(!rec.timeIn)return out;
   out.timeIn=new Date(rec.timeIn);
-  out.hoursMs=schedHoursMs(m,dds);
+  out.otMs=otHoursMs(m.username,dds);
+  out.hoursMs=schedHoursMs(m,dds)+out.otMs;
   out.qualified=out.hoursMs>0;
   return out;
 }
 // Core attendance computation for one member on one date. Members only log a time in; worked
-// hours are auto-computed from their schedule (Scheduled Start/End) rather than requiring a
-// logout. Lateness is still tracked against the scheduled start for status display.
+// hours are auto-computed from their schedule (Scheduled Start/End minus break) plus any
+// overtime logged for that date, rather than requiring a logout. Lateness is still tracked
+// against the scheduled start for status display.
 function computeDayRecord(m,dds){
   const att=D.todAttendance||{};
   const rec=(att[m.username]||{})[dds]||{};
-  const out={timeIn:null,lateMins:0,hoursMs:0,status:'Absent',hasSchedule:!!(m.schedStart&&m.schedEnd)};
+  const out={timeIn:null,lateMins:0,hoursMs:0,otMs:0,status:'Absent',hasSchedule:!!(m.schedStart&&m.schedEnd)};
   if(!rec.timeIn)return out;
   const inDate=new Date(rec.timeIn);
   out.timeIn=inDate;
@@ -6648,7 +6669,8 @@ function computeDayRecord(m,dds){
   if(schedStart&&inDate>schedStart){
     out.lateMins=Math.round((inDate-schedStart)/60000);
   }
-  out.hoursMs=schedHoursMs(m,dds);
+  out.otMs=otHoursMs(m.username,dds);
+  out.hoursMs=schedHoursMs(m,dds)+out.otMs;
   out.status=out.lateMins>0?('Late by '+fmtMinsShort(out.lateMins)):(out.hasSchedule?'On time':'Logged in');
   return out;
 }
@@ -6668,7 +6690,7 @@ function renderTOD(){
   }
   if(!_todMonthDate){_todMonthDate=new Date(now().getFullYear(),now().getMonth(),1);}
 
-  // Quick log in/out for TOD members (shown in header, both view modes)
+  // Quick log in for TOD members (shown in header, both view modes)
   var todayStr2=ds(now());
   var myRec=isTOD()?(D.todAttendance&&D.todAttendance[CU.username]&&D.todAttendance[CU.username][todayStr2])||{}:{};
   var quickBtns='';
@@ -6677,10 +6699,12 @@ function renderTOD(){
       quickBtns='<button class="tod-btn-in" data-action="login" data-user="'+CU.username+'" data-date="'+todayStr2+'" style="padding:6px 16px;font-size:13px">Log In</button>';
     } else {
       var inT=new Date(myRec.timeIn).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'});
-      var myDayC=computeDayRecord(CU,todayStr2);
+      var myMember=D.members.find(function(x){return x.username===CU.username;})||CU;
+      var myDayC=computeDayRecord(myMember,todayStr2);
       quickBtns='<span style="font-size:12px;color:var(--green);font-weight:600">IN '+inT+'</span>'
-        +(myDayC.hoursMs?'<span style="font-size:12px;color:var(--text3);margin-left:8px">'+fmtHours(myDayC.hoursMs)+' scheduled</span>':'');
+        +(myDayC.hoursMs?'<span style="font-size:12px;color:var(--text3);margin-left:8px">'+fmtHours(myDayC.hoursMs)+(myDayC.otMs?' (incl. OT)':'')+' scheduled</span>':'');
     }
+    quickBtns+='<button class="btn sm" style="margin-left:8px" onclick="openOTModal(\''+CU.username+'\',\''+todayStr2+'\')">+ Log Overtime</button>';
   }
 
   var viewToggle='<div style="display:flex;background:#f1f5f9;border-radius:var(--radius);padding:2px;gap:2px">'
@@ -6739,6 +6763,7 @@ function renderTODWeekly(){
       var isT=dds===todayStr;
       var isMe=m.username===CU.username;
       var hrs=dayC.hoursMs?fmtHours(dayC.hoursMs):'';
+      var canEditOT=isMe||CU.isAdmin;
       var inner='';
       if(rec.timeIn){
         var inTime=new Date(rec.timeIn).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'});
@@ -6749,6 +6774,12 @@ function renderTODWeekly(){
         }
         if(hrs){
           inner+='<div style="font-size:10px;color:var(--text3)">'+hrs+'</div>';
+        }
+        if(dayC.otMs){
+          inner+='<div style="font-size:9px;font-weight:700;color:#7c3aed">+OT '+fmtHours(dayC.otMs)+'</div>';
+        }
+        if(canEditOT){
+          inner+='<button class="btn sm" style="padding:1px 6px;font-size:9px;margin-top:1px" onclick="openOTModal(\''+m.username+'\',\''+dds+'\')">'+(dayC.otMs?'Edit OT':'+ OT')+'</button>';
         }
         inner+='</div>';
       } else if(isT&&(isMe||CU.isAdmin)){
@@ -6864,13 +6895,15 @@ function renderTODMonthly(){
   else{renderTODMonthlySelf(body,monthNav,selMember,weekdays);}
 }
 
-// Admin view: the Service / Date / Time In / Duration / Rate / Amount billing table. Members
-// only clock in — no logout required. Duration (and therefore Amount) is the member's full
-// scheduled hours for that day (e.g. 8h or 4h) as soon as they've logged in. A day only shows
-// as "Not Qualified" if the member has no Scheduled Start/End set, since hours can't be priced.
+// Admin view: the Service / Date / Time In / Duration / OT / Rate / Amount billing table.
+// Members only clock in — no logout required. Duration (and therefore Amount) is the member's
+// full scheduled hours for that day (e.g. 8h or 4h) as soon as they've logged in, plus any
+// overtime logged for that date (paid at the same rate). A day only shows as "Not Qualified"
+// if the member has no Scheduled Start/End set and no overtime logged, since hours can't be
+// priced. Admin can log/edit overtime for any day directly from this table.
 function renderTODMonthlyBilling(body,monthNav,selMember,weekdays){
   var todayStr=ds(now());
-  var trows='',daysPresent=0,daysQualified=0,totalMs=0,totalAmount=0;
+  var trows='',daysPresent=0,daysQualified=0,totalMs=0,totalAmount=0,totalOtMs=0;
   var rate=selMember.rate||0;
   var serviceLabel=escHtml(selMember.service||'—');
 
@@ -6881,34 +6914,39 @@ function renderTODMonthlyBilling(body,monthNav,selMember,weekdays){
 
     daysPresent++;
     var dateLabel=d.toLocaleDateString('en-PH',{month:'long',day:'2-digit',year:'numeric'})+(dds===todayStr?' <span style="color:var(--blue);font-weight:700">(Today)</span>':'');
+    var otLabel=bc.otMs?hoursDecimal(bc.otMs):0;
+    var otBtn='<button class="btn sm" style="padding:2px 8px;font-size:10px" onclick="openOTModal(\''+selMember.username+'\',\''+dds+'\')">'+(bc.otMs?'Edit OT':'+ OT')+'</button>';
 
     if(bc.qualified){
       daysQualified++;
       var hrs=hoursDecimal(bc.hoursMs);
       var amt=Math.round(hrs*rate*100)/100;
-      totalMs+=bc.hoursMs;totalAmount+=amt;
+      totalMs+=bc.hoursMs;totalAmount+=amt;totalOtMs+=bc.otMs;
       var inLabel=bc.timeIn.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'});
       trows+='<tr>'
         +'<td style="padding:8px 12px;border-bottom:1px solid #f1f3f5;color:var(--blue);font-weight:600">'+serviceLabel+'</td>'
         +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5">'+dateLabel+'</td>'
         +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5">'+inLabel+'</td>'
         +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5;font-weight:600">'+hrs+'</td>'
+        +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5;color:#7c3aed;font-weight:600">'+(bc.otMs?otLabel:'—')+'<div>'+otBtn+'</div></td>'
         +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5">'+rate+'</td>'
         +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5;font-weight:600">'+amt.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>'
       +'</tr>';
     } else {
       trows+='<tr style="background:var(--green-light,#f0fdf4)">'
         +'<td colspan="4" style="padding:8px 12px;border-bottom:1px solid #f1f3f5;text-align:center;font-weight:700;color:#166534">Not Qualified <span style="font-weight:400;color:var(--text3)">(No scheduled hours set)</span></td>'
+        +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5">'+otBtn+'</td>'
         +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5">'+rate+'</td>'
         +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5;font-weight:600">0</td>'
       +'</tr>';
     }
   });
 
-  var summaryHtml='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">'
+  var summaryHtml='<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px">'
     +'<div class="metric-card mc-blue"><div class="mc-label">Days Logged</div><div class="mc-val">'+daysPresent+'/'+weekdays.length+'</div></div>'
     +'<div class="metric-card mc-green"><div class="mc-label">Days Qualified</div><div class="mc-val">'+daysQualified+'</div></div>'
     +'<div class="metric-card mc-black"><div class="mc-label">Total Hours</div><div class="mc-val">'+hoursDecimal(totalMs)+'</div></div>'
+    +'<div class="metric-card mc-black"><div class="mc-label">Total Overtime</div><div class="mc-val">'+hoursDecimal(totalOtMs)+'</div></div>'
     +'<div class="metric-card mc-blue"><div class="mc-label">Total Amount</div><div class="mc-val">'+fmtPeso(totalAmount)+'</div></div>'
   +'</div>';
 
@@ -6920,27 +6958,29 @@ function renderTODMonthlyBilling(body,monthNav,selMember,weekdays){
           +'<th style="text-align:center;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Date</th>'
           +'<th style="text-align:center;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Time In</th>'
           +'<th style="text-align:center;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Duration<br>(# of hours)</th>'
+          +'<th style="text-align:center;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Overtime</th>'
           +'<th style="text-align:center;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Rate</th>'
           +'<th style="text-align:center;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Amount</th>'
         +'</tr></thead>'
-        +'<tbody>'+(trows||'<tr><td colspan="6" class="empty-state">No attendance logged this month.</td></tr>')
+        +'<tbody>'+(trows||'<tr><td colspan="7" class="empty-state">No attendance logged this month.</td></tr>')
           +'<tr style="background:#f8fafc;font-weight:700">'
             +'<td colspan="3" style="padding:10px 12px;text-align:center;border-top:2px solid var(--border)">Total</td>'
             +'<td style="text-align:center;padding:10px 12px;border-top:2px solid var(--border)">'+hoursDecimal(totalMs)+'</td>'
+            +'<td style="text-align:center;padding:10px 12px;border-top:2px solid var(--border)">'+hoursDecimal(totalOtMs)+'</td>'
             +'<td style="text-align:center;padding:10px 12px;border-top:2px solid var(--border)"></td>'
             +'<td style="text-align:center;padding:10px 12px;border-top:2px solid var(--border)">'+fmtPeso(totalAmount)+'</td>'
           +'</tr>'
         +'</tbody>'
       +'</table>'
     +'</div>'
-    +'<div style="font-size:11px;color:var(--text3);margin-top:8px">Rate and Amount are only shown here — TOD members do not see this table. Duration is the member\'s full scheduled hours for the day, credited as soon as they log in — no logout required.</div>'
+    +'<div style="font-size:11px;color:var(--text3);margin-top:8px">Rate and Amount are only shown here — TOD members do not see this table. Duration is the member\'s full scheduled hours for the day (minus their break), credited as soon as they log in — no logout required. Overtime is logged manually per day and paid at the same rate; it\'s included in Duration and Amount above.</div>'
     +'<div style="margin-top:14px"><button class="btn sm" onclick="exportTODMonthSummary()">Export All TOD Members — Monthly Summary</button></div>';
 }
 
 // TOD self view: attendance-only, no Service/Rate/Amount — those stay admin-only.
 function renderTODMonthlySelf(body,monthNav,selMember,weekdays){
   var todayStr=ds(now());
-  var trows='',daysPresent=0,daysLate=0,totalMs=0,totalLateMins=0;
+  var trows='',daysPresent=0,daysLate=0,totalMs=0,totalLateMins=0,totalOtMs=0;
   weekdays.forEach(function(d){
     var dds=ds(d);
     var dc=computeDayRecord(selMember,dds);
@@ -6948,25 +6988,31 @@ function renderTODMonthlySelf(body,monthNav,selMember,weekdays){
     if(dc.timeIn){
       daysPresent++;
       totalMs+=dc.hoursMs;
+      totalOtMs+=dc.otMs;
       if(dc.lateMins>0){daysLate++;totalLateMins+=dc.lateMins;}
     }
     var statusColor=dc.lateMins>0?'var(--red)':(dc.timeIn?'var(--green)':(isFuture?'var(--text4)':'var(--text3)'));
     var statusLabel=dc.timeIn?dc.status:(isFuture?'—':'Absent');
     var inLabel=dc.timeIn?dc.timeIn.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}):'—';
     var hoursLabel=dc.hoursMs?fmtHours(dc.hoursMs):'—';
+    var otLabel=dc.otMs?fmtHours(dc.otMs):'—';
+    var otBtn=!isFuture?'<button class="btn sm" style="padding:2px 8px;font-size:10px" onclick="openOTModal(\''+selMember.username+'\',\''+dds+'\')">'+(dc.otMs?'Edit':'+ Log')+'</button>':'';
     trows+='<tr>'
       +'<td style="padding:8px 12px;border-bottom:1px solid #f1f3f5">'+DOW[d.getDay()]+', '+d.toLocaleDateString('en-PH',{month:'short',day:'numeric'})+(dds===todayStr?' <span style="color:var(--blue);font-weight:700">(Today)</span>':'')+'</td>'
       +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5">'+inLabel+'</td>'
       +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5;color:'+statusColor+';font-weight:600">'+statusLabel+'</td>'
       +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5;font-weight:600">'+hoursLabel+'</td>'
+      +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5;color:#7c3aed;font-weight:600">'+otLabel+'</td>'
+      +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5">'+otBtn+'</td>'
     +'</tr>';
   });
 
-  var summaryHtml='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">'
+  var summaryHtml='<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px">'
     +'<div class="metric-card mc-blue"><div class="mc-label">Days Worked</div><div class="mc-val">'+daysPresent+'/'+weekdays.length+'</div></div>'
     +'<div class="metric-card mc-black"><div class="mc-label">Days Late</div><div class="mc-val">'+daysLate+'</div></div>'
     +'<div class="metric-card mc-green"><div class="mc-label">Total Hours</div><div class="mc-val">'+fmtHours(totalMs)+'</div></div>'
     +'<div class="metric-card mc-blue"><div class="mc-label">Total Late Time</div><div class="mc-val">'+(totalLateMins?fmtMinsShort(totalLateMins):'0m')+'</div></div>'
+    +'<div class="metric-card mc-black"><div class="mc-label">Total Overtime</div><div class="mc-val">'+(totalOtMs?fmtHours(totalOtMs):'0h 0m')+'</div></div>'
   +'</div>';
 
   body.innerHTML=monthNav+summaryHtml
@@ -6977,11 +7023,13 @@ function renderTODMonthlySelf(body,monthNav,selMember,weekdays){
           +'<th style="text-align:center;padding:9px 12px;background:#f8fafc;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Time In</th>'
           +'<th style="text-align:center;padding:9px 12px;background:#f8fafc;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Status</th>'
           +'<th style="text-align:center;padding:9px 12px;background:#f8fafc;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Hours</th>'
+          +'<th style="text-align:center;padding:9px 12px;background:#f8fafc;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Overtime</th>'
+          +'<th style="text-align:center;padding:9px 12px;background:#f8fafc;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)"></th>'
         +'</tr></thead>'
         +'<tbody>'+trows+'</tbody>'
       +'</table>'
     +'</div>'
-    +'<div style="font-size:11px;color:var(--text3);margin-top:8px">Hours are auto-computed from your scheduled hours once you log in — no logout needed.</div>';
+    +'<div style="font-size:11px;color:var(--text3);margin-top:8px">Hours are auto-computed from your scheduled hours once you log in — no logout needed. Log overtime for any day you worked past your schedule.</div>';
 }
 
 
@@ -6991,20 +7039,74 @@ async function todLogIn(username,date){
   toast('Logged in! ✓');
 }
 
+// ─── TOD Overtime ───
+// Either the member themselves or an admin can log overtime for a specific date. Stored as a
+// decimal hour count (plus the raw start/end typed in, kept for reference) and layered on top
+// of the member's scheduled hours in computeDayRecord / computeBillingDayRecord.
+function openOTModal(username,dds){
+  const m=D.members.find(x=>x.username===username);if(!m)return;
+  if(!(CU.isAdmin||CU.username===username)){toast('You can only log your own overtime.');return;}
+  const existing=(D.todOvertime[username]||{})[dds]||{};
+  document.getElementById('mto-title').textContent='Log Overtime — '+m.name;
+  document.getElementById('mto-body').innerHTML=`
+    <div class="fg"><label class="flabel">Date</label><input class="finput nb" id="mto-date" type="date" value="${dds}"/></div>
+    <div class="fg fg2">
+      <div><label class="flabel">Start Time</label><input class="finput nb" id="mto-start" type="time" value="${existing.start||''}" onchange="mtoRecalc()"/></div>
+      <div><label class="flabel">End Time</label><input class="finput nb" id="mto-end" type="time" value="${existing.end||''}" onchange="mtoRecalc()"/></div>
+    </div>
+    <div class="fg"><label class="flabel">Hours <span style="font-weight:400;color:var(--text3);font-size:11px">(auto-filled from the time range — override if needed)</span></label><input class="finput nb" id="mto-hours" type="number" min="0" step="0.25" value="${existing.hours||''}"/></div>
+    <div class="fg"><label class="flabel">Note (optional)</label><input class="finput nb" id="mto-note" placeholder="Reason for overtime" value="${escHtml(existing.note||'')}"/></div>
+    <div class="form-actions">
+      <button class="btn primary" onclick="saveOT('${username}')">Save</button>
+      ${existing.hours?`<button class="btn del" onclick="deleteOT('${username}')">Remove</button>`:''}
+      <button class="btn" onclick="closeModal('modal-tod-ot')">Cancel</button>
+    </div>`;
+  openModal('modal-tod-ot');
+}
+function mtoRecalc(){
+  const s=document.getElementById('mto-start')?.value,e=document.getElementById('mto-end')?.value;
+  if(!s||!e)return;
+  const sd=schedDateTime('2000-01-01',s),ed=schedDateTime('2000-01-01',e);
+  if(!sd||!ed)return;
+  let diff=ed-sd;if(diff<=0)diff+=24*3600000;
+  const hoursEl=document.getElementById('mto-hours');
+  if(hoursEl)hoursEl.value=Math.round((diff/3600000)*100)/100;
+}
+async function saveOT(username){
+  const dds=document.getElementById('mto-date')?.value;
+  const start=document.getElementById('mto-start')?.value||'',end=document.getElementById('mto-end')?.value||'';
+  const hoursRaw=document.getElementById('mto-hours')?.value;
+  const hours=hoursRaw?parseFloat(hoursRaw):0;
+  const note=document.getElementById('mto-note')?.value.trim()||'';
+  if(!dds){toast('Date required');return;}
+  if(!hours||hours<=0){toast('Enter a valid number of hours (or a start/end time)');return;}
+  await fbSet('todOvertime/'+username+'/'+dds,{start,end,hours,note,recordedBy:CU.username,ts:now().getTime()});
+  closeModal('modal-tod-ot');
+  toast('Overtime logged ✓');
+}
+async function deleteOT(username){
+  const dds=document.getElementById('mto-date')?.value;
+  if(!dds)return;
+  await fbSet('todOvertime/'+username+'/'+dds,null);
+  closeModal('modal-tod-ot');
+  toast('Overtime removed');
+}
+
 function exportTOD(){
   const dates=todWeekDates();
   const todMems=D.members.filter(m=>m.role==='Talent on Demand'&&m.approved);
   const rows=[];
   todMems.forEach(m=>{
-    const row={Name:m.name};let totalH=0,totalLate=0;
+    const row={Name:m.name};let totalH=0,totalLate=0,totalOt=0;
     dates.forEach(d=>{
       const dds=ds(d),dc=computeDayRecord(m,dds);
       row[DOW[d.getDay()]+' In']=dc.timeIn?dc.timeIn.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}):'';
       row[DOW[d.getDay()]+' Late']=dc.lateMins>0?fmtMinsShort(dc.lateMins):'';
       row[DOW[d.getDay()]+' Hrs']=dc.hoursMs?fmtHours(dc.hoursMs):'';
-      totalH+=dc.hoursMs;if(dc.lateMins>0)totalLate+=dc.lateMins;
+      row[DOW[d.getDay()]+' OT']=dc.otMs?fmtHours(dc.otMs):'';
+      totalH+=dc.hoursMs;if(dc.lateMins>0)totalLate+=dc.lateMins;totalOt+=dc.otMs;
     });
-    row['Total Hrs']=fmtHours(totalH);row['Total Late']=totalLate?fmtMinsShort(totalLate):'';rows.push(row);
+    row['Total Hrs']=fmtHours(totalH);row['Total Late']=totalLate?fmtMinsShort(totalLate):'';row['Total OT']=totalOt?fmtHours(totalOt):'';rows.push(row);
   });
   const ws=XLSX.utils.json_to_sheet(rows),wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,'TOD');
@@ -7021,7 +7123,7 @@ function exportTODMonth(username){
   const weekdays=todMonthWeekdays(_todMonthDate);
   const rate=m.rate||0,service=m.service||'';
   const rows=[];
-  let totalH=0,totalAmount=0,daysPresent=0,daysQualified=0;
+  let totalH=0,totalAmount=0,daysPresent=0,daysQualified=0,totalOt=0;
   weekdays.forEach(d=>{
     const dds=ds(d),bc=computeBillingDayRecord(m,dds);
     if(!bc.attended)return;
@@ -7029,12 +7131,13 @@ function exportTODMonth(username){
     if(bc.qualified){
       daysQualified++;
       const hrs=hoursDecimal(bc.hoursMs),amt=Math.round(hrs*rate*100)/100;
-      totalH+=hrs;totalAmount+=amt;
+      totalH+=hrs;totalAmount+=amt;totalOt+=hoursDecimal(bc.otMs);
       rows.push({
         Service:service,
         Date:d.toLocaleDateString('en-PH',{month:'long',day:'2-digit',year:'numeric'}),
         'Time In':bc.timeIn.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}),
         'Duration (# of hours)':hrs,
+        'Overtime (hours)':bc.otMs?hoursDecimal(bc.otMs):'',
         Rate:rate,
         Amount:amt
       });
@@ -7044,6 +7147,7 @@ function exportTODMonth(username){
         Date:d.toLocaleDateString('en-PH',{month:'long',day:'2-digit',year:'numeric'}),
         'Time In':bc.timeIn?bc.timeIn.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}):'',
         'Duration (# of hours)':0,
+        'Overtime (hours)':'',
         Rate:rate,
         Amount:0
       });
@@ -7052,6 +7156,7 @@ function exportTODMonth(username){
   rows.push({Service:'',Date:'',
     'Time In':'',
     'Duration (# of hours)':totalH,
+    'Overtime (hours)':totalOt,
     Rate:'',
     Amount:'PHP '+totalAmount.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})
   });
@@ -7069,21 +7174,22 @@ function exportTODMonthSummary(){
   const weekdays=todMonthWeekdays(_todMonthDate);
   const rows=todMems.map(m=>{
     const rate=m.rate||0;
-    let totalH=0,totalAmount=0,daysPresent=0,daysQualified=0;
+    let totalH=0,totalAmount=0,daysPresent=0,daysQualified=0,totalOt=0;
     weekdays.forEach(d=>{
       const dds=ds(d),bc=computeBillingDayRecord(m,dds);
       if(bc.attended){
         daysPresent++;
-        if(bc.qualified){daysQualified++;const hrs=hoursDecimal(bc.hoursMs);totalH+=hrs;totalAmount+=Math.round(hrs*rate*100)/100;}
+        if(bc.qualified){daysQualified++;const hrs=hoursDecimal(bc.hoursMs);totalH+=hrs;totalAmount+=Math.round(hrs*rate*100)/100;totalOt+=hoursDecimal(bc.otMs);}
       }
     });
     return{
       Name:m.name,
       Service:m.service||'',
-      'Scheduled Hours':(m.schedStart&&m.schedEnd)?(m.schedStart+' – '+m.schedEnd):'Not set',
+      'Scheduled Hours':(m.schedStart&&m.schedEnd)?(m.schedStart+' – '+m.schedEnd+(m.breakMins?' (−'+m.breakMins+'m break)':'')):'Not set',
       'Days Logged':daysPresent+'/'+weekdays.length,
       'Days Qualified':daysQualified,
       'Total Hours':totalH,
+      'Total Overtime':totalOt,
       Rate:rate,
       'Total Amount':'PHP '+totalAmount.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})
     };
