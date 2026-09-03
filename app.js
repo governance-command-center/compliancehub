@@ -9504,7 +9504,6 @@ function buildFRTable(trackerKey,sheetKey,sheet){
   const targetDow=FR_DOW[platform]||4;
   const isAdmin=CU.isAdmin;
   const myName=CU.name;
-  const canEdit=!isTOD();
 
   // ── Detect fixed columns vs date columns ──
   // Fixed columns are at the start and contain non-date labels like Region, Platform, etc.
@@ -10028,7 +10027,7 @@ function buildFRTable(trackerKey,sheetKey,sheet){
       if(i===acctStatusCol){
         // Acct Status — inline dropdown (admin: all options; CDM: Active/Inactive only on own row)
         const isMyRow=execName===myName;
-        const canChangeStatus=isAdmin||(canEdit&&isMyRow);
+        const canChangeStatus=isAdmin||isMyRow;
         const statusColor=v.toLowerCase()==='active'?'var(--green)':v.toLowerCase()==='inactive'?'var(--yellow)':v.toLowerCase()==='exited'?'var(--red)':'var(--text3)';
         const statusBg=v.toLowerCase()==='active'?'var(--green-light)':v.toLowerCase()==='inactive'?'var(--yellow-light)':v.toLowerCase()==='exited'?'var(--red-light)':'var(--bg)';
         const exitDateStr=String(row[exitDateCol]||'').trim();
@@ -10085,8 +10084,9 @@ function buildFRTable(trackerKey,sheetKey,sheet){
     });
 
     // Date cols — past columns are admin-only to edit/correct; active & future remain editable
-    // for the row's assigned Exec/CDM or Team Lead (or admin); everyone else is read-only,
-    // same ownership model as the AO tracker. Everything is read-only for TOD.
+    // for the row's assigned Exec/CDM or Team Lead (or their buddy, or admin); everyone else is
+    // read-only, same ownership model as the AO tracker. TOD members follow the exact same rule
+    // now — they can edit rows they're assigned to, and are read-only everywhere else.
     const rowOwner=frIsRowOwner(row,execCol,tlCol);
     dateColGroups.forEach(function(dc){
       const v=row[dc.ci];
@@ -10094,8 +10094,8 @@ function buildFRTable(trackerKey,sheetKey,sheet){
       const isDone=frIsDone(v);
       const pastLockedForUser=dc.isPast&&!isAdmin;
       const notOwnerLocked=!rowOwner&&!pastLockedForUser&&!dc.isFuture;
-      if(!canEdit||pastLockedForUser||notOwnerLocked){
-        // TOD, non-admin viewing a past column, or not this row's assigned Exec/Team Lead: read-only
+      if(pastLockedForUser||notOwnerLocked){
+        // Past column locked to admin, or this row isn't assigned to the current user: read-only
         // Highlight priority: Done (green fill) → current monthly (mint/green) → current weekly (yellow)
         // → past (grey) → future (indigo tint).
         const bg=isDone?'#e8f5e9':(dc.isActiveMonthly||dc.isActive)?'#e7f7ec':dc.isPast?'#fafafa':'#f5f7ff';
