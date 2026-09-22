@@ -7387,15 +7387,26 @@ function buildTrackerContent(key){
     });
     tabsHtml='<div style="border-bottom:1px solid var(--border);display:flex;overflow-x:auto;background:#fafafa">'+tabsHtml+'</div>';
   }
-  // Show current week label for AO tracker (no navigation — only current week is editable)
+  // AO tracker week bar: current week is always the live, editable one. A "◀ Prev week"
+  // control lets anyone step back through past weeks (per region/sheet) as a read-only
+  // reference view; "Next week ▶" steps back toward — and stops at — the current week.
   var weekNavHtml='';
   if(t.category==='AO Tracker'&&_activeTrackerSheet!=='Exited'){
+    var _woKey=aoWeekOffsetKey(key,_activeTrackerSheet);
+    var _wo=_aoWeekOffset[_woKey]||0;
     var mon2=new Date();
-    mon2.setDate(mon2.getDate()-(mon2.getDay()===0?6:mon2.getDay()-1));
+    mon2.setDate(mon2.getDate()-(mon2.getDay()===0?6:mon2.getDay()-1)+_wo*7);
     var fri2=new Date(mon2);fri2.setDate(mon2.getDate()+4);
     var wkLabel=mon2.toLocaleDateString('en-PH',{month:'short',day:'numeric'})+' – '+fri2.toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'});
-    weekNavHtml='<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);background:#fff">'
-      +'<span style="font-size:12px;font-weight:600;color:var(--text2)">Week of '+wkLabel+'</span>'
+    var kEscWk=String(key).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    var sEscWk=String(_activeTrackerSheet).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    var isCurWk=_wo===0;
+    weekNavHtml='<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);background:'+(isCurWk?'#fff':'#fffbeb')+'">'
+      +'<button onclick="aoNavWeek(\''+kEscWk+'\',\''+sEscWk+'\',-1)" title="View previous week (read-only, for reference)" style="display:flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid var(--border);border-radius:20px;background:#fff;color:var(--text2);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">◀ Prev week</button>'
+      +'<span style="font-size:12px;font-weight:600;color:'+(isCurWk?'var(--text2)':'#92400e')+'">Week of '+wkLabel+(isCurWk?' (current)':' — reference only')+'</span>'
+      +(isCurWk?'':'<button onclick="aoNavWeek(\''+kEscWk+'\',\''+sEscWk+'\',1)" title="Step forward one week" style="display:flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid var(--border);border-radius:20px;background:#fff;color:var(--text2);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">Next week ▶</button>')
+      +(isCurWk?'':'<button onclick="aoNavWeek(\''+kEscWk+'\',\''+sEscWk+'\','+(-_wo)+')" title="Jump back to the current week" style="padding:4px 10px;border:1px solid var(--blue-mid);border-radius:20px;background:var(--blue-light);color:var(--blue);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">Today ⟳</button>')
+      +(isCurWk?'':'<span style="font-size:10px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:2px 8px;border-radius:20px">📌 Past week — view only, for reference</span>')
     +'</div>';
   }
   const isExitedTab=t.category==='Finance'&&_activeTrackerSheet==='Exited';
@@ -7455,16 +7466,66 @@ function buildTrackerContent(key){
     +'</div>';
   }
   const isAOExitedTab=t.category==='AO Tracker'&&_activeTrackerSheet==='Exited';
-  return tabsHtml+weekNavHtml+frWeekBannerHtml+(t.category==='Finance'?(isExitedTab?buildExitedTable(key,_activeTrackerSheet,sh):buildFRTable(key,_activeTrackerSheet,sh)):(isAOExitedTab?buildAOExitedTable(key):buildAOTable(key,_activeTrackerSheet,sh)));
+  // ── FR Browse-back nav (all users, Finance tracker, non-Exited sheet) ──
+  // Lets anyone step further back than the default "last week" column to review older weeks —
+  // those extra columns render fully read-only (even for admins), same reference-view pattern
+  // as the AO tracker's "◀ Prev week". The always-visible default window (last week + current +
+  // next 3) is untouched, including admins' ability to correct last week's numbers.
+  let frBrowseNavHtml='';
+  if(t.category==='Finance'&&!isExitedTab&&_activeTrackerSheet&&_activeTrackerSheet!=='Exited'){
+    const _frExtra=_frWeekBrowseBack[frBrowseKey(key,_activeTrackerSheet)]||0;
+    const kEscFr=String(key).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    const sEscFr=String(_activeTrackerSheet).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    const isDefaultWin=_frExtra===0;
+    frBrowseNavHtml='<div style="display:flex;align-items:center;gap:8px;padding:7px 14px;border-bottom:1px solid var(--border);background:'+(isDefaultWin?'#fff':'#fffbeb')+';flex-wrap:wrap">'
+      +'<button onclick="frNavWeek(\''+kEscFr+'\',\''+sEscFr+'\',1)" title="Reveal one more week further back (read-only, for reference)" style="display:flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid var(--border);border-radius:20px;background:#fff;color:var(--text2);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">◀ Prev week</button>'
+      +'<span style="font-size:12px;font-weight:600;color:'+(isDefaultWin?'var(--text2)':'#92400e')+'">'
+        +(isDefaultWin?'Showing last week + current + next 3 weeks':'Showing '+(1+_frExtra)+' past week'+(_frExtra>0?'s':'')+' back for reference')
+      +'</span>'
+      +(isDefaultWin?'':'<button onclick="frNavWeek(\''+kEscFr+'\',\''+sEscFr+'\',-1)" title="Hide the oldest revealed week" style="display:flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid var(--border);border-radius:20px;background:#fff;color:var(--text2);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">Next week ▶</button>')
+      +(isDefaultWin?'':'<button onclick="frNavWeek(\''+kEscFr+'\',\''+sEscFr+'\','+(-_frExtra)+')" title="Collapse back to the default window" style="padding:4px 10px;border:1px solid var(--blue-mid);border-radius:20px;background:var(--blue-light);color:var(--blue);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">Today ⟳</button>')
+      +(isDefaultWin?'':'<span style="font-size:10px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:2px 8px;border-radius:20px">📌 Older weeks shown — view only, for reference</span>')
+    +'</div>';
+  }
+  return tabsHtml+weekNavHtml+frBrowseNavHtml+frWeekBannerHtml+(t.category==='Finance'?(isExitedTab?buildExitedTable(key,_activeTrackerSheet,sh):buildFRTable(key,_activeTrackerSheet,sh)):(isAOExitedTab?buildAOExitedTable(key):buildAOTable(key,_activeTrackerSheet,sh)));
 }
 
 function ltSetSheet(key,sheet){_activeTrackerSheet=sheet;renderLiveTrackers();}
 
 // ── AO Table filter state (per-session, per-user) ──
 let _aoFilter={brand:'',platform:'',cdm:'',tl:''};
+// Per-tracker/sheet (i.e. per-region) week-view offset for the Abnormal Orders table.
+// 0 = current week (live, editable as normal). Negative = that many weeks back, shown as a
+// read-only reference view via the "◀ Prev week" control next to the AO tabs. Purely local UI
+// state (not persisted to Firebase) — always resets to the live current week on reload.
+let _aoWeekOffset={};
+function aoWeekOffsetKey(trackerKey,sheetKey){return trackerKey+'||'+sheetKey;}
+function aoNavWeek(trackerKey,sheetKey,delta){
+  const k=aoWeekOffsetKey(trackerKey,sheetKey);
+  const next=(_aoWeekOffset[k]||0)+delta;
+  if(next>0)return; // never navigate into the future — current week is the newest
+  _aoWeekOffset[k]=next;
+  renderLiveTrackers();
+}
 
 // ── FR Table filter state (per-session, per-user) ──
 let _frFilter={region:'',brand:'',exec:'',tl:''};
+// Extra past weeks (beyond the normal 1-week-back window) that the "◀ Prev week" control
+// reveals for a given Finance tracker/platform, purely as a read-only reference view — mirrors
+// the AO tracker's browse-back feature. 0 = default window (last week + current + next 3).
+// Local UI state only (not persisted to Firebase); resets to the default window on reload.
+let _frWeekBrowseBack={};
+function frBrowseKey(trackerKey,sheetKey){return trackerKey+'||'+sheetKey;}
+// delta is added directly to the extra-past-weeks count: +1 (Prev week) reveals one more older
+// week, -1 (Next week) hides the most recently revealed one; passing -currentExtra (Today ⟳)
+// collapses back to the default window. Never goes below 0 (the default window).
+function frNavWeek(trackerKey,sheetKey,delta){
+  const k=frBrowseKey(trackerKey,sheetKey);
+  const next=(_frWeekBrowseBack[k]||0)+delta;
+  if(next<0)return;
+  _frWeekBrowseBack[k]=next;
+  renderLiveTrackers();
+}
 
 function frSetFilter(field,val){_frFilter[field]=val;renderLiveTrackers();}
 
@@ -7860,10 +7921,16 @@ function buildAOTable(trackerKey,sheetKey,sheet){
 
   const nowT=now(),todayStr=ds(nowT);
 
-  // Build Mon-Fri of current week only (no week navigation)
+  // Week being viewed: 0 = live current week (default, editable as normal); a negative
+  // offset (set via the "◀ Prev week" control above the tabs) steps back through past weeks
+  // for reference — at least one week back is always available. See _aoWeekOffset.
+  const _aoWo=_aoWeekOffset[aoWeekOffsetKey(trackerKey,sheetKey)]||0;
+  const isRefWeek=_aoWo!==0;
+
+  // Build Mon-Fri of the viewed week (current week when offset is 0)
   const weekDates=[];
   const mon=new Date(nowT);
-  mon.setDate(nowT.getDate()-(nowT.getDay()===0?6:nowT.getDay()-1));
+  mon.setDate(nowT.getDate()-(nowT.getDay()===0?6:nowT.getDay()-1)+_aoWo*7);
   mon.setHours(0,0,0,0);
   for(let i=0;i<5;i++){const d=new Date(mon);d.setDate(mon.getDate()+i);weekDates.push(ds(d));}
 
@@ -7975,7 +8042,7 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   let hR1='<tr>';
   // Checkbox "select all" header cell (sticky at left:0)
   hR1+='<th rowspan="2" style="position:sticky;left:0;z-index:5;background:#f0f4f8;padding:4px 6px;border:1px solid var(--border);text-align:center;vertical-align:middle;min-width:'+CB_W+'px;width:'+CB_W+'px" title="Select / deselect all">'
-    +'<input type="checkbox" id="ao-sel-all-'+trackerKey+'-'+sheetKey+'" style="cursor:pointer;width:14px;height:14px;accent-color:var(--blue)" onchange="aoSelectAll(\''+trackerKey+'\',\''+sheetKey+'\',this)" title="Select all brands">'
+    +(isRefWeek?'':'<input type="checkbox" id="ao-sel-all-'+trackerKey+'-'+sheetKey+'" style="cursor:pointer;width:14px;height:14px;accent-color:var(--blue)" onchange="aoSelectAll(\''+trackerKey+'\',\''+sheetKey+'\',this)" title="Select all brands">')
   +'</th>';
   fixedW.forEach(function(w,i){
     const sl=aoFixedLefts[i];
@@ -8061,7 +8128,7 @@ function buildAOTable(trackerKey,sheetKey,sheet){
     const isSel=aoSelRows.has(ri);
     let cells='';
     // Checkbox cell (sticky at left:0) — skip for total rows
-    if(!isT){
+    if(!isT&&!isRefWeek){
       cells+='<td style="position:sticky;left:0;z-index:2;padding:3px 6px;border:1px solid var(--border);background:'+(isSel?'#dbeafe':'var(--surface)')+';text-align:center;vertical-align:middle;cursor:pointer;min-width:'+CB_W+'px;width:'+CB_W+'px" onclick="aoToggleRowSel(\''+trackerKey+'\',\''+sheetKey+'\','+ri+')" title="Select this brand">'
         +'<input type="checkbox" '+(isSel?'checked':'')+' style="cursor:pointer;width:14px;height:14px;accent-color:var(--blue)" onclick="event.stopPropagation();aoToggleRowSel(\''+trackerKey+'\',\''+sheetKey+'\','+ri+')">'
       +'</td>';
@@ -8134,9 +8201,11 @@ function buildAOTable(trackerKey,sheetKey,sheet){
           const isOFF=vS.toUpperCase()==='OFF';
           // 0 is a valid filled value — only null/undefined/'' means truly empty
           const filled=v!==null&&v!==undefined&&vS!==''&&!isOFF;
-          // Lock for: future dates (always), past dates for non-admins, AND now also for any
-          // user who isn't the row's assigned CDM/Team Lead (or admin) — view-only otherwise.
-          const isPastLockedForUser=dc.isPast&&!dc.isToday&&!isAdmin;
+          // Lock for: future dates (always), past dates for non-admins, any user who isn't the
+          // row's assigned CDM/Team Lead (or admin) — view-only otherwise — and, regardless of
+          // role, any week reached via "◀ Prev week" (isRefWeek): that view is reference-only
+          // for everyone, admins included, so history can't be edited by accident while browsing.
+          const isPastLockedForUser=(dc.isPast&&!dc.isToday&&!isAdmin)||isRefWeek;
           const owner=aoIsRowOwner(row);
           const isNotOwnerLocked=!owner&&!isPastLockedForUser&&!dc.isFuture;
           const locked=dc.isFuture||isPastLockedForUser||isNotOwnerLocked;
@@ -8146,8 +8215,10 @@ function buildAOTable(trackerKey,sheetKey,sheet){
           const ts=localTs||((sheet.timestamps||{})[ri+'_'+c])||'';
           if(locked){
             if(isPastLockedForUser){
-              // Past entry, non-admin: show the actual value read-only with its audit stamp
-              cells+='<td style="padding:3px 4px;border:1px solid var(--border);'+bl+'text-align:center;background:#fafafa" title="Past dates can only be edited by an admin">'
+              // Past entry (non-admin), or ANY entry while browsing a previous week via
+              // "◀ Prev week" (read-only reference view for every role): show the actual
+              // value with its audit stamp, no input.
+              cells+='<td style="padding:3px 4px;border:1px solid var(--border);'+bl+'text-align:center;background:'+(isRefWeek?'#fffbeb':'#fafafa')+'" title="'+(isRefWeek?'Reference view — previous week (read-only for everyone)':'Past dates can only be edited by an admin')+'">'
                 +'<div style="width:54px;padding:3px 4px;font-size:11px;text-align:center;color:'+cellCol+';margin:0 auto">'+escHtml(vS)+'</div>'
                 +(ts?'<div class="ao-ts" style="font-size:9px;color:var(--text4);line-height:1.2">'+escHtml(ts)+'</div>':'')
               +'</td>';
@@ -8193,17 +8264,22 @@ function buildAOTable(trackerKey,sheetKey,sheet){
     +(hasFilters?'<button onclick="_aoFilter={brand:\'\',platform:\'\',cdm:\'\',tl:\'\'};renderLiveTrackers()" style="padding:4px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:11px;background:#fff;cursor:pointer;color:var(--red)">✕ Clear</button>':'')
   +'</div>';
 
-  // ── Instruction banner ──
-  const instrBanner='<div style="display:flex;align-items:center;gap:10px;padding:8px 14px;background:linear-gradient(135deg,#fffbeb,#fefce8);border-bottom:1px solid var(--yellow-mid);font-size:11px;color:#92400e;flex-wrap:wrap">'
+  // ── Instruction banner ── (swapped for a reference-view notice while browsing a past week)
+  const instrBanner=isRefWeek
+    ?'<div style="display:flex;align-items:center;gap:10px;padding:8px 14px;background:#fffbeb;border-bottom:1px solid var(--yellow-mid);font-size:11px;color:#92400e;flex-wrap:wrap">'
+      +'<span style="font-size:14px">📌</span>'
+      +'<span>You\'re viewing a <b>past week for reference</b> — all cells are read-only here, including for admins. Click <b>Today ⟳</b> above to return to the live, editable current week.</span>'
+    +'</div>'
+    :'<div style="display:flex;align-items:center;gap:10px;padding:8px 14px;background:linear-gradient(135deg,#fffbeb,#fefce8);border-bottom:1px solid var(--yellow-mid);font-size:11px;color:#92400e;flex-wrap:wrap">'
     +'<span style="font-size:14px">☑️</span>'
     +'<span><b>Select brands</b> using the checkboxes, then click <b style="color:var(--red)">Set Selected to 0</b> to zero-out <b>today\'s</b> values for those brands (other days are never touched).'
       +(CU.isAdmin?' Admins can also click <b style="color:var(--red)">🗑 Delete Selected</b> to permanently remove inactive brands, or <b style="color:var(--text3)">🧹 Blank Selected (Today)</b> to clear today\'s cells back to empty.':'')
       +' Or use the top checkbox to select all.</span>'
   +'</div>';
 
-  // ── Action bar (always visible; button disabled when nothing selected) ──
+  // ── Action bar (hidden while viewing a past week for reference — nothing here is editable) ──
   const selCount=aoSelRows.size;
-  const actionBar='<div id="ao-action-bar-'+trackerKey+'-'+sheetKey+'" style="display:flex;align-items:center;gap:10px;padding:7px 14px;background:'+(selCount?'#fff7ed':'#fafafa')+';border-bottom:1px solid '+(selCount?'var(--yellow-mid)':'var(--border)')+';transition:background .2s">'
+  const actionBar=isRefWeek?'':'<div id="ao-action-bar-'+trackerKey+'-'+sheetKey+'" style="display:flex;align-items:center;gap:10px;padding:7px 14px;background:'+(selCount?'#fff7ed':'#fafafa')+';border-bottom:1px solid '+(selCount?'var(--yellow-mid)':'var(--border)')+';transition:background .2s">'
     +(CU.isAdmin?'<button onclick="ltOpenAddRow(\''+trackerKey+'\',\''+sheetKey+'\')" style="padding:5px 12px;border:1px solid var(--green-mid);border-radius:var(--radius);font-size:11px;font-weight:700;background:var(--green-light);color:var(--green);cursor:pointer">+ Add Brand</button>':'')
     +'<span style="font-size:12px;font-weight:600;color:'+(selCount?'var(--orange)':'var(--text4)')+'">'
       +(selCount?selCount+' brand'+(selCount>1?'s':'')+' selected':'No brands selected')
@@ -9639,14 +9715,18 @@ function buildFRTable(trackerKey,sheetKey,sheet){
   // forward. Monthly columns (weekOffset === null) don't consume a weekly slot; a monthly
   // column is kept only when its own date falls inside the date span of the visible weekly
   // window, so e.g. an Aug-1 monthly report shows alongside the late-July/early-Aug weeks.
-  const FR_WIN_PAST=1;    // how many past weeks to show (1 = last week)
+  const FR_WIN_PAST=1;    // how many past weeks to show by default (1 = last week)
   const FR_WIN_FUTURE=3;  // how many future weeks to show (next 3)
+  // Extra past weeks revealed via the "◀ Prev week" control (see frBrowseNavHtml) — purely
+  // additive to the default window, and always rendered read-only (see dc.isRefOnly below).
+  const _frExtraPast=_frWeekBrowseBack[frBrowseKey(trackerKey,sheetKey)]||0;
+  const FR_WIN_PAST_EFF=FR_WIN_PAST+_frExtraPast;
   (function(){
     if(activeIdx===-1)return; // no active col found — show all
     // Weekly columns inside the window.
     const weeklyKept=dateColGroups.filter(function(dc){
       return dc.weekOffset!==null && dc.weekOffset!==undefined
-        && dc.weekOffset>=-FR_WIN_PAST && dc.weekOffset<=FR_WIN_FUTURE;
+        && dc.weekOffset>=-FR_WIN_PAST_EFF && dc.weekOffset<=FR_WIN_FUTURE;
     });
     const visibleSet=new Set(weeklyKept.map(function(dc){return dc.ci;}));
     // Date span covered by the visible weekly columns (used to place monthly columns).
@@ -9685,6 +9765,12 @@ function buildFRTable(trackerKey,sheetKey,sheet){
       if(!visibleSet.has(dateColGroups[i].ci))dateColGroups.splice(i,1);
     }
   })();
+  // Columns only reachable via "◀ Prev week" (older than the normal default 1-past-week
+  // window) are marked reference-only: they render fully read-only for every role, including
+  // admins, since this view exists purely for looking things up, not correcting them.
+  dateColGroups.forEach(function(dc){
+    dc.isRefOnly=!!(dc.weekOffset!==null&&dc.weekOffset!==undefined&&dc.weekOffset<-FR_WIN_PAST);
+  });
 
   // ── Build header HTML ──
   // Row 0: fixed cols (rowspan = headerRows.length) + date col top labels
@@ -9891,9 +9977,11 @@ function buildFRTable(trackerKey,sheetKey,sheet){
       + '</div>';
 
     // Header accent: current weekly → amber top border, current monthly → green top border,
-    // so the two current columns are distinguishable at a glance even in the dark header.
-    const _hdrAccent=(dc.isActive||dc.isActiveMonthly)?'border-top:3px solid #22c55e;':'';
-    hdr+='<th ' + (dc.isActive?'data-active="1" ':'') + (dc.isActiveMonthly?'data-active-monthly="1" ':'') + ' class="fr-cw-th-cell" style="text-align:left;padding:8px 10px;background:' + bg + ';border:1px solid #1e3a5f;'+_hdrAccent+'color:' + fg + ';min-width:160px;white-space:normal;line-height:1.4;vertical-align:top;position:relative">'
+    // reference-only (older week revealed via "◀ Prev week") → dashed amber border + pin marker,
+    // so the two current columns AND any reference-only columns are distinguishable at a glance.
+    const _hdrAccent=(dc.isActive||dc.isActiveMonthly)?'border-top:3px solid #22c55e;':(dc.isRefOnly?'border-top:3px dashed #f59e0b;':'');
+    hdr+='<th ' + (dc.isActive?'data-active="1" ':'') + (dc.isActiveMonthly?'data-active-monthly="1" ':'') + (dc.isRefOnly?'title="Reference view — older week (read-only for everyone)" ':'') + ' class="fr-cw-th-cell" style="text-align:left;padding:8px 10px;background:' + (dc.isRefOnly?'#1a2942':bg) + ';border:1px solid #1e3a5f;'+_hdrAccent+'color:' + fg + ';min-width:160px;white-space:normal;line-height:1.4;vertical-align:top;position:relative">'
+      + (dc.isRefOnly?'<span style="position:absolute;top:4px;right:6px;font-size:11px" title="Reference view — read only">📌</span>':'')
       + cellContent
     + '</th>';
   });
@@ -10092,7 +10180,7 @@ function buildFRTable(trackerKey,sheetKey,sheet){
       const v=row[dc.ci];
       const vS=(v===null||v===undefined)?'':String(v);
       const isDone=frIsDone(v);
-      const pastLockedForUser=dc.isPast&&!isAdmin;
+      const pastLockedForUser=dc.isPast&&(!isAdmin||dc.isRefOnly);
       const notOwnerLocked=!rowOwner&&!pastLockedForUser&&!dc.isFuture;
       if(pastLockedForUser||notOwnerLocked){
         // Past column locked to admin, or this row isn't assigned to the current user: read-only
@@ -10101,8 +10189,8 @@ function buildFRTable(trackerKey,sheetKey,sheet){
         const bg=isDone?'#e8f5e9':(dc.isActiveMonthly||dc.isActive)?'#e7f7ec':dc.isPast?'#fafafa':'#f5f7ff';
         const col=isDone?'#388e3c':(dc.isActiveMonthly||dc.isActive)?'#15803d':dc.isPast?'#9ca3af':'#c7d2fe';
         const frTs=((sheet.frTimestamps||{})[rowIdx+'_'+dc.ci])||'';
-        const lockTitle=pastLockedForUser?' title="Past dates can only be edited by an admin"':(notOwnerLocked?' title="View only — this brand is assigned to another Exec/Team Lead"':'');
-        cells+='<td style="padding:5px 8px;border:1px solid var(--border);text-align:center;background:'+bg+'"'+lockTitle+'>'
+        const lockTitle=dc.isRefOnly?' title="Reference view — older week (read-only for everyone)"':(pastLockedForUser?' title="Past dates can only be edited by an admin"':(notOwnerLocked?' title="View only — this brand is assigned to another Exec/Team Lead"':''));
+        cells+='<td style="padding:5px 8px;border:1px solid var(--border);text-align:center;background:'+(dc.isRefOnly?'#fffbeb':bg)+'"'+lockTitle+'>'
           +'<span style="font-size:11px;color:'+col+';font-weight:'+(isDone?'700':'400')+'">'+escHtml(vS)+'</span>'
           +(frTs?'<div style="font-size:9px;color:var(--text4);line-height:1.2;text-align:center">'+escHtml(frTs)+'</div>':'')
         +'</td>';
