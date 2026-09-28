@@ -3637,25 +3637,20 @@ const INCIDENT_CATS=['SIS','Listing','Category','Merchandise Master','Compliance
 
 // ── WEEKLY REPORT SYSTEM ──
 function getWeekNumber(dateStr){
+  // ISO 8601 week number (Monday start; week 1 contains Jan 4th / first Thursday).
   const d=new Date((dateStr||ds(now()))+'T12:00:00');
-  const year=d.getFullYear();
-  const jan1=new Date(year,0,1);
-  // Weeks start on Monday — same anchor as getWeekDatesForCW so CW labels are consistent
-  const dayOfJan1=jan1.getDay(); // 0=Sun,1=Mon,...,6=Sat
-  const daysToFirstMon=dayOfJan1===0?1:(dayOfJan1===1?0:8-dayOfJan1);
-  const firstMon=new Date(year,0,1+daysToFirstMon);
-  if(d<firstMon)return 1;
-  return Math.floor((d-firstMon)/604800000)+1;
+  const t=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));
+  t.setUTCDate(t.getUTCDate()+4-(t.getUTCDay()||7));
+  const y=new Date(Date.UTC(t.getUTCFullYear(),0,1));
+  return Math.ceil(((t-y)/864e5+1)/7);
 }
 
 function getWeekDatesForCW(cw,year){
-  // Returns Mon-Sun for a given CW number and year.
-  // Anchor MUST mirror getWeekNumber exactly so CW labels match incident dates.
-  const jan1=new Date(year,0,1);
-  const d1=jan1.getDay(); // 0=Sun,1=Mon,...,6=Sat
-  const daysToFirstMon=d1===0?1:(d1===1?0:8-d1);
-  const firstMon=new Date(year,0,1+daysToFirstMon);
-  const mon=new Date(firstMon);mon.setDate(firstMon.getDate()+(cw-1)*7);
+  // Returns Mon-Sun for a given ISO CW number and year. Must mirror getWeekNumber (ISO 8601):
+  // week 1 = the week containing Jan 4th.
+  const jan4=new Date(year,0,4);
+  const mon1=new Date(year,0,4-((jan4.getDay()||7)-1));
+  const mon=new Date(mon1);mon.setDate(mon1.getDate()+(cw-1)*7);
   const dates=[];
   for(let i=0;i<7;i++){const x=new Date(mon);x.setDate(mon.getDate()+i);dates.push(ds(x));}
   return dates;
@@ -9436,7 +9431,7 @@ function frGetMySectionCompletion(sheet,platform){
 // otherwise a monthly task shows its right-side bar from the monthly column while these region
 // chips read the (still-empty) weekly column — the exact mismatch that made Lazada look 36%
 // incomplete here while the completion cell correctly read 100% from the monthly column.
-function buildFRInlineRegions(platform,wantMonthly,refDateStr){
+function buildFRInlineRegions(platform,wantMonthly,refDateStr,cwRefStr){
   if(!platform)return'';
   const linked=getFRLinked();
   if(!linked){
@@ -9455,7 +9450,9 @@ function buildFRInlineRegions(platform,wantMonthly,refDateStr){
 
   // Determine current CW from effective date
   const effDate=frEffectiveDate(platform);
-  const cwNum=getWeekNumber(effDate.toISOString().slice(0,10));
+  // CW badge = WORK week (task's due/origin date, else today) — NOT shifted by the platform's
+  // coverage offset. The offset only decides which coverage column/date range is read (effLabel).
+  const cwNum=getWeekNumber(cwRefStr||ds(now()));
   const cwLabel='CW'+cwNum;
   const offset=FR_WEEK_OFFSET[platform]||0;
   const effLabel=effDate.toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'});
@@ -9491,7 +9488,7 @@ function buildFRInlineRegions(platform,wantMonthly,refDateStr){
     :'<div class="tt-wrap" style="display:inline-block;margin:2px">'
       +'<span style="font-size:10px;color:var(--blue);background:var(--blue-light);padding:2px 7px;border-radius:20px;font-weight:700;cursor:default;display:inline-block">📅 '+cwLabel+'</span>'
       +'<div class="tt-box" style="min-width:180px;white-space:normal;line-height:1.5;font-size:11px;font-weight:400">'
-        +'<b>Week of '+effLabel+'</b><br>'
+        +'<b>Work week '+cwLabel+'</b><br>Coverage: '+effLabel+'<br>'
         +(offset!==0?'<span style="color:#fca5a5">Offset: '+(offset<0?Math.abs(offset)+' week(s) behind':'ahead by '+offset+'w')+'</span><br>':'')
         +'Hover region chips to see pending stores.'
       +'</div>'
@@ -9516,13 +9513,14 @@ function buildFRInlineRegions(platform,wantMonthly,refDateStr){
 function buildFRInlineRegionsForTask(task,refDateStr){
   const plats=frTaskPlatforms(task);
   const wantMonthly=frTaskIsMonthly(task);
-  if(plats.length<=1)return buildFRInlineRegions(plats[0]||null,wantMonthly,refDateStr);
+  const cwRef=task._carryOrigin||refDateStr||ds(now());
+  if(plats.length<=1)return buildFRInlineRegions(plats[0]||null,wantMonthly,refDateStr,cwRef);
   return plats.map(function(p){
     const sheet=getFRSheet(getFRLinked()||{},p);
     if(!sheet)return'';
     return'<div style="margin-top:6px">'
       +'<div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">'+p+'</div>'
-      +buildFRInlineRegions(p,wantMonthly,refDateStr)
+      +buildFRInlineRegions(p,wantMonthly,refDateStr,cwRef)
     +'</div>';
   }).join('');
 }
