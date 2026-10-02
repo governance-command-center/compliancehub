@@ -6925,6 +6925,7 @@ function renderTODMonthlyBilling(body,monthNav,selMember,weekdays){
         +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5">'+inLabel+'</td>'
         +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5;font-weight:600">'+hrs+'</td>'
         +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5;color:#7c3aed;font-weight:600">'+(bc.otMs?otLabel:'—')+'<div>'+otBtn+'</div></td>'
+        +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5;font-weight:700">'+(hrs+otHrs)+'</td>'
         +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5">'+rate+'</td>'
         +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5;font-weight:600">'+amt.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>'
       +'</tr>';
@@ -6932,17 +6933,19 @@ function renderTODMonthlyBilling(body,monthNav,selMember,weekdays){
       trows+='<tr style="background:var(--green-light,#f0fdf4)">'
         +'<td colspan="4" style="padding:8px 12px;border-bottom:1px solid #f1f3f5;text-align:center;font-weight:700;color:#166534">Not Qualified <span style="font-weight:400;color:var(--text3)">(No scheduled hours set)</span></td>'
         +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5">'+otBtn+'</td>'
+        +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5;font-weight:700">0</td>'
         +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5">'+rate+'</td>'
         +'<td style="text-align:center;padding:8px 12px;border-bottom:1px solid #f1f3f5;font-weight:600">0</td>'
       +'</tr>';
     }
   });
 
-  var summaryHtml='<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px">'
+  var summaryHtml='<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:16px">'
     +'<div class="metric-card mc-blue"><div class="mc-label">Days Logged</div><div class="mc-val">'+daysPresent+'/'+weekdays.length+'</div></div>'
     +'<div class="metric-card mc-green"><div class="mc-label">Days Qualified</div><div class="mc-val">'+daysQualified+'</div></div>'
-    +'<div class="metric-card mc-black"><div class="mc-label">Total Hours</div><div class="mc-val">'+(hoursDecimal(totalMs)+hoursDecimal(totalOtMs))+'</div></div>'
+    +'<div class="metric-card mc-black"><div class="mc-label">Total Hours</div><div class="mc-val">'+hoursDecimal(totalMs)+'</div></div>'
     +'<div class="metric-card mc-black"><div class="mc-label">Total Overtime</div><div class="mc-val">'+hoursDecimal(totalOtMs)+'</div></div>'
+    +'<div class="metric-card mc-black"><div class="mc-label">Grand Total</div><div class="mc-val">'+(hoursDecimal(totalMs)+hoursDecimal(totalOtMs))+'</div></div>'
     +'<div class="metric-card mc-blue"><div class="mc-label">Total Amount</div><div class="mc-val">'+fmtPeso(totalAmount)+'</div></div>'
   +'</div>';
 
@@ -6955,14 +6958,16 @@ function renderTODMonthlyBilling(body,monthNav,selMember,weekdays){
           +'<th style="text-align:center;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Time In</th>'
           +'<th style="text-align:center;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Duration<br>(# of hours)</th>'
           +'<th style="text-align:center;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Overtime</th>'
+          +'<th style="text-align:center;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Total Hours</th>'
           +'<th style="text-align:center;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Rate</th>'
           +'<th style="text-align:center;padding:9px 12px;background:#e8edf7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">Amount</th>'
         +'</tr></thead>'
-        +'<tbody>'+(trows||'<tr><td colspan="7" class="empty-state">No attendance logged this month.</td></tr>')
+        +'<tbody>'+(trows||'<tr><td colspan="8" class="empty-state">No attendance logged this month.</td></tr>')
           +'<tr style="background:#f8fafc;font-weight:700">'
             +'<td colspan="3" style="padding:10px 12px;text-align:center;border-top:2px solid var(--border)">Total</td>'
-            +'<td style="text-align:center;padding:10px 12px;border-top:2px solid var(--border)">'+(hoursDecimal(totalMs)+hoursDecimal(totalOtMs))+'</td>'
+            +'<td style="text-align:center;padding:10px 12px;border-top:2px solid var(--border)">'+hoursDecimal(totalMs)+'</td>'
             +'<td style="text-align:center;padding:10px 12px;border-top:2px solid var(--border)">'+hoursDecimal(totalOtMs)+'</td>'
+            +'<td style="text-align:center;padding:10px 12px;border-top:2px solid var(--border)">'+(hoursDecimal(totalMs)+hoursDecimal(totalOtMs))+'</td>'
             +'<td style="text-align:center;padding:10px 12px;border-top:2px solid var(--border)"></td>'
             +'<td style="text-align:center;padding:10px 12px;border-top:2px solid var(--border)">'+fmtPeso(totalAmount)+'</td>'
           +'</tr>'
@@ -7134,6 +7139,7 @@ function exportTODMonth(username){
         'Time In':bc.timeIn.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}),
         'Duration (# of hours)':hrs,
         'Overtime (hours)':bc.otMs?hoursDecimal(bc.otMs):'',
+        'Total Hours':hrs+otHrs,
         Rate:rate,
         Amount:amt
       });
@@ -7144,6 +7150,7 @@ function exportTODMonth(username){
         'Time In':bc.timeIn?bc.timeIn.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}):'',
         'Duration (# of hours)':0,
         'Overtime (hours)':'',
+        'Total Hours':0,
         Rate:rate,
         Amount:0
       });
@@ -7151,8 +7158,9 @@ function exportTODMonth(username){
   });
   rows.push({Service:'',Date:'',
     'Time In':'',
-    'Duration (# of hours)':totalH+totalOt,
+    'Duration (# of hours)':totalH,
     'Overtime (hours)':totalOt,
+    'Total Hours':totalH+totalOt,
     Rate:'',
     Amount:'PHP '+totalAmount.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})
   });
@@ -7184,8 +7192,9 @@ function exportTODMonthSummary(){
       'Scheduled Hours':(m.schedStart&&m.schedEnd)?(m.schedStart+' – '+m.schedEnd+(m.breakMins?' (−'+m.breakMins+'m break)':'')):'Not set',
       'Days Logged':daysPresent+'/'+weekdays.length,
       'Days Qualified':daysQualified,
-      'Total Hours':totalH+totalOt,
+      'Total Hours':totalH,
       'Total Overtime':totalOt,
+      'Grand Total':totalH+totalOt,
       Rate:rate,
       'Total Amount':'PHP '+totalAmount.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})
     };
