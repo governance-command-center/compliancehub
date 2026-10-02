@@ -6915,7 +6915,8 @@ function renderTODMonthlyBilling(body,monthNav,selMember,weekdays){
     if(bc.qualified){
       daysQualified++;
       var hrs=hoursDecimal(bc.hoursMs);
-      var amt=Math.round(hrs*rate*100)/100;
+      var otHrs=hoursDecimal(bc.otMs);
+      var amt=Math.round((hrs+otHrs)*rate*100)/100;
       totalMs+=bc.hoursMs;totalAmount+=amt;totalOtMs+=bc.otMs;
       var inLabel=bc.timeIn.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'});
       trows+='<tr>'
@@ -6940,7 +6941,7 @@ function renderTODMonthlyBilling(body,monthNav,selMember,weekdays){
   var summaryHtml='<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px">'
     +'<div class="metric-card mc-blue"><div class="mc-label">Days Logged</div><div class="mc-val">'+daysPresent+'/'+weekdays.length+'</div></div>'
     +'<div class="metric-card mc-green"><div class="mc-label">Days Qualified</div><div class="mc-val">'+daysQualified+'</div></div>'
-    +'<div class="metric-card mc-black"><div class="mc-label">Total Hours</div><div class="mc-val">'+hoursDecimal(totalMs)+'</div></div>'
+    +'<div class="metric-card mc-black"><div class="mc-label">Total Hours</div><div class="mc-val">'+(hoursDecimal(totalMs)+hoursDecimal(totalOtMs))+'</div></div>'
     +'<div class="metric-card mc-black"><div class="mc-label">Total Overtime</div><div class="mc-val">'+hoursDecimal(totalOtMs)+'</div></div>'
     +'<div class="metric-card mc-blue"><div class="mc-label">Total Amount</div><div class="mc-val">'+fmtPeso(totalAmount)+'</div></div>'
   +'</div>';
@@ -6960,7 +6961,7 @@ function renderTODMonthlyBilling(body,monthNav,selMember,weekdays){
         +'<tbody>'+(trows||'<tr><td colspan="7" class="empty-state">No attendance logged this month.</td></tr>')
           +'<tr style="background:#f8fafc;font-weight:700">'
             +'<td colspan="3" style="padding:10px 12px;text-align:center;border-top:2px solid var(--border)">Total</td>'
-            +'<td style="text-align:center;padding:10px 12px;border-top:2px solid var(--border)">'+hoursDecimal(totalMs)+'</td>'
+            +'<td style="text-align:center;padding:10px 12px;border-top:2px solid var(--border)">'+(hoursDecimal(totalMs)+hoursDecimal(totalOtMs))+'</td>'
             +'<td style="text-align:center;padding:10px 12px;border-top:2px solid var(--border)">'+hoursDecimal(totalOtMs)+'</td>'
             +'<td style="text-align:center;padding:10px 12px;border-top:2px solid var(--border)"></td>'
             +'<td style="text-align:center;padding:10px 12px;border-top:2px solid var(--border)">'+fmtPeso(totalAmount)+'</td>'
@@ -6968,7 +6969,7 @@ function renderTODMonthlyBilling(body,monthNav,selMember,weekdays){
         +'</tbody>'
       +'</table>'
     +'</div>'
-    +'<div style="font-size:11px;color:var(--text3);margin-top:8px">Rate and Amount are only shown here — TOD members do not see this table. Duration is the member\'s full scheduled hours for the day (minus their break), credited as soon as they log in — no logout required. Overtime is logged manually per day and paid at the same rate; it\'s included in Duration and Amount above.</div>'
+    +'<div style="font-size:11px;color:var(--text3);margin-top:8px">Rate and Amount are only shown here — TOD members do not see this table. Duration is the member\'s full scheduled hours for the day (minus their break), credited as soon as they log in — no logout required. Overtime is logged manually per day and paid at the same rate. Total Hours and Amount include both regular Duration and Overtime.</div>'
     +'<div style="margin-top:14px"><button class="btn sm" onclick="exportTODMonthSummary()">Export All TOD Members — Monthly Summary</button></div>';
 }
 
@@ -7125,8 +7126,8 @@ function exportTODMonth(username){
     daysPresent++;
     if(bc.qualified){
       daysQualified++;
-      const hrs=hoursDecimal(bc.hoursMs),amt=Math.round(hrs*rate*100)/100;
-      totalH+=hrs;totalAmount+=amt;totalOt+=hoursDecimal(bc.otMs);
+      const hrs=hoursDecimal(bc.hoursMs),otHrs=hoursDecimal(bc.otMs),amt=Math.round((hrs+otHrs)*rate*100)/100;
+      totalH+=hrs;totalAmount+=amt;totalOt+=otHrs;
       rows.push({
         Service:service,
         Date:d.toLocaleDateString('en-PH',{month:'long',day:'2-digit',year:'numeric'}),
@@ -7150,7 +7151,7 @@ function exportTODMonth(username){
   });
   rows.push({Service:'',Date:'',
     'Time In':'',
-    'Duration (# of hours)':totalH,
+    'Duration (# of hours)':totalH+totalOt,
     'Overtime (hours)':totalOt,
     Rate:'',
     Amount:'PHP '+totalAmount.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})
@@ -7174,7 +7175,7 @@ function exportTODMonthSummary(){
       const dds=ds(d),bc=computeBillingDayRecord(m,dds);
       if(bc.attended){
         daysPresent++;
-        if(bc.qualified){daysQualified++;const hrs=hoursDecimal(bc.hoursMs);totalH+=hrs;totalAmount+=Math.round(hrs*rate*100)/100;totalOt+=hoursDecimal(bc.otMs);}
+        if(bc.qualified){daysQualified++;const hrs=hoursDecimal(bc.hoursMs),otHrs=hoursDecimal(bc.otMs);totalH+=hrs;totalOt+=otHrs;totalAmount+=Math.round((hrs+otHrs)*rate*100)/100;}
       }
     });
     return{
@@ -7183,7 +7184,7 @@ function exportTODMonthSummary(){
       'Scheduled Hours':(m.schedStart&&m.schedEnd)?(m.schedStart+' – '+m.schedEnd+(m.breakMins?' (−'+m.breakMins+'m break)':'')):'Not set',
       'Days Logged':daysPresent+'/'+weekdays.length,
       'Days Qualified':daysQualified,
-      'Total Hours':totalH,
+      'Total Hours':totalH+totalOt,
       'Total Overtime':totalOt,
       Rate:rate,
       'Total Amount':'PHP '+totalAmount.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})
@@ -11765,7 +11766,6 @@ function buildNav(){
     html+='<div class="sidebar-section"><div class="sidebar-section-label">Operations</div>'
       +sItem('tasks',ICONS.tasks,'Task Management',badges.tasks||0)
       +sItem('live-trackers',ICONS.trackers,'Live Trackers',0)
-      +sItem('audit',ICONS.audit,'Audit Log',0)
       +sItem('tod',ICONS.tod,'Talent on Demand',0)
       +sItem('calendar',ICONS.calendar,'My Calendar',0)
       +'</div>';
@@ -11786,7 +11786,6 @@ function buildNav(){
     html+='<div class="sidebar-section"><div class="sidebar-section-label">Operations</div>'
       +sItem('tasks',ICONS.tasks,'Task Management',badges.tasks||0)
       +sItem('live-trackers',ICONS.trackers,'Live Trackers',0)
-      +sItem('audit',ICONS.audit,'Audit Log',0)
       +sItem('calendar',ICONS.calendar,'My Calendar',0)
       +'</div>';
     html+='<div class="sidebar-section"><div class="sidebar-section-label">Data & Activity</div>'
@@ -11818,7 +11817,6 @@ function buildNav(){
     html+='<div class="sidebar-section"><div class="sidebar-section-label">Operations</div>'
       +sItem('tasks',ICONS.tasks,'Task Management',badges.tasks||0)
       +sItem('live-trackers',ICONS.trackers,'Live Trackers',0)
-      +sItem('audit',ICONS.audit,'Audit Log',0)
       +sItem('incidents',ICONS.incidents,'Incidents',badges.incidents||0)
       +sItem('leaves',ICONS.leaves,'Leaves',0)
       +sItem('calendar',ICONS.calendar,'My Calendar',0)
@@ -11867,7 +11865,6 @@ function cmdFilter(q){
     {p:'incidents',l:'Incidents',sub:'Log and track incidents',icon:'⚠️',cat:'Navigate',col:'ci-red'},
     {p:'reports',l:'Reports',sub:'Weekly reports',icon:'📈',cat:'Navigate',col:'ci-blue'},
     {p:'leaves',l:'Leaves',sub:'Leave monitoring',icon:'🌴',cat:'Navigate',col:'ci-green'},
-    {p:'audit',l:'Audit Log',sub:'Compliance audit trail',icon:'🛡️',cat:'Navigate',col:'ci-purple'},
     {p:'calendar',l:'My Calendar',sub:'Personal schedule',icon:'📅',cat:'Navigate',col:'ci-teal'},
     ...((CU.isAdmin||isTOD())?[{p:'tod',l:'Talent on Demand',sub:'TOD attendance & billing tracker',icon:'⏱️',cat:'Navigate',col:'ci-yellow'}]:[]),
     {p:'workspace',l:'WorkSpace',sub:'Notes and announcements',icon:'🗂️',cat:'Navigate',col:'ci-blue'},
