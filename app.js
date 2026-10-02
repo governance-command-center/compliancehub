@@ -6635,8 +6635,8 @@ function otHoursMs(username,dds){
 }
 // Billing calc for the monthly Service/Rate/Amount table. TOD members only clock in — no
 // logout is required. A day "qualifies" for pay simply by logging in, and the hours paid are
-// the member's full scheduled duration for that day (e.g. 8h or 4h, minus break) plus any
-// overtime logged for that date. A day with no schedule configured can't be priced, so it's
+// the member's regular scheduled duration for that day (e.g. 8h or 4h, minus break).
+// Overtime is stored separately in otMs and must never be folded into hoursMs. A day with no schedule configured can't be priced, so it's
 // not qualified even if attended (unless overtime alone was logged).
 function computeBillingDayRecord(m,dds){
   const att=D.todAttendance||{};
@@ -6645,13 +6645,13 @@ function computeBillingDayRecord(m,dds){
   if(!rec.timeIn)return out;
   out.timeIn=new Date(rec.timeIn);
   out.otMs=otHoursMs(m.username,dds);
-  out.hoursMs=schedHoursMs(m,dds)+out.otMs;
+  out.hoursMs=schedHoursMs(m,dds);
   out.qualified=out.hoursMs>0;
   return out;
 }
 // Core attendance computation for one member on one date. Members only log a time in; worked
-// hours are auto-computed from their schedule (Scheduled Start/End minus break) plus any
-// overtime logged for that date, rather than requiring a logout. Lateness is still tracked
+// regular hours are auto-computed from their schedule (Scheduled Start/End minus break).
+// Overtime remains separate in otMs rather than being folded into regular hours. Lateness is still tracked
 // against the scheduled start for status display.
 function computeDayRecord(m,dds){
   const att=D.todAttendance||{};
@@ -6665,7 +6665,7 @@ function computeDayRecord(m,dds){
     out.lateMins=Math.round((inDate-schedStart)/60000);
   }
   out.otMs=otHoursMs(m.username,dds);
-  out.hoursMs=schedHoursMs(m,dds)+out.otMs;
+  out.hoursMs=schedHoursMs(m,dds);
   out.status=out.lateMins>0?('Late by '+fmtMinsShort(out.lateMins)):(out.hasSchedule?'On time':'Logged in');
   return out;
 }
