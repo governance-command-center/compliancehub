@@ -4450,7 +4450,7 @@ function renderIncidents(){
       if(_incFltCDM&&i.cdm!==_incFltCDM)return false;
       if(_incFltTL&&i.cdmTL!==_incFltTL)return false;
       if(_incFltStatus&&i.status!==_incFltStatus)return false;
-      if(_incFltSearch){var q=_incFltSearch.toLowerCase();var hay=(i.title+' '+(i.issue||i.description||'')+' '+(i.brand||'')+' '+(i.platform||'')+' '+(i.cdm||'')+' '+(i.cdmTL||'')+' '+(i.classification||'')+' '+(i.remarks||'')).toLowerCase();if(!hay.includes(q))return false;}
+      if(_incFltSearch){var q=_incFltSearch.toLowerCase();var hay=(i.title+' '+(i.issue||i.description||'')+' '+(i.brand||'')+' '+(i.platform||'')+' '+incCdmName(i)+' '+incTlName(i)+' '+(i.classification||'')+' '+(i.remarks||'')).toLowerCase();if(!hay.includes(q))return false;}
       return true;
     });
 
@@ -4657,8 +4657,8 @@ function exportIncidentsLegacy(){
     'Log Date':i.date,'Incident Date':i.incidentDate||i.date,
     Type:i.incidentType||'General',Title:i.title,Severity:i.severity,
     Category:i.category,Region:i.region||'',Brand:i.brand||'',
-    Platform:i.platform||'',CDM:i.cdm||'',
-    'CDM Team Lead':i.cdmTL||'',Classification:i.classification||'',
+    Platform:i.platform||'',CDM:incCdmName(i),
+    'CDM Team Lead':incTlName(i),Classification:i.classification||'',
     Issue:i.issue||i.description||'',Remarks:i.remarks||'',
     Status:i.status,'Reported By':i.reportedBy,
     'Tagged':(i.tagged||[]).map(getMN).join(', '),
@@ -4696,8 +4696,8 @@ function downloadArchivableExcel(){
     'Log Date':i.date,'Incident Date':i.incidentDate||i.date,
     Type:i.incidentType||'General',Title:i.title,Severity:i.severity,
     Category:i.category,Region:i.region||'',Brand:i.brand||'',
-    Platform:i.platform||'',CDM:i.cdm||'',
-    'CDM Team Lead':i.cdmTL||'',Classification:i.classification||'',
+    Platform:i.platform||'',CDM:incCdmName(i),
+    'CDM Team Lead':incTlName(i),Classification:i.classification||'',
     Issue:i.issue||i.description||'',Remarks:i.remarks||'',
     Status:i.status,'Reported By':i.reportedBy,
     'Tagged':(i.tagged||[]).map(getMN).join(', '),
@@ -4837,7 +4837,7 @@ async function importIncidentExcel(evt){
       if(rows.length<2){toast('File empty or no data rows.');return;}
       const header=rows[0].map(h=>String(h).trim());
       const col=h=>header.indexOf(h);
-      let added=0,skipped=0;
+      let added=0,skipped=0,unlinked=0;
       const dataRows=rows.slice(1).filter(r=>{
         const v=String(r[col('Issue')]||r[col('Brand')]||'').trim();
         return v&&!v.startsWith('\u2192');
@@ -4856,8 +4856,9 @@ async function importIncidentExcel(evt){
         const rawCat=String(row[col('Category')]||'').trim();
         const category=CATS.includes(rawCat)?rawCat:'Others';
         // Auto-tag CDM and TL by name lookup
-        const cdmMember=D.members.find(m=>m.name===cdmName);
-        const tlMember=D.members.find(m=>m.name===tlName);
+        const cdmMember=incMem('',cdmName)||undefined;
+        const tlMember=incMem('',tlName)||undefined;
+        if(cdmName&&!cdmMember)unlinked++;
         const tagged=[...new Set([cdmMember?.username,tlMember?.username].filter(Boolean))];
         const responses={};tagged.forEach(u=>{responses[u]={action:'Pending'};});
         await fbPush('incidents',{
@@ -4870,8 +4871,8 @@ async function importIncidentExcel(evt){
           region:String(row[col('Region')]||'').trim(),
           brand,
           platform:String(row[col('Platform')]||'').trim(),
-          cdm:cdmName,
-          cdmTL:tlName,
+          cdm:cdmMember?cdmMember.name:cdmName,cdmUser:cdmMember?cdmMember.username:'',
+          cdmTL:tlMember?tlMember.name:tlName,cdmTLUser:tlMember?tlMember.username:'',
           classification:String(row[col('Classification')]||'').trim(),
           issue,
           remarks:String(row[col('Remarks')]||'').trim(),
@@ -4885,13 +4886,13 @@ async function importIncidentExcel(evt){
         });
         added++;
       }
-      toast('Imported '+added+' incident'+(added!==1?'s':'')+(skipped?' ('+skipped+' skipped)':'')+'!');
+      toast('Imported '+added+' incident'+(added!==1?'s':'')+(skipped?' ('+skipped+' skipped)':'')+(unlinked?' — '+unlinked+' CDM name(s) not found in Members; link them in the case view':'')+'!',unlinked?6000:2500);
     }catch(err){toast('Import error: '+err.message);}
   };
   reader.readAsBinaryString(file);
 }
 
-function openIncidentForm(){
+function openIncidentFormLegacy(){
   const memberOpts=D.members.filter(m=>m.approved&&m.active!==false&&m.role!=='Talent on Demand').map(m=>`<option value="${m.name}">${m.name} (${m.role})</option>`).join('');
   const tlOpts=D.members.filter(m=>m.approved&&m.active!==false&&['HOD','Manager','Assist. Manager','Team Lead'].includes(m.role)).map(m=>`<option value="${m.name}">${m.name} (${m.role})</option>`).join('');
   document.getElementById('mi-title').textContent='Log Incident';
@@ -4973,6 +4974,35 @@ const INC_DEADLINE_RULES={weekly:{dow:5,h:16,m:0}}; // Friday 4:00 PM
 const INC_SENIOR=['HOD','Manager','Assist. Manager'];
 let _incFltComp='',_incCaseKey=null,_incCaseSig='',_incDraft={},_incAppealOpen=false,_incBusy=false;
 
+// ── CDM / Team Lead always resolve from the Members tab (by username; name kept only as a fallback/label) ──
+function incMem(user,name){
+  var ms=D.members||[],m=user&&ms.find(function(x){return x.username===user;});if(m)return m;
+  var n=(name||'').trim().toLowerCase();return n?ms.find(function(x){return x.name&&x.name.trim().toLowerCase()===n;})||null:null;
+}
+function incCdmM(i){return incMem(i.cdmUser,i.cdm);}
+function incTlM(i){return incMem(i.cdmTLUser,i.cdmTL);}
+function incCdmName(i){var m=incCdmM(i);return m?m.name:(i.cdm||'');}
+function incTlName(i){var m=incTlM(i);return m?m.name:(i.cdmTL||'');}
+function incCdmUser(i){var m=incCdmM(i);return m?m.username:'';}
+function incTlUser(i){var m=incTlM(i);return m?m.username:'';}
+function incMemberOpts(tlOnly,sel){
+  return '<option value="">— Select —</option>'+(D.members||[]).filter(function(m){return m.approved&&m.active!==false&&(tlOnly?LEAD_ROLES.includes(m.role):m.role!=='Talent on Demand');}).map(function(m){return '<option value="'+escHtml(m.username)+'"'+(m.username===sel?' selected':'')+'>'+escHtml(m.name)+' ('+escHtml(m.role||'')+')</option>';}).join('');
+}
+function incLinkUI(i){
+  if(!CU.isAdmin||!i.wf)return '';var parts=[];
+  [['cdm','CDM',incCdmM(i),i.cdm],['tl','Team Lead',incTlM(i),i.cdmTL]].forEach(function(r){
+    if(r[2]||!r[3])return;
+    parts.push('<div style="margin:3px 0">'+r[1]+' “'+escHtml(r[3])+'” is not linked to a member in the Members tab. <select id="icf-link-'+r[0]+'" class="finput nb" style="width:auto;display:inline-block;padding:4px 8px;font-size:12px">'+incMemberOpts(r[0]==='tl')+'</select> <button class="btn sm primary" onclick="incLinkMember(\''+i._key+'\',\''+r[0]+'\')">Link</button></div>');
+  });
+  return parts.length?'<div class="inc-note warn">'+parts.join('')+'</div>':'';
+}
+function incLinkMember(key,kind){return incRun(async function(){
+  var i=incGet(key);if(!CU.isAdmin||!i)return;var u=incVal('icf-link-'+kind),m=(D.members||[]).find(function(x){return x.username===u;});
+  if(!m){toast('Select a member');return;}
+  var f=kind==='cdm'?{cdm:m.name,cdmUser:m.username,tagged:[m.username]}:{cdmTL:m.name,cdmTLUser:m.username};
+  await incCommit(key,f,{type:'LINKED',text:(kind==='cdm'?'CDM':'Team Lead')+' linked to Members tab: '+m.name+' (by '+CU.name+')'});
+  toast('Linked to '+m.name);renderIncCase();
+});}
 function incGet(k){return (D.incidents||[]).find(function(x){return x._key===k;});}
 function incRaw(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function incFmt(ts){if(!ts)return '—';var d=new Date(ts);return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})+' · '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});}
@@ -5009,11 +5039,11 @@ function incComp(i){
   if(i.appealStatus==='Under Appeal')return 'On Hold';
   return (i.lateFlag||(i.deadlineAt&&Date.now()>i.deadlineAt))?'Overdue':'On Track';
 }
-function incIsMember(i){return !CU.isAdmin&&!!i.cdm&&i.cdm===CU.name;}
-function incIsTL(i){return !CU.isAdmin&&isLead()&&(i.cdmTL===CU.name||INC_SENIOR.indexOf(CU.role)>-1);}
+function incIsMember(i){return !CU.isAdmin&&!!incCdmUser(i)&&incCdmUser(i)===CU.username;}
+function incIsTL(i){return !CU.isAdmin&&isLead()&&(incTlUser(i)===CU.username||INC_SENIOR.indexOf(CU.role)>-1);}
 function incCanSee(i){
   if(!i.wf||CU.isAdmin)return true; // legacy records stay visible as before
-  if(i.cdm===CU.name||i.cdmTL===CU.name||i.reportedBy===CU.name)return true;
+  if(incCdmUser(i)===CU.username||incTlUser(i)===CU.username||i.reportedBy===CU.name)return true;
   return isLead()&&INC_SENIOR.indexOf(CU.role)>-1;
 }
 
@@ -5046,20 +5076,20 @@ async function incBackfillIds(){
 function buildIncidentTableView(incidents){
   if(!incidents.length)return '<div class="empty-state" style="padding:40px">No incidents found.</div>';
   var E=escHtml,cdmSet={},tlSet={};
-  incidents.forEach(function(i){if(i.cdm)cdmSet[i.cdm]=1;if(i.cdmTL)tlSet[i.cdmTL]=1;});
+  incidents.forEach(function(i){if(incCdmName(i))cdmSet[incCdmName(i)]=1;if(incTlName(i))tlSet[incTlName(i)]=1;});
   function opts(set,cur,all){return '<option value="">'+all+'</option>'+Object.keys(set).sort().map(function(n){return '<option value="'+E(n)+'"'+(n===cur?' selected':'')+'>'+E(n)+'</option>';}).join('');}
   function fixed(list,cur,all){return '<option value="">'+all+'</option>'+list.map(function(v){return '<option value="'+v[0]+'"'+(v[0]===cur?' selected':'')+'>'+v[1]+'</option>';}).join('');}
   var wfOpts=fixed([['__open','Open (not closed)']].concat(INC_WF_STAGES.map(function(s){return [s,s];})).concat([['Escalated','Escalated']]),_incFltStatus,'All Workflow');
   var cpOpts=fixed(['Overdue','Late','On Time','On Track','On Hold','N/A'].map(function(s){return [s,s];}),_incFltComp,'All Compliance');
   var filtered=incidents.filter(function(i){
     var w=incWf(i);
-    if(_incFltCDM&&i.cdm!==_incFltCDM)return false;
-    if(_incFltTL&&i.cdmTL!==_incFltTL)return false;
+    if(_incFltCDM&&incCdmName(i)!==_incFltCDM)return false;
+    if(_incFltTL&&incTlName(i)!==_incFltTL)return false;
     if(_incFltStatus==='__open'){if(w==='Closed')return false;}
     else if(_incFltStatus==='Escalated'){if(i.status!=='Escalated')return false;}
     else if(_incFltStatus&&_incFltStatus!==w)return false;
     if(_incFltComp&&incComp(i)!==_incFltComp)return false;
-    if(_incFltSearch){var hay=((i.incidentNo||'')+' '+(i.title||'')+' '+(i.issue||i.description||'')+' '+(i.brand||'')+' '+(i.platform||'')+' '+(i.cdm||'')+' '+(i.cdmTL||'')+' '+(i.classification||'')+' '+(i.remarks||'')).toLowerCase();if(hay.indexOf(_incFltSearch.toLowerCase())<0)return false;}
+    if(_incFltSearch){var hay=((i.incidentNo||'')+' '+(i.title||'')+' '+(i.issue||i.description||'')+' '+(i.brand||'')+' '+(i.platform||'')+' '+incCdmName(i)+' '+incTlName(i)+' '+(i.classification||'')+' '+(i.remarks||'')).toLowerCase();if(hay.indexOf(_incFltSearch.toLowerCase())<0)return false;}
     return true;
   });
   if(!window._incSort)window._incSort={col:'incidentDate',dir:-1};
@@ -5069,6 +5099,7 @@ function buildIncidentTableView(incidents){
   function th(col,label,w){if(!col)return '<th style="'+thS+';min-width:'+w+'">'+label+'</th>';var s=_incSort.col===col?(_incSort.dir===1?'asc':'desc'):'';return '<th class="sh '+s+'" style="'+thS+';min-width:'+w+'" onclick="_incSort.col===\''+col+'\'?_incSort.dir*=-1:(_incSort.col=\''+col+'\',_incSort.dir=1);renderIncidents()">'+label+'</th>';}
   function cell(t,x){return '<td style="padding:10px 12px;border-bottom:1px solid #f1f3f5;vertical-align:top;font-size:12px;'+(x||'')+'">'+t+'</td>';}
   var dash='<span style="color:var(--text4)">&#8212;</span>';
+  var bc={};(D.incidents||[]).forEach(function(x){if(x.wf&&!x._archived){var b=incBatchKey(x);bc[b]=(bc[b]||0)+1;}});
   var rows=sorted.map(function(i,idx){
     var k=i._key||('r'+idx),w=incWf(i),c=incComp(i),isSel=CU.isAdmin&&_incSelKeys.has(k);
     var edge=c==='Overdue'?'var(--red)':c==='Late'?'var(--orange)':w==='Closed'?'var(--green)':'var(--blue)';
@@ -5076,10 +5107,10 @@ function buildIncidentTableView(incidents){
     var issue=i.issue||i.description||i.title||'';
     return '<tr style="'+(isSel?'background:#fff0f0;outline:2px solid var(--red);outline-offset:-2px;':'')+'border-left:3px solid '+edge+'">'
       +(CU.isAdmin?'<td style="padding:4px 8px;border-bottom:1px solid #f1f3f5;text-align:center;vertical-align:middle;cursor:pointer" onclick="incToggleSel(\''+k+'\')"><input type="checkbox" data-inc-key="'+k+'" '+(isSel?'checked':'')+' style="cursor:pointer;width:14px;height:14px;accent-color:var(--red)" onclick="event.stopPropagation();incToggleSel(\''+k+'\')"></td>':'')
-      +cell('<b>'+E(i.incidentNo||'—')+'</b>'+(i.wf?'':'<div style="font-size:10px;color:var(--text4)">Legacy</div>'),'white-space:nowrap')
+      +cell('<b>'+E(i.incidentNo||'—')+'</b>'+(i.wf?(bc[incBatchKey(i)]>1?'<div style="font-size:10px;color:var(--blue);font-weight:600">Batch · '+bc[incBatchKey(i)]+' issues</div>':''):'<div style="font-size:10px;color:var(--text4)">Legacy</div>'),'white-space:nowrap')
       +cell('<b>'+E(i.incidentDate||i.date||'—')+'</b><div style="font-size:10px;color:var(--text4)">Logged: '+E(i.date||'—')+'</div>','white-space:nowrap')
       +cell((rbp||dash)+(i.platform?'<div style="font-size:11px;color:var(--text3)">'+E(i.platform)+'</div>':''))
-      +cell(i.cdm?'<b>'+E(i.cdm)+'</b>':dash)+cell(i.cdmTL?E(i.cdmTL):dash)
+      +cell(incCdmName(i)?'<b>'+E(incCdmName(i))+'</b>'+(incCdmM(i)?'':'<div style="font-size:10px;color:var(--orange)">⚠ not in Members</div>'):dash)+cell(incTlName(i)?E(incTlName(i)):dash)
       +cell('<div>'+E(issue.length>100?issue.slice(0,100)+'…':issue)+'</div>'+(i.classification?'<div style="margin-top:3px;font-size:10px;font-weight:700;color:var(--text3)">'+E(i.classification)+'</div>':''),'min-width:220px')
       +cell(incWfPill(w)+(i.appealStatus==='Under Appeal'?'<div style="margin-top:3px">'+incPill('UNDER APPEAL','var(--yellow-light)','#92400e','var(--yellow-mid)')+'</div>':'')+(i.status==='Escalated'?'<div style="margin-top:3px">'+incPill('ESCALATED','var(--orange-light)','var(--orange)','#fed7aa')+'</div>':''))
       +cell(incCompPill(c))
@@ -5105,25 +5136,86 @@ function buildIncidentTableView(incidents){
 }
 
 // ── Mutations (append-only timeline; history preserved) ──
-async function incCommit(key,fields,evt){
-  var up=Object.assign({},fields);
-  up['timeline/'+fbRef('incidents/'+key+'/timeline').push().key]=Object.assign({ts:Date.now(),by:CU.name,username:CU.username},evt);
-  setSyncing(1);await fbRef('incidents/'+key).update(up);setSyncing(0);
-  try{await logAct(0,ds(now()),CU.name,evt.text,'INCIDENT');}catch(e){}
+// ── BATCHING: same CDM + brand + incident date = one batch (each issue keeps its own record/ID) ──
+function incBatchKey(i){return [(incCdmUser(i)||(i.cdm||'').trim().toLowerCase()),(i.brand||'').trim().toLowerCase(),i.incidentDate||i.date||''].join('|');}
+function incBatch(i){
+  if(!i.wf)return [i];var k=incBatchKey(i);
+  return (D.incidents||[]).filter(function(x){return x.wf&&!x._archived&&incBatchKey(x)===k;}).sort(function(a,b){return String(a.incidentNo||'').localeCompare(String(b.incidentNo||''))||(a.ts||0)-(b.ts||0);});
 }
+function incCats(list){var m={},o=[];list.forEach(function(x){var c=x.category||'Others';if(!m[c]){m[c]=[];o.push(c);}m[c].push(x);});return o.map(function(c){return {cat:c,items:m[c]};});}
+function incAckTargets(i){return incBatch(i).filter(function(x){return incWf(x)==='For Acknowledgement'&&x.appealStatus!=='Under Appeal';});}
+function incAid(base,g,groups,same){return (groups.length===1||same)?base:base+'-'+g;}
+function incSnip(x){var s=x.issue||x.title||'';return incRaw(s.length>90?s.slice(0,90)+'…':s);}
+function incScope(i,w){var b=incBatch(i).filter(function(x){return incWf(x)===w;});return ((incDV('icf-sc')||'Batch')==='Batch'&&b.length>1)?b:[i];}
+
+function incBatchPanel(i){
+  var b=incBatch(i);if(b.length<2)return '';
+  return '<div class="inc-panel"><div class="inc-ph">BATCH — '+b.length+' ISSUES · '+escHtml(i.brand||'—')+' · '+escHtml(i.incidentDate||'')+'</div>'
+    +b.map(function(x){return '<div style="display:flex;gap:10px;align-items:center;padding:6px 8px;border-radius:var(--radius);font-size:12px;'+(x._key===i._key?'background:var(--blue-light);':'cursor:pointer;')+'"'+(x._key===i._key?'':' onclick="openIncidentCase(\''+x._key+'\')"')+'><b style="min-width:105px">'+escHtml(x.incidentNo||'—')+'</b><span style="min-width:110px;font-weight:600;color:var(--text3)">'+escHtml(x.category||'Others')+'</span><span style="flex:1">'+incSnip(x)+'</span>'+incWfPill(incWf(x))+(x.appealStatus==='Under Appeal'?incPill('APPEAL','var(--yellow-light)','#92400e','var(--yellow-mid)'):'')+'</div>';}).join('')
+    +'<div class="inc-help">Acknowledgement is answered once per category; coaching and closure apply to the whole batch. Appeals are per incident.</div></div>';
+}
+function incAckForm(i){
+  var tg=incAckTargets(i),gr=incCats(tg),multi=gr.length>1,same=multi&&!!incDV('icf-same'),h='';
+  if(tg.length>1)h+='<div class="inc-note"><b>This acknowledgement covers '+tg.length+' incidents</b> ('+gr.map(function(g){return g.cat+' ×'+g.items.length;}).join(', ')+'). It is recorded on each one.</div>';
+  if(multi)h+='<label class="inc-chk"><input type="checkbox" id="icf-same" '+(same?'checked':'')+' onchange="incDS(this.id,this.checked);renderIncCase()"/> Same root cause and corrective action for all categories</label>';
+  var show=same?[{cat:'All categories',items:tg}]:gr;
+  show.forEach(function(g,n){
+    var lbl=multi?(' — '+g.cat+' ('+g.items.length+')'):'';
+    var list=g.items.length>1||multi?'<div class="inc-help">'+g.items.map(incSnip).join('<br>')+'</div>':'';
+    h+='<div class="inc-fld"><label class="flabel">Root Cause'+escHtml(lbl)+'</label><div class="inc-help">What caused '+(multi&&!same?'these issues':'this issue')+'?</div>'+list
+      +'<textarea class="finput" id="'+incAid('icf-rc',n,show,same)+'" rows="3" oninput="incDS(this.id,this.value)">'+incRaw(incDV(incAid('icf-rc',n,show,same)))+'</textarea></div>'
+      +'<div class="inc-fld"><label class="flabel">Corrective Action / Learning'+escHtml(lbl)+'</label><div class="inc-help">What action will you take to correct or prevent this from recurring?</div>'
+      +'<textarea class="finput" id="'+incAid('icf-ca',n,show,same)+'" rows="3" oninput="incDS(this.id,this.value)">'+incRaw(incDV(incAid('icf-ca',n,show,same)))+'</textarea></div>';
+  });
+  return h;
+}
+function incCoachReview(i){
+  var ct=incBatch(i).filter(function(x){return incWf(x)==='For Coaching';}),seen={},rows='';
+  incCats(ct).forEach(function(g){g.items.forEach(function(x){
+    var k=g.cat+'|'+(x.ack&&x.ack.rootCause)+'|'+(x.ack&&x.ack.correctiveAction);if(seen[k])return;seen[k]=1;
+    rows+='<div style="margin-top:6px"><b>'+escHtml(g.cat)+'</b> ('+g.items.length+')<br><b>Root Cause:</b> '+escHtml(x.ack&&x.ack.rootCause||'')+'<br><b>Corrective Action:</b> '+escHtml(x.ack&&x.ack.correctiveAction||'')+'</div>';});});
+  return '<div class="inc-note"><b>Review before coaching</b>'+(ct.length>1?' — this coaching applies to all '+ct.length+' incidents in the batch':'')
+    +'<div style="margin-top:4px"><b>Findings:</b><br>'+ct.map(function(x){return escHtml(x.incidentNo||'')+' · '+incSnip(x);}).join('<br>')+'</div>'+rows+'</div>';
+}
+function incScopeUI(i){
+  var n=incBatch(i).filter(function(x){return incWf(x)==='For Closure';}).length;if(n<2)return '';
+  var sc=incDV('icf-sc')||'Batch';
+  return '<div class="inc-fld"><label class="flabel">Apply close / return to:</label><label class="inc-chk"><input type="radio" name="icf-sc" '+(sc==='Batch'?'checked':'')+' onchange="incDS(\'icf-sc\',\'Batch\')"/> All '+n+' incidents in this batch</label><label class="inc-chk"><input type="radio" name="icf-sc" '+(sc==='One'?'checked':'')+' onchange="incDS(\'icf-sc\',\'One\')"/> This incident only</label><div class="inc-help">Escalate always applies to this incident only.</div></div>';
+}
+
+async function incCommitMany(items,summary){
+  var up={},t=Date.now();
+  items.forEach(function(it){
+    Object.keys(it.fields).forEach(function(p){up[it.key+'/'+p]=it.fields[p];});
+    up[it.key+'/timeline/'+fbRef('incidents/'+it.key+'/timeline').push().key]=Object.assign({ts:t,by:CU.name,username:CU.username},it.evt);
+  });
+  setSyncing(1);await fbRef('incidents').update(up);setSyncing(0);
+  try{await logAct(0,ds(now()),CU.name,summary||items[0].evt.text,'INCIDENT');}catch(e){}
+}
+async function incCommit(key,fields,evt){return incCommitMany([{key:key,fields:fields,evt:evt}]);}
+
 function incHistKey(key,bucket){return bucket+'/'+fbRef('incidents/'+key+'/'+bucket).push().key;}
 function incVal(id){var e=document.getElementById(id);return e?(e.type==='checkbox'?e.checked:e.value.trim()):'';}
 async function incRun(fn){if(_incBusy)return;_incBusy=true;try{await fn();}catch(e){toast('Error: '+e.message,4000);}_incBusy=false;}
 
 function incAcknowledge(key){return incRun(async function(){
   var i=incGet(key);if(!i||incWf(i)!=='For Acknowledgement'||!incIsMember(i)||i.appealStatus==='Under Appeal'){toast('Not available');return;}
-  var rc=incVal('icf-rc'),ca=incVal('icf-ca');
-  if(!rc||!ca){toast('Root Cause and Corrective Action are required');return;}
+  var tg=incAckTargets(i),gr=incCats(tg),same=gr.length>1&&!!incDV('icf-same'),show=same?[{cat:'All categories',items:tg}]:gr,ans={};
+  for(var n=0;n<show.length;n++){
+    var rc=incVal(incAid('icf-rc',n,show,same)),ca=incVal(incAid('icf-ca',n,show,same));
+    if(!rc||!ca){toast('Root Cause and Corrective Action are required'+(show.length>1?' ('+show[n].cat+')':''));return;}
+    ans[n]={rc:rc,ca:ca};
+  }
   if(!incVal('icf-ackchk')){toast('Please tick the acknowledgement confirmation');return;}
-  var t=Date.now(),re=!!i.ackHistory;
-  await incCommit(key,{ack:{by:CU.name,username:CU.username,rootCause:rc,correctiveAction:ca,ts:t,confirmed:true},wf:'For Coaching',returnNote:null},{type:re?'RE_ACK':'ACK',text:(re?'Re-acknowledged by ':'Acknowledged by ')+CU.name});
-  _incDraft={};toast('Incident acknowledged — moved to Coaching');renderIncCase();
+  var t=Date.now();
+  var items=tg.map(function(x){
+    var n=same?0:gr.findIndex(function(g){return g.cat===(x.category||'Others');}),re=!!x.ackHistory;
+    return {key:x._key,fields:{ack:{by:CU.name,username:CU.username,rootCause:ans[n].rc,correctiveAction:ans[n].ca,ts:t,confirmed:true,batchSize:tg.length,batchCategory:x.category||'Others'},wf:'For Coaching',returnNote:null},evt:{type:re?'RE_ACK':'ACK',text:(re?'Re-acknowledged by ':'Acknowledged by ')+CU.name+(tg.length>1?' (batch of '+tg.length+')':'')}};
+  });
+  await incCommitMany(items,'Acknowledged '+tg.length+' incident(s) — '+CU.name);
+  _incDraft={};toast(tg.length>1?tg.length+' incidents acknowledged — moved to Coaching':'Incident acknowledged — moved to Coaching');renderIncCase();
 });}
+
 function incOpenAppeal(o){_incAppealOpen=o;renderIncCase();}
 function incAppeal(key){return incRun(async function(){
   var i=incGet(key);if(!i||incWf(i)!=='For Acknowledgement'||!incIsMember(i)||i.appealStatus){toast('Not available');return;}
@@ -5142,31 +5234,35 @@ function incReviewAppeal(key,accept){return incRun(async function(){
 });}
 function incCoach(key){return incRun(async function(){
   var i=incGet(key);if(!i||incWf(i)!=='For Coaching'||!incIsTL(i)){toast('Not available');return;}
+  var tg=incBatch(i).filter(function(x){return incWf(x)==='For Coaching'&&incIsTL(x);});
   var cn=incVal('icf-cn'),aa=incVal('icf-aa'),fu=incDV('icf-fu')==='Yes';
   if(!cn||!aa){toast('Coaching Notes and Action Agreed are required');return;}
   if(!incDV('icf-fu')){toast('Select whether follow-up is required');return;}
   if(!incVal('icf-cochk')){toast('Please tick the coaching confirmation');return;}
-  var t=Date.now(),re=!!i.coachHistory;
-  await incCommit(key,{coaching:{by:CU.name,username:CU.username,notes:cn,actionAgreed:aa,followUpRequired:fu,followUpDate:fu?incVal('icf-fud'):'',followUpNote:fu?incVal('icf-fun'):'',ts:t,confirmed:true},wf:'For Closure',returnNote:null,requiredDoneAt:t,lateFlag:!!(i.lateFlag||(i.deadlineAt&&t>i.deadlineAt))},{type:re?'RE_COACHED':'COACHED',text:(re?'Re-coached — coaching confirmed by ':'Coaching confirmed by ')+CU.name});
-  _incDraft={};toast('Coaching confirmed — sent to Governance for closure');renderIncCase();
+  var t=Date.now(),rec={by:CU.name,username:CU.username,notes:cn,actionAgreed:aa,followUpRequired:fu,followUpDate:fu?incVal('icf-fud'):'',followUpNote:fu?incVal('icf-fun'):'',ts:t,confirmed:true,batchSize:tg.length};
+  await incCommitMany(tg.map(function(x){var re=!!x.coachHistory;return {key:x._key,fields:{coaching:rec,wf:'For Closure',returnNote:null,requiredDoneAt:t,lateFlag:!!(x.lateFlag||(x.deadlineAt&&t>x.deadlineAt))},evt:{type:re?'RE_COACHED':'COACHED',text:(re?'Re-coached — coaching confirmed by ':'Coaching confirmed by ')+CU.name+(tg.length>1?' (batch of '+tg.length+')':'')}};}),'Coaching confirmed for '+tg.length+' incident(s) — '+CU.name);
+  _incDraft={};toast(tg.length>1?'Coaching confirmed for '+tg.length+' incidents':'Coaching confirmed — sent to Governance for closure');renderIncCase();
 });}
 function incClose(key){return incRun(async function(){
   var i=incGet(key);if(!CU.isAdmin||!i||incWf(i)!=='For Closure'){toast('Not available');return;}
   var n=incVal('icf-gn');if(!n){toast('Governance assessment / closure note is required');return;}
-  var t=Date.now();
-  await incCommit(key,{wf:'Closed',status:'Resolved',resolvedBy:CU.name,resolvedAt:t,closure:{by:CU.name,username:CU.username,note:n,ts:t,type:'Closed'}},{type:'CLOSED',text:'Incident closed by Governance ('+CU.name+')'});
-  _incDraft={};toast('Incident closed');renderIncCase();
+  var tg=incScope(i,'For Closure'),t=Date.now();
+  await incCommitMany(tg.map(function(x){return {key:x._key,fields:{wf:'Closed',status:'Resolved',resolvedBy:CU.name,resolvedAt:t,closure:{by:CU.name,username:CU.username,note:n,ts:t,type:'Closed'}},evt:{type:'CLOSED',text:'Incident closed by Governance ('+CU.name+')'}};}),'Closed '+tg.length+' incident(s)');
+  _incDraft={};toast(tg.length>1?tg.length+' incidents closed':'Incident closed');renderIncCase();
 });}
 function incReturn(key){return incRun(async function(){
   var i=incGet(key);if(!CU.isAdmin||!i||incWf(i)!=='For Closure'){toast('Not available');return;}
   var to=incDV('icf-rt'),n=incVal('icf-gn');
   if(!to){toast('Choose who to return it to (Member or Team Lead)');return;}
   if(!n){toast('A reason is required (use the note box)');return;}
-  var f={returnNote:{to:to,reason:n,by:CU.name,ts:Date.now()},status:i.status==='Escalated'?'Escalated':'Open'};
-  if(i.coaching){f[incHistKey(key,'coachHistory')]=Object.assign({},i.coaching,{returnedAt:Date.now(),returnReason:n});f.coaching=null;}
-  if(to==='Member'){if(i.ack){f[incHistKey(key,'ackHistory')]=Object.assign({},i.ack,{returnedAt:Date.now(),returnReason:n});f.ack=null;}f.wf='For Acknowledgement';}
-  else f.wf='For Coaching';
-  await incCommit(key,f,{type:'RETURNED',text:'Returned for clarification to '+to+' by '+CU.name+': '+n});
+  var tg=incScope(i,'For Closure'),t=Date.now();
+  await incCommitMany(tg.map(function(x){
+    var f={returnNote:{to:to,reason:n,by:CU.name,ts:t},status:x.status==='Escalated'?'Escalated':'Open'};
+    if(x.coaching){f[incHistKey(x._key,'coachHistory')]=Object.assign({},x.coaching,{returnedAt:t,returnReason:n});f.coaching=null;}
+    if(to==='Member'){if(x.ack){f[incHistKey(x._key,'ackHistory')]=Object.assign({},x.ack,{returnedAt:t,returnReason:n});f.ack=null;}f.wf='For Acknowledgement';}
+    else f.wf='For Coaching';
+    return {key:x._key,fields:f,evt:{type:'RETURNED',text:'Returned for clarification to '+to+' by '+CU.name+': '+n}};
+  }),'Returned '+tg.length+' incident(s) to '+to);
   _incDraft={};toast('Returned to '+to);renderIncCase();
 });}
 function incEscalate(key,reason){return incRun(async function(){
@@ -5212,7 +5308,7 @@ function renderIncCase(){
   var i=incGet(_incCaseKey),body=document.getElementById('mic-body');if(!i||!body)return;
   _incCaseSig=JSON.stringify(i);
   var E=escHtml,wf=incWf(i),comp=incComp(i),legacy=!i.wf;
-  var hdr=[['Incident ID',i.incidentNo||'—'],['Incident Date',i.incidentDate||i.date],['Log Date',i.date],['Region',i.region],['Brand',i.brand],['Platform',i.platform],['Category',i.category],['Classification',i.classification],['CDM',i.cdm],['Team Lead',i.cdmTL],['Reported By',i.reportedBy],['Due',i.deadlineAt?incFmtDue(i.deadlineAt):'—']];
+  var hdr=[['Incident ID',i.incidentNo||'—'],['Incident Date',i.incidentDate||i.date],['Log Date',i.date],['Region',i.region],['Brand',i.brand],['Platform',i.platform],['Category',i.category],['Classification',i.classification],['CDM',incCdmName(i)],['Team Lead',incTlName(i)],['Reported By',i.reportedBy],['Due',i.deadlineAt?incFmtDue(i.deadlineAt):'—']];
   var h='<div class="inc-top"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><span class="inc-id">'+E(i.incidentNo||'Incident')+'</span>'+incWfPill(wf)+incCompPill(comp)
     +(i.appealStatus==='Under Appeal'?incPill('UNDER APPEAL','var(--yellow-light)','#92400e','var(--yellow-mid)'):'')+(i.status==='Escalated'?incPill('ESCALATED','var(--orange-light)','var(--orange)','#fed7aa'):'')+(legacy?incPill('LEGACY','var(--bg)','var(--text3)','var(--border)'):'')
     +'<span style="margin-left:auto;display:flex;gap:6px">'+((CU.isAdmin||isLead())&&wf!=='Closed'&&i.status!=='Escalated'?'<button class="btn sm del" onclick="incEscalate(\''+i._key+'\')">⚠ Escalate</button>':'')+'</span></div>'
@@ -5227,6 +5323,7 @@ function renderIncCase(){
   var idx=INC_WF_STAGES.indexOf(wf);
   function st(n,label,s){var cls=idx>s||wf==='Closed'?'done':idx===s?'cur':'pend';return '<div class="inc-st '+cls+'"><div class="inc-st-n">'+(cls==='done'?'✓':n)+'</div><div>'+label+'</div></div>';}
   if(!legacy)h+='<div class="inc-stepper">'+st(1,'MEMBER ACKNOWLEDGEMENT',0)+'<div class="inc-arrow">→</div>'+st(2,'TEAM LEAD COACHING',1)+'<div class="inc-arrow">→</div>'+st(3,'GOVERNANCE CLOSURE',2)+'</div>';
+  h+=incLinkUI(i)+incBatchPanel(i);
   // original finding (read-only)
   h+='<div class="inc-panel"><div class="inc-ph">ORIGINAL GOVERNANCE FINDING <span class="inc-lock">🔒 read-only</span></div>'
     +incRec([['Issue / Finding',i.issue||i.description||i.title],['Remarks / Context',i.remarks],['Reported By',i.reportedBy],['Date Logged',i.date+(i.ts?' ('+incFmt(i.ts)+')':'')]])+'</div>';
@@ -5242,12 +5339,12 @@ function renderIncCase(){
         s1+=CU.isAdmin?incTA('icf-apn','Appeal Review Note','Required. Explain the decision.',2)+'<div class="inc-actions"><button class="btn success" onclick="incReviewAppeal(\''+i._key+'\',true)">ACCEPT APPEAL</button><button class="btn del" onclick="incReviewAppeal(\''+i._key+'\',false)">REJECT APPEAL</button></div>'
           :'<div class="inc-help">Under review by Governance. The incident is on hold until a decision is made.</div>';
       }else if(incIsMember(i)){
-        if(!_incAppealOpen)s1+=incTA('icf-rc','Root Cause','What caused this issue?')+incTA('icf-ca','Corrective Action / Learning','What action will you take to correct or prevent this issue from recurring?')
+        if(!_incAppealOpen)s1+=incAckForm(i)
           +incChk('icf-ackchk','I acknowledge that I have reviewed and understood this incident.')
-          +'<div class="inc-actions"><button class="btn primary" onclick="incAcknowledge(\''+i._key+'\')">ACKNOWLEDGE INCIDENT</button>'+(i.appealStatus?'':'<button class="btn" onclick="incOpenAppeal(true)">APPEAL INCIDENT</button>')+'</div>';
+          +'<div class="inc-actions"><button class="btn primary" onclick="incAcknowledge(\''+i._key+'\')">ACKNOWLEDGE INCIDENT'+(incAckTargets(i).length>1?'S':'')+'</button>'+(i.appealStatus?'':'<button class="btn" onclick="incOpenAppeal(true)">APPEAL '+(incBatch(i).length>1?'THIS INCIDENT ONLY':'INCIDENT')+'</button>')+'</div>';
         else s1+=incTA('icf-apr','Appeal Reason','Why are you appealing this incident?',2)+incTA('icf-ape','Supporting Explanation / Evidence','Provide the facts or evidence that support your appeal.')
           +'<div class="inc-actions"><button class="btn warning" onclick="incAppeal(\''+i._key+'\')">SUBMIT APPEAL</button><button class="btn" onclick="incOpenAppeal(false)">Back</button></div>';
-      }else s1+='<div class="inc-help">Awaiting acknowledgement from <b>'+E(i.cdm||'the assigned CDM')+'</b>.</div>';
+      }else s1+='<div class="inc-help">Awaiting acknowledgement from <b>'+E(incCdmName(i)||'the assigned CDM')+'</b>.</div>';
     }
     // STEP 2
     var s2='';
@@ -5257,13 +5354,13 @@ function renderIncCase(){
     if(wf==='For Coaching'){
       if(incIsTL(i)){
         var fu=incDV('icf-fu');
-        s2+='<div class="inc-note"><b>Review before coaching</b><br><b>Finding:</b> '+E(i.issue||i.title||'')+'<br><b>Member Root Cause:</b> '+E(i.ack&&i.ack.rootCause||'')+'<br><b>Member Corrective Action:</b> '+E(i.ack&&i.ack.correctiveAction||'')+'</div>'
+        s2+=incCoachReview(i)
           +incTA('icf-cn','Coaching Notes','What was discussed with the member?')+incTA('icf-aa','Action Agreed','What specific corrective/preventive action was agreed?',2)
           +'<div class="inc-fld"><label class="flabel">Follow-up Required?</label><label class="inc-chk"><input type="radio" name="icf-fu" '+(fu==='Yes'?'checked':'')+' onchange="incDS(\'icf-fu\',\'Yes\');renderIncCase()"/> Yes</label> <label class="inc-chk"><input type="radio" name="icf-fu" '+(fu==='No'?'checked':'')+' onchange="incDS(\'icf-fu\',\'No\');renderIncCase()"/> No</label></div>'
           +(fu==='Yes'?'<div class="fg fg2"><div><label class="flabel">Follow-up Date (optional)</label><input type="date" class="finput nb" id="icf-fud" value="'+incRaw(incDV('icf-fud'))+'" oninput="incDS(this.id,this.value)"/></div><div><label class="flabel">Follow-up Note (optional)</label><input class="finput nb" id="icf-fun" value="'+incRaw(incDV('icf-fun'))+'" oninput="incDS(this.id,this.value)"/></div></div>':'')
           +incChk('icf-cochk','I confirm that this incident has been discussed/coached with the member.')
           +'<div class="inc-actions"><button class="btn primary" onclick="incCoach(\''+i._key+'\')">CONFIRM COACHING</button></div>';
-      }else s2+='<div class="inc-help">Awaiting coaching from <b>'+E(i.cdmTL||'the assigned Team Lead')+'</b>.</div>';
+      }else s2+='<div class="inc-help">Awaiting coaching from <b>'+E(incTlName(i)||'the assigned Team Lead')+'</b>.</div>';
     }else if(wf==='For Acknowledgement'&&!i.coaching)s2+='<div class="inc-help">Starts after the member acknowledges.</div>';
     // STEP 3
     var s3='';
@@ -5272,7 +5369,7 @@ function renderIncCase(){
     if(i.requiredDoneAt)s3+='<div class="inc-help">Required actions completed: '+incFmt(i.requiredDoneAt)+' · Deadline: '+incFmtDue(i.deadlineAt)+' · '+incCompPill(comp)+'</div>';
     if(wf==='For Closure'){
       s3+=CU.isAdmin?incTA('icf-gn','Governance Assessment / Closure Note','Required. Used as the reason if returning for clarification or escalating.')
-        +'<div class="inc-fld"><label class="flabel">If returning for clarification, return to:</label><label class="inc-chk"><input type="radio" name="icf-rt" '+(incDV('icf-rt')==='Member'?'checked':'')+' onchange="incDS(\'icf-rt\',\'Member\')"/> Member</label> <label class="inc-chk"><input type="radio" name="icf-rt" '+(incDV('icf-rt')==='Team Lead'?'checked':'')+' onchange="incDS(\'icf-rt\',\'Team Lead\')"/> Team Lead</label></div>'
+        +incScopeUI(i)+'<div class="inc-fld"><label class="flabel">If returning for clarification, return to:</label><label class="inc-chk"><input type="radio" name="icf-rt" '+(incDV('icf-rt')==='Member'?'checked':'')+' onchange="incDS(\'icf-rt\',\'Member\')"/> Member</label> <label class="inc-chk"><input type="radio" name="icf-rt" '+(incDV('icf-rt')==='Team Lead'?'checked':'')+' onchange="incDS(\'icf-rt\',\'Team Lead\')"/> Team Lead</label></div>'
         +'<div class="inc-actions"><button class="btn success" onclick="incClose(\''+i._key+'\')">✓ CLOSE INCIDENT</button><button class="btn" onclick="incReturn(\''+i._key+'\')">↩ RETURN FOR CLARIFICATION</button>'+(i.status!=='Escalated'?'<button class="btn del" onclick="incEscalate(\''+i._key+'\',incVal(\'icf-gn\'))">⚠ ESCALATE</button>':'')+'</div>'
         :'<div class="inc-help">Awaiting Governance review and closure.</div>';
     }else if(wf==='Closed'&&CU.isAdmin)s3+='<div class="inc-actions"><button class="btn" onclick="incReopen(\''+i._key+'\')">Reopen Incident</button></div>';
@@ -5289,26 +5386,72 @@ function renderIncCase(){
 }
 
 // ── Logging a new incident ──
+// ── Log Incident: shared details once, then one block per issue ──
+function incIssueRow(){
+  return '<div class="inc-row" style="border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px;background:var(--bg)"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span class="inc-help" style="margin:0;font-weight:700;letter-spacing:.08em">ISSUE</span><button class="btn sm del" type="button" onclick="this.closest(\'.inc-row\').remove()">Remove</button></div>'
+    +'<div class="fg fg2"><div><label class="flabel">Category</label><select class="finput nb r-cat"><option value="">— Select Category —</option>'+INCIDENT_CATS.map(function(c){return '<option>'+c+'</option>';}).join('')+'</select></div>'
+    +'<div><label class="flabel">Classification</label><input class="finput nb r-cls" placeholder="e.g. Policy Violation, Wrong Category..."/></div></div>'
+    +'<div class="fg"><label class="flabel">Issue / Finding</label><textarea class="finput r-issue" rows="2" placeholder="Describe the specific issue found..."></textarea></div>'
+    +'<div class="fg" style="margin-bottom:0"><label class="flabel">Remarks</label><textarea class="finput r-rem" rows="2" placeholder="Additional remarks, context..."></textarea></div></div>';
+}
+function incAddIssueRow(){var c=document.getElementById('inc-rows');if(c)c.insertAdjacentHTML('beforeend',incIssueRow());}
+function openIncidentForm(){
+  const memberOpts=incMemberOpts(false),tlOpts=incMemberOpts(true);
+  document.getElementById('mi-title').textContent='Log Incident';
+  document.getElementById('mi-body').innerHTML=`
+    <div class="fg fg3">
+      <div><label class="flabel">Incident Date</label><input class="finput nb" id="inc-incdate" type="date" value="${ds(now())}"/></div>
+      <div><label class="flabel">Log Date</label><input class="finput nb" id="inc-logdate" type="date" value="${ds(now())}"/></div>
+      <div><label class="flabel">Region</label><select class="finput nb" id="inc-region"><option value="">— None —</option><option>MY</option><option>PH</option><option>TH</option><option>VN</option><option>ID</option><option>SG</option><option>EP</option></select></div>
+    </div>
+    <div class="fg fg2">
+      <div><label class="flabel">Brand</label><input class="finput nb" id="inc-brand" placeholder="Brand name"/></div>
+      <div><label class="flabel">Platform</label><select class="finput nb" id="inc-platform"><option value="">— None —</option><option>Lazada</option><option>Shopee</option><option>TikTok</option><option>Zalora</option><option>Qoo10</option><option>All</option></select></div>
+    </div>
+    <div class="fg fg2">
+      <div><label class="flabel">CDM</label><select class="finput nb" id="inc-cdm"><option value="">— Select CDM —</option>${memberOpts}</select></div>
+      <div><label class="flabel">CDM Team Lead</label><select class="finput nb" id="inc-cdmtl"><option value="">— Select Team Lead —</option>${tlOpts}</select></div>
+    </div>
+    <div class="inc-help" style="margin:4px 0 8px">Issues for the same CDM, brand and incident date are grouped into one batch, so the member acknowledges them together.</div>
+    <div id="inc-rows">${incIssueRow()}</div>
+    <button class="btn sm" type="button" onclick="incAddIssueRow()">+ Add another issue</button>
+    <div class="form-actions">
+      <button class="btn primary" onclick="saveIncident()">Log Incident(s)</button>
+      <button class="btn" onclick="closeModal('modal-incident')">Cancel</button>
+    </div>`;
+  openModal('modal-incident');
+}
 async function saveIncident(){
+  if(_incBusy)return;
   const logDate=document.getElementById('inc-logdate')?.value||ds(now());
   const incDate=document.getElementById('inc-incdate')?.value||logDate;
-  const issue=document.getElementById('inc-issue')?.value.trim()||'';
   const brand=document.getElementById('inc-brand')?.value.trim()||'';
-  if(!issue&&!brand){toast('Issue / Finding or Brand is required');return;}
   if(!document.getElementById('inc-cdm')?.value){toast('Select the CDM — the incident is assigned to them for acknowledgement');return;}
-  const payload=Object.assign({
-    title:issue||brand,incidentType:'General',incidentDate:incDate,date:logDate,severity:'Medium',
-    category:document.getElementById('inc-category')?.value||'Others',
-    region:document.getElementById('inc-region')?.value||'',brand,
-    platform:document.getElementById('inc-platform')?.value||'',
-    cdm:document.getElementById('inc-cdm')?.value||'',cdmTL:document.getElementById('inc-cdmtl')?.value||'',
-    classification:document.getElementById('inc-classification')?.value.trim()||'',
-    issue,description:issue,remarks:document.getElementById('inc-remarks')?.value.trim()||'',
-    reportedBy:CU.name,tagged:[],responses:{},status:'Open',ts:Date.now()
-  },await incInitFields());
-  await fbPush('incidents',payload);
-  closeModal('modal-incident');
-  toast('Incident '+payload.incidentNo+' logged');
+  const rows=[...document.querySelectorAll('#inc-rows .inc-row')].map(r=>({
+    category:r.querySelector('.r-cat').value||'Others',classification:r.querySelector('.r-cls').value.trim(),
+    issue:r.querySelector('.r-issue').value.trim(),remarks:r.querySelector('.r-rem').value.trim()
+  })).filter(r=>r.issue);
+  if(!rows.length){toast('Enter the Issue / Finding for at least one issue');return;}
+  const cdmM=D.members.find(m=>m.username===document.getElementById('inc-cdm')?.value),tlM=D.members.find(m=>m.username===document.getElementById('inc-cdmtl')?.value);
+  if(!cdmM){toast('Select a CDM from the Members list');return;}
+  _incBusy=true;
+  try{
+    const ids=[];
+    for(const r of rows){
+      const payload=Object.assign({
+        title:r.issue,incidentType:'General',incidentDate:incDate,date:logDate,severity:'Medium',
+        category:r.category,region:document.getElementById('inc-region')?.value||'',brand,
+        platform:document.getElementById('inc-platform')?.value||'',
+        cdm:cdmM.name,cdmUser:cdmM.username,cdmTL:tlM?tlM.name:'',cdmTLUser:tlM?tlM.username:'',
+        classification:r.classification,issue:r.issue,description:r.issue,remarks:r.remarks,
+        reportedBy:CU.name,tagged:[cdmM.username],responses:{},status:'Open',ts:Date.now()
+      },await incInitFields());
+      await fbPush('incidents',payload);ids.push(payload.incidentNo);
+    }
+    closeModal('modal-incident');
+    toast(ids.length>1?ids.length+' incidents logged ('+ids[0]+' – '+ids[ids.length-1]+')':'Incident '+ids[0]+' logged');
+  }catch(e){toast('Error: '+e.message,4000);}
+  _incBusy=false;
 }
 
 // ── Export (existing columns kept; workflow columns appended) ──
@@ -5320,8 +5463,8 @@ function exportIncidents(){
     'Log Date':i.date,'Incident Date':i.incidentDate||i.date,
     Type:i.incidentType||'General',Title:i.title,Severity:i.severity,
     Category:i.category,Region:i.region||'',Brand:i.brand||'',
-    Platform:i.platform||'',CDM:i.cdm||'',
-    'CDM Team Lead':i.cdmTL||'',Classification:i.classification||'',
+    Platform:i.platform||'',CDM:incCdmName(i),
+    'CDM Team Lead':incTlName(i),Classification:i.classification||'',
     Issue:i.issue||i.description||'',Remarks:i.remarks||'',
     Status:i.status,'Reported By':i.reportedBy,
     'Tagged':(i.tagged||[]).map(getMN).join(', '),
