@@ -107,6 +107,7 @@
       <div id="pg-reports" style="display:none"></div>
       <div id="pg-incidents" style="display:none"></div>
       <div id="pg-calendar" style="display:none"></div>
+      <div id="pg-campaigns" style="display:none"></div>
       <div id="pg-my-tasks" style="display:none"></div>
       <div id="pg-live-trackers" style="display:none"></div>
       <div id="pg-audit" style="display:none"></div>
@@ -123,6 +124,8 @@
 <div class="modal-bg" id="modal-status"><div class="modal wide"><button class="modal-close" onclick="closeModal('modal-status')">&#x2715;</button><h3 id="mst-title">Update Status</h3><div id="mst-body"></div></div></div>
 <div class="modal-bg" id="modal-task"><div class="modal wide"><button class="modal-close" onclick="closeModal('modal-task')">&#x2715;</button><h3 id="mt-title">Task</h3><div id="mt-body"></div></div></div>
 <div class="modal-bg" id="modal-cal"><div class="modal"><button class="modal-close" onclick="closeModal('modal-cal')">&#x2715;</button><h3 id="mc-title">Add Entry</h3><div id="mc-body"></div></div></div>
+<div class="modal-bg" id="modal-camp"><div class="modal cmp-modal"><button class="modal-close" onclick="closeModal('modal-camp')">&#x2715;</button><h3 id="mcp-title">Campaign</h3><div id="mcp-body"></div></div></div>
+<div class="modal-bg" id="modal-camp-gen"><div class="modal"><button class="modal-close" onclick="closeModal('modal-camp-gen')">&#x2715;</button><h3>Generate Campaign Checklists</h3><div id="mcg-body"></div></div></div>
 <div class="modal-bg" id="modal-remind"><div class="modal"><button class="modal-close" onclick="closeModal('modal-remind')">&#x2715;</button><h3>Daily Reminder</h3><div id="mr-body"></div><div class="form-actions"><button class="btn primary" onclick="closeModal('modal-remind')">Dismiss</button></div></div></div>
 <div class="modal-bg" id="modal-broadcast"><div class="modal"><button class="modal-close" onclick="closeModal('modal-broadcast')">&#x2715;</button><h3>Broadcast to Team</h3><div class="fg"><label class="flabel">Message</label><textarea class="finput" id="bc-input" rows="4" placeholder="Type your announcement..."></textarea></div><div class="form-actions"><button class="btn warning" onclick="sendBC()">Send Broadcast</button><button class="btn" onclick="closeModal('modal-broadcast')">Cancel</button></div></div></div>
 <div class="modal-bg" id="modal-incident"><div class="modal wide"><button class="modal-close" onclick="closeModal('modal-incident')">&#x2715;</button><h3 id="mi-title">Log Incident</h3><div id="mi-body"></div></div></div>
@@ -144,5 +147,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
 <script src="app.js"></script>
+<script src="campaigns.js"></script>
 </body>
 </html>
