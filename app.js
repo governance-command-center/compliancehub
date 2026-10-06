@@ -128,7 +128,7 @@ const DOWF=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturda
 const CARRYOVER_LOOKBACK_DAYS=120;
 
 let CU=null;
-let D={tasks:[],members:[],statuses:{},actLog:[],calEntries:{},campaigns:{},broadcast:null,incidents:[],extRequests:{},groups:[],trackers:{},todAttendance:{},todOvertime:{},auditLog:[],leaves:[],leadTasks:[],weeklyReports:[],personalTasks:[],nonCompliance:{},frCompletions:{},_tLoaded:false,_mLoaded:false};
+let D={tasks:[],members:[],statuses:{},actLog:[],calEntries:{},broadcast:null,incidents:[],extRequests:{},groups:[],trackers:{},todAttendance:{},todOvertime:{},auditLog:[],leaves:[],leadTasks:[],weeklyReports:[],personalTasks:[],nonCompliance:{},frCompletions:{},_tLoaded:false,_mLoaded:false};
 // FR_WEEK_OFFSET declared early: Finance-tracker render helpers reference it well before its
 // former mid-file declaration, which threw "Cannot access 'FR_WEEK_OFFSET' before initialization".
 // Defaults live here; loadFRConfig() later merges admin overrides from Firebase into this same object.
@@ -1115,7 +1115,6 @@ function startApp(){
   });
   fbListen('broadcast',v=>{D.broadcast=v;if(v?.msg){const dis=localStorage.getItem('gh_bc_dis');if(dis!==String(v.ts))showBC(v);}else hideBC();});
   fbListen('calEntries',v=>{D.calEntries={};if(v)for(const[k,en]of Object.entries(v))if(en&&typeof en==='object'){D.calEntries[k]={};for(const[ek,e]of Object.entries(en))D.calEntries[k][ek]={...e,_key:ek};}if(selCalDate)renderCalDay(selCalDate);});
-  fbListen('campaigns',v=>{D.campaigns=v||{};if(_curPage==='campaigns'&&typeof renderCampaigns==='function')renderCampaigns();});
   fbListen('groups',v=>{D.groups=v?Object.entries(v).map(([k,g])=>({...g,_key:k})):[];});
   // Lead-owned tasks — listen to the whole leadTasks tree so members can see tasks assigned to them
   fbListen('leadTasks',v=>{
@@ -1821,7 +1820,6 @@ function rerender(){
   else if(_curPage==='members')renderMembers();
   else if(_curPage==='my-tasks')renderMyTasks();
   else if(_curPage==='calendar')renderCalendar();
-  else if(_curPage==='campaigns')renderCampaigns();
   else if(_curPage==='incidents')renderIncidents();
   else if(_curPage==='reports')renderReports();
   else if(_curPage==='live-trackers')renderLiveTrackers();
@@ -1834,7 +1832,7 @@ function rerender(){
 }
 function showPage(p){
   _curPage=p;
-  ['dashboard','tasks','members','reports','incidents','calendar','campaigns','my-tasks','live-trackers','tod','audit','leaves','workspace','notes','bulletin'].forEach(pg=>{
+  ['dashboard','tasks','members','reports','incidents','calendar','my-tasks','live-trackers','tod','audit','leaves','workspace','notes','bulletin'].forEach(pg=>{
     const el=document.getElementById('pg-'+pg);
     if(el){
       if(pg===p){
@@ -12285,7 +12283,6 @@ function buildNav(){
     trackers:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
     audit:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
     tod:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
-    campaigns:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22V4"/><path d="M4 4h13l-2 4 2 4H4"/></svg>',
     calendar:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
     members:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>',
     incidents:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
@@ -12309,7 +12306,6 @@ function buildNav(){
       +sItem('live-trackers',ICONS.trackers,'Live Trackers',0)
       +sItem('tod',ICONS.tod,'Talent on Demand',0)
       +sItem('calendar',ICONS.calendar,'My Calendar',0)
-      +sItem('campaigns',ICONS.campaigns,'Campaign Center',0)
       +'</div>';
     html+='<div class="sidebar-section"><div class="sidebar-section-label">Data & Activity</div>'
       +sItem('members',ICONS.members,'Members',badges.members||0)
@@ -12329,7 +12325,6 @@ function buildNav(){
       +sItem('tasks',ICONS.tasks,'Task Management',badges.tasks||0)
       +sItem('live-trackers',ICONS.trackers,'Live Trackers',0)
       +sItem('calendar',ICONS.calendar,'My Calendar',0)
-      +sItem('campaigns',ICONS.campaigns,'Campaign Center',0)
       +'</div>';
     html+='<div class="sidebar-section"><div class="sidebar-section-label">Data & Activity</div>'
       +sItem('members',ICONS.members,'Members',badges.members||0)
@@ -12348,7 +12343,6 @@ function buildNav(){
       +(CU.ltAccess?sItem('live-trackers',ICONS.trackers,'Live Trackers',0):'')
       +sItem('leaves',ICONS.leaves,'Leaves',0)
       +sItem('calendar',ICONS.calendar,'My Calendar',0)
-      +sItem('campaigns',ICONS.campaigns,'Campaign Center',0)
       +'</div>';
     html+='<div class="sidebar-section"><div class="sidebar-section-label">WorkSpace</div>'
       +sItem('notes',ICONS.notes,'Notes',0)
@@ -12364,7 +12358,6 @@ function buildNav(){
       +sItem('incidents',ICONS.incidents,'Incidents',badges.incidents||0)
       +sItem('leaves',ICONS.leaves,'Leaves',0)
       +sItem('calendar',ICONS.calendar,'My Calendar',0)
-      +sItem('campaigns',ICONS.campaigns,'Campaign Center',0)
       +'</div>';
     html+='<div class="sidebar-section"><div class="sidebar-section-label">WorkSpace</div>'
       +sItem('notes',ICONS.notes,'Notes',0)
@@ -12411,7 +12404,6 @@ function cmdFilter(q){
     {p:'reports',l:'Reports',sub:'Weekly reports',icon:'📈',cat:'Navigate',col:'ci-blue'},
     {p:'leaves',l:'Leaves',sub:'Leave monitoring',icon:'🌴',cat:'Navigate',col:'ci-green'},
     {p:'calendar',l:'My Calendar',sub:'Personal schedule',icon:'📅',cat:'Navigate',col:'ci-teal'},
-    {p:'campaigns',l:'Campaign Center',sub:'Campaign dates, regions & checklists',icon:'🚩',cat:'Navigate',col:'ci-blue'},
     ...((CU.isAdmin||isTOD())?[{p:'tod',l:'Talent on Demand',sub:'TOD attendance & billing tracker',icon:'⏱️',cat:'Navigate',col:'ci-yellow'}]:[]),
     {p:'workspace',l:'WorkSpace',sub:'Notes and announcements',icon:'🗂️',cat:'Navigate',col:'ci-blue'},
     {p:'my-tasks',l:'My Dashboard',sub:'Your personal task view',icon:'🎯',cat:'Navigate',col:'ci-green'},
