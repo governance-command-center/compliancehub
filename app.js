@@ -1829,12 +1829,10 @@ function rerender(){
   else if(_curPage==='workspace')renderWorkSpace();
   else if(_curPage==='notes')renderNotes();
   else if(_curPage==='bulletin')renderBulletin();
-  else if(_curPage==='system-health')renderSystemHealth();
 }
 function showPage(p){
-  if(p==='system-health'&&(!CU||!CU.isAdmin)){toast('Admin only');return;}
   _curPage=p;
-  ['dashboard','tasks','members','reports','incidents','calendar','my-tasks','live-trackers','tod','audit','leaves','workspace','notes','bulletin','system-health'].forEach(pg=>{
+  ['dashboard','tasks','members','reports','incidents','calendar','my-tasks','live-trackers','tod','audit','leaves','workspace','notes','bulletin'].forEach(pg=>{
     const el=document.getElementById('pg-'+pg);
     if(el){
       if(pg===p){
@@ -5172,7 +5170,8 @@ function incVerifyFinding(key){return incRun(async function(){
 });}
 // Evidence is stored per finding; URLs are never embedded as untrusted HTML.
 function incParseEvidence(value){
-  var parts=Array.isArray(value)?value:String(value==null?'':value).split(/[\n;]+/);
+  var parts=Array.isArray(value)?value:String(value==null?'':value)
+    .replace(/<br\s*\/?\s*>/gi,'\n').split(/[\n;]+/);
   return [...new Set(parts.map(function(v){return String(v||'').trim();}).filter(function(v){try{var u=new URL(v);return (u.protocol==='https:'||u.protocol==='http:');}catch(e){return false;}}))];
 }
 function incEvidenceLinks(value,label){
@@ -5190,13 +5189,23 @@ function incEditAuditEvidence(key){return incRun(async function(){
 });}
 function incFindingPanel(i){
   var items=incCaseFindings(i),E=escHtml;
-  return '<div class="inc-panel"><div class="inc-ph">INDIVIDUAL FINDINGS ('+items.length+')</div>'+
-    items.map(function(x,n){return '<div class="inc-finding-row">'
-      +'<div style="display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap"><b>Finding '+(n+1)+' · '+E(x.incidentNo||'—')+'</b></div>'
-      +'<div><b>'+E(x.classification||x.category||'Issue')+':</b> '+E(x.issue||x.description||x.title||'')+'</div>'
-      +(x.remarks?'<div class="inc-help">'+E(x.remarks)+'</div>':'')
-      +'<div class="inc-evidence-section"><b>Audit Evidence (Governance)</b>'+incEvidenceLinks(x.evidenceUrls||x.evidence||x.evidenceUrl,'View Audit Evidence')+'</div>'
-      +(CU.isAdmin?'<div class="inc-evidence-section"><label class="flabel" for="icf-audit-'+E(x._key)+'">Add / Update Audit Evidence URL(s)</label><textarea class="finput" id="icf-audit-'+E(x._key)+'" rows="2" placeholder="OneDrive / SharePoint / Imgur links (one per line)">'+E(incParseEvidence(x.evidenceUrls||x.evidence||x.evidenceUrl).join('\n'))+'</textarea><button class="btn sm" onclick="incEditAuditEvidence(&quot;'+E(x._key)+'&quot;)">Save Audit Evidence</button></div>':'')
+  // Presentation-only consolidation: original incident fields and audit history remain untouched.
+  var entries=[];
+  items.forEach(function(x){
+    var issue=String(x.issue||x.description||x.title||'').trim();
+    var remarks=String(x.remarks||'').trim();
+    var links=incParseEvidence(x.evidenceUrls||x.evidence||x.evidenceUrl);
+    var split=!!(issue&&remarks&&links.length>=2);
+    var texts=split?[issue,remarks]:[issue];
+    texts.forEach(function(t,n){entries.push({item:x,text:t,links:split?[links[n]]:links,part:n,split:split});});
+  });
+  return '<div class="inc-panel"><div class="inc-ph">INDIVIDUAL FINDINGS ('+entries.length+')</div>'+
+    entries.map(function(e,n){var x=e.item;
+      return '<div class="inc-finding-row">'
+      +'<div style="font-size:12px;font-weight:700;margin-bottom:5px">'+String(n+1).padStart(2,'0')+' · '+E(x.incidentNo||'—')+'</div>'
+      +'<div>'+E(e.text)+'</div>'
+      +'<div style="margin-top:9px">'+incEvidenceLinks(e.links,'View Audit Evidence')+'</div>'
+      +(CU.isAdmin&&(!e.split||e.part===(e.split?1:0))?'<details style="margin-top:12px"><summary style="cursor:pointer;font-size:11px;color:var(--text3);font-weight:700">Edit audit evidence URLs (Governance)</summary><div class="inc-evidence-section"><label class="flabel" for="icf-audit-'+E(x._key)+'">Evidence URL(s) — one per line</label><textarea class="finput" id="icf-audit-'+E(x._key)+'" rows="2" placeholder="One URL per line">'+E(incParseEvidence(x.evidenceUrls||x.evidence||x.evidenceUrl).join('\n'))+'</textarea><button class="btn sm" onclick="incEditAuditEvidence(&quot;'+E(x._key)+'&quot;)">Save Audit Evidence</button></div></details>':'')
       +'</div>';}).join('')+'</div>';
 }
 function incCats(list){var m={},o=[];list.forEach(function(x){var c=x.category||'Others';if(!m[c]){m[c]=[];o.push(c);}m[c].push(x);});return o.map(function(c){return {cat:c,items:m[c]};});}
@@ -5384,7 +5393,7 @@ function renderIncCase(){
   if(!legacy)h+='<div class="inc-stepper">'+st(1,'MEMBER ACKNOWLEDGEMENT',0)+'<div class="inc-arrow">→</div>'+st(2,'TEAM LEAD COACHING',1)+'<div class="inc-arrow">→</div>'+st(3,'GOVERNANCE CLOSURE',2)+'</div>';
   h+=incLinkUI(i)+incFindingPanel(i);
   // original finding (read-only)
-  h+='<div class="inc-panel"><div class="inc-ph">ORIGINAL GOVERNANCE FINDING <span class="inc-lock">🔒 read-only</span></div>'
+  if(legacy)h+='<div class="inc-panel"><div class="inc-ph">ORIGINAL GOVERNANCE FINDING <span class="inc-lock">🔒 read-only</span></div>'
     +incRec([['Issue / Finding',i.issue||i.description||i.title],['Remarks / Context',i.remarks],['Reported By',i.reportedBy],['Date Logged',i.date+(i.ts?' ('+incFmt(i.ts)+')':'')]])+'</div>';
   if(!legacy){
     // STEP 1
@@ -12379,7 +12388,6 @@ function buildNav(){
       +sItem('notes',ICONS.notes,'Notes',0)
       +sItem('bulletin',ICONS.bulletin,'Announcements',totalBulletin)
       +'</div>';
-    html+='<div class="sidebar-section"><div class="sidebar-section-label">Administration</div>'+sItem('system-health',ICONS.audit,'System Health',0)+'</div>';
   } else if(isLead()){
     html+='<div class="sidebar-section"><div class="sidebar-section-label">Overview</div>'
       +sItem('dashboard',ICONS.dashboard,'Dashboard',badges.dashboard||badges['my-tasks']||0)
@@ -12553,62 +12561,3 @@ document.addEventListener('keydown',function(e){
   if((e.ctrlKey||e.metaKey)&&e.key==='k'){e.preventDefault();openCmd();}
 });
 
-
-
-// SYSTEM HEALTH: estimates only. Never runs continuously or on ordinary page loads.
-const GH_HEALTH_LIMIT=1024*1024*1024;
-let ghHealthReport=null,ghHealthHistory=[],ghBackupMeta=null,ghHealthBusy=false;
-const ghBytes=v=>new Blob([JSON.stringify(v??null)]).size;
-const ghSize=n=>n>=1048576?(n/1048576).toFixed(2)+' MB':(n/1024).toFixed(1)+' KB';
-function ghCount(v){return Array.isArray(v)?v.filter(x=>x!=null).length:v&&typeof v==='object'?Object.keys(v).length:v==null?0:1;}
-function ghModuleName(k){return ({incidents:'Incident Management',trackers:'Live Trackers',todAttendance:'Attendance',todOvertime:'Overtime',members:'Members',tasks:'Tasks',leadTasks:'Lead Tasks',statuses:'Task Statuses',weeklyReports:'Weekly Reports',auditLog:'Audit Log',calEntries:'Calendar',leaves:'Leaves',wsNotes:'Workspace Notes',wsBulletins:'Announcements',personalTasks:'Personal Tasks',systemHealth:'System Health'})[k]||k;}
-function ghStatus(p){return p>=90?'Critical':p>=80?'Warning':p>=60?'Monitor':'Healthy';}
-function ghReport(data){
-  const modules=Object.entries(data||{}).map(([key,value])=>({key,name:ghModuleName(key),count:ghCount(value),bytes:ghBytes(value)})).sort((a,b)=>b.bytes-a.bytes);
-  const bytes=ghBytes(data),pct=bytes/GH_HEALTH_LIMIT*100;
-  return {bytes,pct,status:ghStatus(pct),modules,records:modules.reduce((a,m)=>a+m.count,0),timestamp:Date.now()};
-}
-function renderSystemHealth(){
-  if(!CU||!CU.isAdmin)return;
-  const el=document.getElementById('pg-system-health');if(!el)return;
-  const r=ghHealthReport,p=r?Math.min(100,r.pct):0;
-  const hist=ghHealthHistory.slice().sort((a,b)=>a.timestamp-b.timestamp).slice(-12);
-  const bars=hist.map(h=>'<div class="gh-history-item" title="'+new Date(h.timestamp).toLocaleDateString()+' — '+ghSize(h.bytes)+'"><div class="gh-history-bar" style="height:'+Math.max(3,Math.round(h.bytes/Math.max(...hist.map(x=>x.bytes),1)*100))+'%"></div><small>'+new Date(h.timestamp).toLocaleDateString('en-PH',{month:'short',day:'numeric'})+'</small></div>').join('');
-  const prev=hist.length>1?hist[hist.length-2]:null;
-  const delta=r&&prev?(r.bytes-prev.bytes)/Math.max(prev.bytes,1)*100:null;
-  el.innerHTML='<div class="page-header"><div><div class="page-title">System Health</div><div class="page-subtitle">Admin-only diagnostics · Firebase Spark · All figures are client-side estimates</div></div></div>'+
-  '<div class="gh-actions"><button class="btn primary" onclick="ghScan()" '+(ghHealthBusy?'disabled':'')+'>Refresh Estimate</button><button class="btn" onclick="ghSnapshot()" '+(!r||ghHealthBusy?'disabled':'')+'>Save Snapshot</button><button class="btn" onclick="ghExport()" '+(ghHealthBusy?'disabled':'')+'>Export Database JSON</button></div>'+
-  '<p class="gh-note">A scan downloads the database to this browser. Run sparingly: downloads consume Firebase bandwidth. Estimated serialized JSON size is not official Firebase storage or billing usage. The 1 GiB reference is an approximate planning benchmark.</p>'+
-  '<div class="metrics-row"><div class="metric-card mc-blue"><div class="mc-label">Estimated data size</div><div class="mc-val">'+(r?ghSize(r.bytes):'—')+'</div></div><div class="metric-card mc-green"><div class="mc-label">Estimated utilization</div><div class="mc-val">'+(r?r.pct.toFixed(3)+'%':'—')+'</div></div><div class="metric-card mc-yellow"><div class="mc-label">Storage status</div><div class="mc-val">'+(r?r.status:'Not scanned')+'</div></div><div class="metric-card mc-black"><div class="mc-label">Top-level records</div><div class="mc-val">'+(r?r.records.toLocaleString():'—')+'</div></div></div>'+
-  '<div class="gh-panel"><b>Estimated storage utilization</b><div class="prog-bar" style="margin-top:12px"><div class="prog-fill" style="width:'+p+'%;background:'+(p>=90?'#dc2626':p>=80?'#ea580c':p>=60?'#ca8a04':'#16a34a')+'"></div></div><small>Healthy &lt;60% · Monitor 60–79% · Warning 80–89% · Critical ≥90%</small></div>'+
-  '<div class="gh-panel"><b>Module-level usage</b><div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>Module / database root</th><th>Direct records</th><th>Estimated size</th></tr></thead><tbody>'+(r?r.modules.map(m=>'<tr><td>'+m.name+'</td><td>'+m.count.toLocaleString()+'</td><td>'+ghSize(m.bytes)+'</td></tr>').join(''):'<tr><td colspan="3">Run Refresh Estimate to load module sizes.</td></tr>')+'</tbody></table></div><small>Counts represent direct children of each root, not all nested records. Largest modules appear first.</small></div>'+
-  '<div class="gh-panel"><b>Growth snapshots</b><p class="gh-note">'+(delta===null?'No comparison yet.':('Change vs preceding snapshot: '+(delta>=0?'+':'')+delta.toFixed(1)+'%'))+'</p><div class="gh-history">'+(bars||'No snapshots recorded.')+'</div><small>At most one snapshot per day, retaining the most recent 24 snapshots. Snapshots are manually triggered.</small></div>'+
-  '<div class="gh-panel"><b>Database backup</b><p class="gh-note">Last recorded successful download: '+(ghBackupMeta?.timestamp?new Date(ghBackupMeta.timestamp).toLocaleString('en-PH'):'No backup recorded')+'</p><small>Keep exported JSON in secure external storage. A browser download is not a verified offsite backup. This export covers the Firebase Realtime Database root accessible to your session, not Firebase Storage files or authentication accounts.</small></div>';
-}
-async function ghScan(){
-  if(!CU?.isAdmin||ghHealthBusy)return;ghHealthBusy=true;renderSystemHealth();
-  try{const snap=await FDB.ref('/').get();ghHealthReport=ghReport(snap.val()||{});const [history,meta]=await Promise.all([fbGet('systemHealth/snapshots'),fbGet('systemHealth/lastBackup')]);ghHealthHistory=history?Object.values(history):[];ghBackupMeta=meta||null;}
-  catch(e){toast('Health scan failed: '+e.message);}
-  finally{ghHealthBusy=false;renderSystemHealth();}
-}
-async function ghSnapshot(){
-  if(!CU?.isAdmin||!ghHealthReport||ghHealthBusy)return;
-  const date=ds(new Date());
-  try{const entry={timestamp:Date.now(),bytes:ghHealthReport.bytes,records:ghHealthReport.records};await fbSet('systemHealth/snapshots/'+date,entry);const all=await fbGet('systemHealth/snapshots')||{};const keys=Object.keys(all).sort();for(const key of keys.slice(0,Math.max(0,keys.length-24)))await fbDel('systemHealth/snapshots/'+key);ghHealthHistory=Object.values(await fbGet('systemHealth/snapshots')||{});toast('Snapshot saved');renderSystemHealth();}
-  catch(e){toast('Snapshot failed: '+e.message);}
-}
-async function ghExport(){
-  if(!CU?.isAdmin||ghHealthBusy)return;
-  if(!confirm('Download a full database JSON export? This may contain confidential employee and operational records. Store it securely.'))return;
-  ghHealthBusy=true;renderSystemHealth();
-  try{
-    const snap=await FDB.ref('/').get();const data=snap.val()||{};
-    const stamp=new Date().toISOString().replace(/[:.]/g,'-');
-    const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),database:data},null,2)],{type:'application/json'});
-    const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='GovernanceHub_Backup_'+stamp+'.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
-    // Browser download cannot prove the file was actually saved to disk.
-    ghBackupMeta={timestamp:Date.now(),filename:a.download,bytes:blob.size};await fbSet('systemHealth/lastBackup',ghBackupMeta);
-    toast('Download initiated. Verify the JSON file was saved before relying on this backup.');
-  }catch(e){toast('Backup failed: '+e.message);}
-  finally{ghHealthBusy=false;renderSystemHealth();}
-}
