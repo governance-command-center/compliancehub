@@ -4781,13 +4781,14 @@ async function unarchiveIncident(key){
 }
 
 function downloadIncidentTemplate(){
-  const headers=['Incident Date','Log Date','Region','Brand','Platform','CDM','CDM Team Lead','Category','Classification','Issue','Remarks'];
-  const example=['2026-04-20','2026-04-20','SG','Brand Name','Lazada','CDM Name','TL Name','Merchandise Master','Duplicate Information','Product listed without required disclosure','For monitoring'];
+  const headers=['Incident Date','Log Date','Region','Brand','Platform','CDM','CDM Team Lead','Category','Classification','Issue','Remarks','Evidence'];
+  const example=['2026-04-20','2026-04-20','SG','Brand Name','Lazada','CDM Name','TL Name','Merchandise Master','Duplicate Information','Product listed without required disclosure','For monitoring','https://example.com/evidence'];
   const notes=[
     '→ Region: MY PH TH VN ID SG EP',
     '→ Platform: Lazada / Shopee / TikTok / Zalora / Qoo10 / All',
     '→ Category (EXACT): SIS / Listing / Category / Merchandise Master / Compliance / Others',
     '→ Date format: YYYY-MM-DD (e.g. 2026-04-20)',
+    '→ Evidence: optional OneDrive, SharePoint, Imgur or HTTPS URL(s); separate multiple links with new lines or semicolons.',
     '→ Delete this row and the note rows before importing. Keep the header row.',
   ];
   const wb=XLSX.utils.book_new();
@@ -4876,6 +4877,7 @@ async function importIncidentExcel(evt){
           classification:String(row[col('Classification')]||'').trim(),
           issue,
           remarks:String(row[col('Remarks')]||'').trim(),
+          evidenceUrls:incParseEvidence(row[col('Evidence')]!==undefined?row[col('Evidence')]:row[col('Audit Evidence')]),
           description:issue,
           reportedBy:CU.name,
           tagged:[],responses:{},
@@ -5166,10 +5168,27 @@ function incVerifyFinding(key){return incRun(async function(){
   await incCommit(key,{findingVerification:verified?{verified:true,by:CU.name,username:CU.username,ts:Date.now(),note:note.trim()}:null},{type:verified?'FINDING_VERIFIED':'VERIFICATION_REVOKED',text:(verified?'Finding verified':'Finding verification revoked')+' by '+CU.name+(note?' — '+note:'')});
   toast(verified?'Finding verified':'Verification revoked');renderIncCase();renderIncidents();
 });}
+// Evidence is stored per finding; URLs are never embedded as untrusted HTML.
+function incParseEvidence(value){
+  var parts=Array.isArray(value)?value:String(value==null?'':value).split(/[\n;]+/);
+  return [...new Set(parts.map(function(v){return String(v||'').trim();}).filter(function(v){try{var u=new URL(v);return (u.protocol==='https:'||u.protocol==='http:');}catch(e){return false;}}))];
+}
+function incEvidenceLinks(value,label){
+  var links=incParseEvidence(value);if(!links.length)return '<span class="inc-help">No '+escHtml(label.toLowerCase())+' link provided.</span>';
+  return '<div class="inc-evidence-links">'+links.map(function(u,n){return '<a href="'+escHtml(u).replace(/"/g,'&quot;')+'" target="_blank" rel="noopener noreferrer" class="inc-evidence-link">↗ '+escHtml(label)+(links.length>1?' '+(n+1):'')+'</a>';}).join('')+'</div>';
+}
+function incSaveResolutionEvidence(key){return incRun(async function(){
+  var i=incGet(key);if(!i||!(incIsMember(i)||CU.isAdmin)){toast('Only the assigned CDM or Governance can update resolution evidence');return;}
+  if(incWf(i)==='Closed'){toast('Closed cases cannot be edited');return;}
+  var raw=incVal('icf-resolution-'+key),links=incParseEvidence(raw);
+  if(raw&&!links.length){toast('Enter a valid http(s) evidence URL');return;}
+  await incCommit(key,{resolutionEvidenceUrls:links},{type:'RESOLUTION_EVIDENCE_UPDATED',text:'Resolution evidence updated by '+CU.name});
+  toast('Resolution evidence saved');renderIncCase();
+});}
 function incFindingPanel(i){
   var items=incCaseFindings(i),E=escHtml;
   return '<div class="inc-panel"><div class="inc-ph">INDIVIDUAL FINDINGS ('+items.length+') · '+items.filter(incFindingResolved).length+' VERIFIED</div>'+
-    items.map(function(x,n){var v=x.findingVerification||{};return '<div class="inc-finding-row"><div style="display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap"><b>Finding '+(n+1)+' · '+E(x.incidentNo||'—')+'</b>'+incPill(v.verified?'Verified':'Pending verification',v.verified?'var(--green-light)':'var(--yellow-light)',v.verified?'var(--green)':'var(--yellow)',v.verified?'var(--green-mid)':'var(--yellow-mid)')+'</div><div><b>'+E(x.classification||x.category||'Issue')+':</b> '+E(x.issue||x.description||x.title||'')+'</div>'+(x.remarks?'<div class="inc-help">'+E(x.remarks)+'</div>':'')+(v.verified?'<div class="inc-help">Verified by '+E(v.by||'Governance')+' · '+incFmt(v.ts)+' · '+E(v.note||'')+'</div>':'')+(CU.isAdmin&&incWf(x)!=='Closed'?'<button class="btn sm '+(v.verified?'':'approve')+'" onclick="incVerifyFinding(&quot;'+x._key+'&quot;)">'+(v.verified?'Revoke verification':'Mark verified')+'</button>':'')+'</div>';}).join('')+'</div>';
+    items.map(function(x,n){var v=x.findingVerification||{};return '<div class="inc-finding-row"><div style="display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap"><b>Finding '+(n+1)+' · '+E(x.incidentNo||'—')+'</b>'+incPill(v.verified?'Verified':'Pending verification',v.verified?'var(--green-light)':'var(--yellow-light)',v.verified?'var(--green)':'var(--yellow)',v.verified?'var(--green-mid)':'var(--yellow-mid)')+'</div><div><b>'+E(x.classification||x.category||'Issue')+':</b> '+E(x.issue||x.description||x.title||'')+'</div>'+(x.remarks?'<div class="inc-help">'+E(x.remarks)+'</div>':'')+'<div class="inc-evidence-section"><b>Audit Evidence</b>'+incEvidenceLinks(x.evidenceUrls||x.evidence||x.evidenceUrl,'View Audit Evidence')+'</div>'+'<div class="inc-evidence-section"><b>Resolution Evidence</b>'+incEvidenceLinks(x.resolutionEvidenceUrls,'View Resolution Evidence')+((incIsMember(x)||CU.isAdmin)&&incWf(x)!=='Closed'?'<textarea class="finput" id="icf-resolution-'+x._key+'" rows="2" placeholder="Paste resolution evidence URLs (one per line)">'+E(incParseEvidence(x.resolutionEvidenceUrls).join('\n'))+'</textarea><button class="btn sm" onclick="incSaveResolutionEvidence(&quot;'+x._key+'&quot;)">Save Resolution Evidence</button>':'')+'</div>'+(v.verified?'<div class="inc-help">Verified by '+E(v.by||'Governance')+' · '+incFmt(v.ts)+' · '+E(v.note||'')+'</div>':'')+(CU.isAdmin&&incWf(x)!=='Closed'?'<button class="btn sm '+(v.verified?'':'approve')+'" onclick="incVerifyFinding(&quot;'+x._key+'&quot;)">'+(v.verified?'Revoke verification':'Mark verified')+'</button>':'')+'</div>';}).join('')+'</div>';
 }
 function incCats(list){var m={},o=[];list.forEach(function(x){var c=x.category||'Others';if(!m[c]){m[c]=[];o.push(c);}m[c].push(x);});return o.map(function(c){return {cat:c,items:m[c]};});}
 function incAckTargets(i){return incBatch(i).filter(function(x){return incWf(x)==='For Acknowledgement'&&x.appealStatus!=='Under Appeal';});}
@@ -5193,7 +5212,7 @@ function incAckForm(i){
     var list=g.items.length>1||multi?'<div class="inc-help">'+g.items.map(incSnip).join('<br>')+'</div>':'';
     h+='<div class="inc-fld"><label class="flabel">Root Cause'+escHtml(lbl)+'</label><div class="inc-help">What caused '+(multi&&!same?'these issues':'this issue')+'?</div>'+list
       +'<textarea class="finput" id="'+incAid('icf-rc',n,show,same)+'" rows="3" oninput="incDS(this.id,this.value)">'+incRaw(incDV(incAid('icf-rc',n,show,same)))+'</textarea></div>'
-      +'<div class="inc-fld"><label class="flabel">Corrective Action / Learning'+escHtml(lbl)+'</label><div class="inc-help">What action will you take to correct or prevent this from recurring?</div>'
+      +'<div class="inc-fld"><label class="flabel">Action Plan / Learning'+escHtml(lbl)+'</label><div class="inc-help">What action will you take to correct or prevent this from recurring?</div>'
       +'<textarea class="finput" id="'+incAid('icf-ca',n,show,same)+'" rows="3" oninput="incDS(this.id,this.value)">'+incRaw(incDV(incAid('icf-ca',n,show,same)))+'</textarea></div>';
   });
   return h;
@@ -5202,7 +5221,7 @@ function incCoachReview(i){
   var ct=incBatch(i).filter(function(x){return incWf(x)==='For Coaching';}),seen={},rows='';
   incCats(ct).forEach(function(g){g.items.forEach(function(x){
     var k=g.cat+'|'+(x.ack&&x.ack.rootCause)+'|'+(x.ack&&x.ack.correctiveAction);if(seen[k])return;seen[k]=1;
-    rows+='<div style="margin-top:6px"><b>'+escHtml(g.cat)+'</b> ('+g.items.length+')<br><b>Root Cause:</b> '+escHtml(x.ack&&x.ack.rootCause||'')+'<br><b>Corrective Action:</b> '+escHtml(x.ack&&x.ack.correctiveAction||'')+'</div>';});});
+    rows+='<div style="margin-top:6px"><b>'+escHtml(g.cat)+'</b> ('+g.items.length+')<br><b>Root Cause:</b> '+escHtml(x.ack&&x.ack.rootCause||'')+'<br><b>Action Plan:</b> '+escHtml(x.ack&&x.ack.correctiveAction||'')+'</div>';});});
   return '<div class="inc-note"><b>Review before coaching</b>'+(ct.length>1?' — this coaching applies to all '+ct.length+' incidents in the batch':'')
     +'<div style="margin-top:4px"><b>Findings:</b><br>'+ct.map(function(x){return escHtml(x.incidentNo||'')+' · '+incSnip(x);}).join('<br>')+'</div>'+rows+'</div>';
 }
@@ -5364,7 +5383,7 @@ function renderIncCase(){
     // STEP 1
     var s1='';
     if(i.returnNote&&wf==='For Acknowledgement')s1+='<div class="inc-note warn">↩ Returned for clarification by '+E(i.returnNote.by)+': '+E(i.returnNote.reason)+'</div>';
-    if(i.ack)s1+=incDone('Acknowledged by '+i.ack.by,i.ack.ts)+incRec([['Root Cause',i.ack.rootCause],['Corrective Action / Learning',i.ack.correctiveAction]]);
+    if(i.ack)s1+=incDone('Acknowledged by '+i.ack.by,i.ack.ts)+incRec([['Root Cause',i.ack.rootCause],['Action Plan / Learning',i.ack.correctiveAction]]);
     s1+=incHist(i.ackHistory,'acknowledgements',function(a){return '<b>'+incRaw(a.by)+'</b> · '+incFmt(a.ts)+incRec([['Root Cause',a.rootCause],['Corrective Action',a.correctiveAction]]);});
     if(i.appeal)s1+='<div class="inc-note '+(i.appeal.status==='Under Appeal'?'warn':'')+'"><b>Appeal — '+E(i.appeal.status)+'</b> · '+E(i.appeal.by)+' · '+incFmt(i.appeal.ts)+'<br><b>Reason:</b> '+E(i.appeal.reason)+'<br><b>Explanation / evidence:</b> '+E(i.appeal.evidence)+(i.appeal.reviewedBy?'<br><b>Reviewed by '+E(i.appeal.reviewedBy)+' ('+incFmt(i.appeal.reviewedAt)+'):</b> '+E(i.appeal.reviewNote):'')+'</div>';
     if(wf==='For Acknowledgement'){
@@ -5425,7 +5444,8 @@ function incIssueRow(){
     +'<div class="fg fg2"><div><label class="flabel">Category</label><select class="finput nb r-cat"><option value="">— Select Category —</option>'+INCIDENT_CATS.map(function(c){return '<option>'+c+'</option>';}).join('')+'</select></div>'
     +'<div><label class="flabel">Classification</label><input class="finput nb r-cls" placeholder="e.g. Policy Violation, Wrong Category..."/></div></div>'
     +'<div class="fg"><label class="flabel">Issue / Finding</label><textarea class="finput r-issue" rows="2" placeholder="Describe the specific issue found..."></textarea></div>'
-    +'<div class="fg" style="margin-bottom:0"><label class="flabel">Remarks</label><textarea class="finput r-rem" rows="2" placeholder="Additional remarks, context..."></textarea></div></div>';
+    +'<div class="fg"><label class="flabel">Remarks</label><textarea class="finput r-rem" rows="2" placeholder="Additional remarks, context..."></textarea></div>'
+    +'<div class="fg" style="margin-bottom:0"><label class="flabel">Audit Evidence URL(s) (optional)</label><textarea class="finput r-evidence" rows="2" placeholder="OneDrive / SharePoint / Imgur links; one per line"></textarea></div></div>';
 }
 function incAddIssueRow(){var c=document.getElementById('inc-rows');if(c)c.insertAdjacentHTML('beforeend',incIssueRow());}
 function openIncidentForm(){
@@ -5462,7 +5482,7 @@ async function saveIncident(){
   if(!document.getElementById('inc-cdm')?.value){toast('Select the CDM — the incident is assigned to them for acknowledgement');return;}
   const rows=[...document.querySelectorAll('#inc-rows .inc-row')].map(r=>({
     category:r.querySelector('.r-cat').value||'Others',classification:r.querySelector('.r-cls').value.trim(),
-    issue:r.querySelector('.r-issue').value.trim(),remarks:r.querySelector('.r-rem').value.trim()
+    issue:r.querySelector('.r-issue').value.trim(),remarks:r.querySelector('.r-rem').value.trim(),evidenceUrls:incParseEvidence(r.querySelector('.r-evidence')?.value||'')
   })).filter(r=>r.issue);
   if(!rows.length){toast('Enter the Issue / Finding for at least one issue');return;}
   const cdmM=D.members.find(m=>m.username===document.getElementById('inc-cdm')?.value),tlM=D.members.find(m=>m.username===document.getElementById('inc-cdmtl')?.value);
@@ -5476,7 +5496,7 @@ async function saveIncident(){
         category:r.category,region:document.getElementById('inc-region')?.value||'',brand,
         platform:document.getElementById('inc-platform')?.value||'',
         cdm:cdmM.name,cdmUser:cdmM.username,cdmTL:tlM?tlM.name:'',cdmTLUser:tlM?tlM.username:'',
-        classification:r.classification,issue:r.issue,description:r.issue,remarks:r.remarks,
+        classification:r.classification,issue:r.issue,description:r.issue,remarks:r.remarks,evidenceUrls:r.evidenceUrls,
         reportedBy:CU.name,tagged:[cdmM.username],responses:{},status:'Open',ts:Date.now()
       },await incInitFields());
       await fbPush('incidents',payload);ids.push(payload.incidentNo);
@@ -5511,7 +5531,9 @@ function exportIncidents(){
     'Governance Closure Note':z.note||'','Closed By':z.by||'','Closed At':z.ts?incFmt(z.ts):'',
     'Deadline':i.deadlineAt?incFmt(i.deadlineAt):'',
     'Late / On-Time':c==='Late'?'Late':c==='On Time'?'On Time':'',
-    'Appeal Status':i.appealStatus||''
+    'Appeal Status':i.appealStatus||'',
+    'Audit Evidence':incParseEvidence(i.evidenceUrls||i.evidence||i.evidenceUrl).join('\n'),
+    'Resolution Evidence':incParseEvidence(i.resolutionEvidenceUrls).join('\n')
   };}));
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Incidents');
   XLSX.writeFile(wb,`GovernanceHub_Incidents_${ds(now())}.xlsx`);
