@@ -5056,12 +5056,13 @@ function incCompPill(c){var m={'Overdue':['var(--red-light)','var(--red)','var(-
 function incCardFilter(kind,val){_incFltStatus='';_incFltComp='';if(kind==='wf')_incFltStatus=val;else _incFltComp=val;renderIncidents();}
 function incSummaryCards(list){
   var c={open:0,ack:0,coach:0,close:0,over:0,noId:0};
+  var findingCount=list.length;list=incCaseGroups(list).map(function(g){return g.primary;});
   list.forEach(function(i){var w=incWf(i);if(w!=='Closed')c.open++;if(w==='For Acknowledgement')c.ack++;if(w==='For Coaching')c.coach++;if(w==='For Closure')c.close++;if(incComp(i)==='Overdue')c.over++;if(!i.incidentNo)c.noId++;});
   function card(label,n,color,kind,val){return '<div class="metric-card" style="cursor:pointer;border-top:3px solid '+color+'" onclick="incCardFilter(\''+kind+'\',\''+val+'\')"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3)">'+label+'</div><div style="font-size:30px;font-weight:800;color:'+color+';line-height:1.2;margin-top:4px">'+n+'</div></div>';}
   return '<div class="metrics-row" style="margin-bottom:16px">'
     +card('Open Incidents',c.open,'var(--blue)','wf','__open')+card('Awaiting Acknowledgement',c.ack,'var(--yellow)','wf','For Acknowledgement')
     +card('Awaiting Coaching',c.coach,'var(--purple)','wf','For Coaching')+card('For Closure',c.close,'var(--teal)','wf','For Closure')
-    +card('Overdue',c.over,'var(--red)','comp','Overdue')+'</div>'
+    +card('Overdue',c.over,'var(--red)','comp','Overdue')+'</div><div class="inc-case-count">'+list.length+' incident case(s) · '+findingCount+' individual finding(s) retained</div>'
     +(CU.isAdmin&&c.noId?'<div style="display:flex;align-items:center;gap:10px;padding:8px 14px;margin-bottom:12px;background:var(--yellow-light);border:1px solid var(--yellow-mid);border-radius:var(--radius);font-size:12px"><span>'+c.noId+' existing incident'+(c.noId!==1?'s have':' has')+' no readable Incident ID yet.</span><button class="btn sm warning" onclick="incBackfillIds()">Assign IDs</button></div>':'');
 }
 async function incBackfillIds(){
@@ -5075,6 +5076,8 @@ async function incBackfillIds(){
 // ── Table (primary operational columns) ──
 function buildIncidentTableView(incidents){
   if(!incidents.length)return '<div class="empty-state" style="padding:40px">No incidents found.</div>';
+  var groups=incCaseGroups(incidents);
+  incidents=groups.map(function(g){return g.primary;});
   var E=escHtml,cdmSet={},tlSet={};
   incidents.forEach(function(i){if(incCdmName(i))cdmSet[incCdmName(i)]=1;if(incTlName(i))tlSet[incTlName(i)]=1;});
   function opts(set,cur,all){return '<option value="">'+all+'</option>'+Object.keys(set).sort().map(function(n){return '<option value="'+E(n)+'"'+(n===cur?' selected':'')+'>'+E(n)+'</option>';}).join('');}
@@ -5136,11 +5139,37 @@ function buildIncidentTableView(incidents){
 }
 
 // ── Mutations (append-only timeline; history preserved) ──
-// ── BATCHING: same CDM + brand + incident date = one batch (each issue keeps its own record/ID) ──
-function incBatchKey(i){return [(incCdmUser(i)||(i.cdm||'').trim().toLowerCase()),(i.brand||'').trim().toLowerCase(),i.incidentDate||i.date||''].join('|');}
+// ── CASE GROUPING: CDM + brand + platform + incident date + classification. Individual Firebase findings and audit history remain intact. ──
+function incBatchKey(i){return [(incCdmUser(i)||(i.cdm||'').trim().toLowerCase()),(i.brand||'').trim().toLowerCase(),(i.platform||'').trim().toLowerCase(),i.incidentDate||i.date||'',(i.classification||i.category||'Others').trim().toLowerCase()].join('|');}
 function incBatch(i){
   if(!i.wf)return [i];var k=incBatchKey(i);
   return (D.incidents||[]).filter(function(x){return x.wf&&!x._archived&&incBatchKey(x)===k;}).sort(function(a,b){return String(a.incidentNo||'').localeCompare(String(b.incidentNo||''))||(a.ts||0)-(b.ts||0);});
+}
+function incCaseGroups(list){
+  var groups=[],lookup={};
+  list.forEach(function(i){
+    // Legacy incidents are never automatically merged into a new workflow case.
+    var key=i.wf?incBatchKey(i):'legacy:'+i._key;
+    if(!lookup[key]){lookup[key]={key:key,items:[]};groups.push(lookup[key]);}
+    lookup[key].items.push(i);
+  });
+  groups.forEach(function(g){g.items.sort(function(a,b){return (a.ts||0)-(b.ts||0)||String(a.incidentNo||'').localeCompare(String(b.incidentNo||''));});g.primary=g.items[0];});
+  return groups;
+}
+function incCaseFindings(i){return incBatch(i);}
+function incFindingResolved(i){return !!(i.findingVerification&&i.findingVerification.verified);}
+function incVerifyFinding(key){return incRun(async function(){
+  if(!CU.isAdmin){toast('Governance access required');return;}
+  var i=incGet(key);if(!i||!i.wf){toast('Finding unavailable');return;}
+  var verified=!incFindingResolved(i),note='';
+  if(verified){note=prompt('Verification note / evidence reference for this finding:');if(!note||!note.trim()){toast('A verification note is required');return;}}
+  await incCommit(key,{findingVerification:verified?{verified:true,by:CU.name,username:CU.username,ts:Date.now(),note:note.trim()}:null},{type:verified?'FINDING_VERIFIED':'VERIFICATION_REVOKED',text:(verified?'Finding verified':'Finding verification revoked')+' by '+CU.name+(note?' — '+note:'')});
+  toast(verified?'Finding verified':'Verification revoked');renderIncCase();renderIncidents();
+});}
+function incFindingPanel(i){
+  var items=incCaseFindings(i),E=escHtml;
+  return '<div class="inc-panel"><div class="inc-ph">INDIVIDUAL FINDINGS ('+items.length+') · '+items.filter(incFindingResolved).length+' VERIFIED</div>'+
+    items.map(function(x,n){var v=x.findingVerification||{};return '<div class="inc-finding-row"><div style="display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap"><b>Finding '+(n+1)+' · '+E(x.incidentNo||'—')+'</b>'+incPill(v.verified?'Verified':'Pending verification',v.verified?'var(--green-light)':'var(--yellow-light)',v.verified?'var(--green)':'var(--yellow)',v.verified?'var(--green-mid)':'var(--yellow-mid)')+'</div><div><b>'+E(x.classification||x.category||'Issue')+':</b> '+E(x.issue||x.description||x.title||'')+'</div>'+(x.remarks?'<div class="inc-help">'+E(x.remarks)+'</div>':'')+(v.verified?'<div class="inc-help">Verified by '+E(v.by||'Governance')+' · '+incFmt(v.ts)+' · '+E(v.note||'')+'</div>':'')+(CU.isAdmin&&incWf(x)!=='Closed'?'<button class="btn sm '+(v.verified?'':'approve')+'" onclick="incVerifyFinding(&quot;'+x._key+'&quot;)">'+(v.verified?'Revoke verification':'Mark verified')+'</button>':'')+'</div>';}).join('')+'</div>';
 }
 function incCats(list){var m={},o=[];list.forEach(function(x){var c=x.category||'Others';if(!m[c]){m[c]=[];o.push(c);}m[c].push(x);});return o.map(function(c){return {cat:c,items:m[c]};});}
 function incAckTargets(i){return incBatch(i).filter(function(x){return incWf(x)==='For Acknowledgement'&&x.appealStatus!=='Under Appeal';});}
@@ -5246,7 +5275,11 @@ function incCoach(key){return incRun(async function(){
 function incClose(key){return incRun(async function(){
   var i=incGet(key);if(!CU.isAdmin||!i||incWf(i)!=='For Closure'){toast('Not available');return;}
   var n=incVal('icf-gn');if(!n){toast('Governance assessment / closure note is required');return;}
-  var tg=incScope(i,'For Closure'),t=Date.now();
+  var allFindings=incBatch(i);
+  if(allFindings.some(function(x){return incWf(x)!=='For Closure'&&incWf(x)!=='Closed';})){toast('All findings must finish acknowledgement and coaching before case closure',4000);return;}
+  var tg=allFindings.filter(function(x){return incWf(x)==='For Closure';}),t=Date.now();
+  var pending=allFindings.filter(function(x){return !incFindingResolved(x);});
+  if(pending.length){toast('Verify all '+pending.length+' remaining finding(s) before closure',4000);return;}
   await incCommitMany(tg.map(function(x){return {key:x._key,fields:{wf:'Closed',status:'Resolved',resolvedBy:CU.name,resolvedAt:t,closure:{by:CU.name,username:CU.username,note:n,ts:t,type:'Closed'}},evt:{type:'CLOSED',text:'Incident closed by Governance ('+CU.name+')'}};}),'Closed '+tg.length+' incident(s)');
   _incDraft={};toast(tg.length>1?tg.length+' incidents closed':'Incident closed');renderIncCase();
 });}
@@ -5323,7 +5356,7 @@ function renderIncCase(){
   var idx=INC_WF_STAGES.indexOf(wf);
   function st(n,label,s){var cls=idx>s||wf==='Closed'?'done':idx===s?'cur':'pend';return '<div class="inc-st '+cls+'"><div class="inc-st-n">'+(cls==='done'?'✓':n)+'</div><div>'+label+'</div></div>';}
   if(!legacy)h+='<div class="inc-stepper">'+st(1,'MEMBER ACKNOWLEDGEMENT',0)+'<div class="inc-arrow">→</div>'+st(2,'TEAM LEAD COACHING',1)+'<div class="inc-arrow">→</div>'+st(3,'GOVERNANCE CLOSURE',2)+'</div>';
-  h+=incLinkUI(i)+incBatchPanel(i);
+  h+=incLinkUI(i)+incFindingPanel(i);
   // original finding (read-only)
   h+='<div class="inc-panel"><div class="inc-ph">ORIGINAL GOVERNANCE FINDING <span class="inc-lock">🔒 read-only</span></div>'
     +incRec([['Issue / Finding',i.issue||i.description||i.title],['Remarks / Context',i.remarks],['Reported By',i.reportedBy],['Date Logged',i.date+(i.ts?' ('+incFmt(i.ts)+')':'')]])+'</div>';

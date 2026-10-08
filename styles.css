@@ -673,3 +673,8 @@ button:focus-visible, a:focus-visible {
 .inc-tl-i::before{content:'';position:absolute;left:-20px;top:5px;width:10px;height:10px;border-radius:50%;background:var(--blue);border:2px solid var(--surface)}
 .inc-tl-t{font-size:11px;color:var(--text3);font-weight:600}
 @media(max-width:900px){.inc-hgrid{grid-template-columns:1fr 1fr}.inc-rec{grid-template-columns:1fr}}
+
+/* Incident case consolidation: scoped to Incident module */
+.inc-finding-row{padding:12px 10px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:6px;font-size:12px}
+.inc-finding-row:last-child{border-bottom:0}
+.inc-case-count{font-size:12px;color:var(--text3);margin:-6px 0 16px}
