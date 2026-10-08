@@ -5177,18 +5177,25 @@ function incEvidenceLinks(value,label){
   var links=incParseEvidence(value);if(!links.length)return '<span class="inc-help">No '+escHtml(label.toLowerCase())+' link provided.</span>';
   return '<div class="inc-evidence-links">'+links.map(function(u,n){return '<a href="'+escHtml(u).replace(/"/g,'&quot;')+'" target="_blank" rel="noopener noreferrer" class="inc-evidence-link">↗ '+escHtml(label)+(links.length>1?' '+(n+1):'')+'</a>';}).join('')+'</div>';
 }
-function incSaveResolutionEvidence(key){return incRun(async function(){
-  var i=incGet(key);if(!i||!(incIsMember(i)||CU.isAdmin)){toast('Only the assigned CDM or Governance can update resolution evidence');return;}
-  if(incWf(i)==='Closed'){toast('Closed cases cannot be edited');return;}
-  var raw=incVal('icf-resolution-'+key),links=incParseEvidence(raw);
-  if(raw&&!links.length){toast('Enter a valid http(s) evidence URL');return;}
-  await incCommit(key,{resolutionEvidenceUrls:links},{type:'RESOLUTION_EVIDENCE_UPDATED',text:'Resolution evidence updated by '+CU.name});
-  toast('Resolution evidence saved');renderIncCase();
+// Audit evidence belongs to Governance. Members and Team Leads have read-only access.
+function incEditAuditEvidence(key){return incRun(async function(){
+  if(!CU.isAdmin){toast('Only Governance can update audit evidence');return;}
+  var i=incGet(key);if(!i){toast('Finding unavailable');return;}
+  var raw=incVal('icf-audit-'+key),links=incParseEvidence(raw);
+  if(raw.trim()&&!links.length){toast('Enter valid http(s) evidence URLs');return;}
+  await incCommit(key,{evidenceUrls:links},{type:'AUDIT_EVIDENCE_UPDATED',text:'Audit evidence updated by '+CU.name});
+  toast('Audit evidence saved');renderIncCase();
 });}
 function incFindingPanel(i){
   var items=incCaseFindings(i),E=escHtml;
-  return '<div class="inc-panel"><div class="inc-ph">INDIVIDUAL FINDINGS ('+items.length+') · '+items.filter(incFindingResolved).length+' VERIFIED</div>'+
-    items.map(function(x,n){var v=x.findingVerification||{};return '<div class="inc-finding-row"><div style="display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap"><b>Finding '+(n+1)+' · '+E(x.incidentNo||'—')+'</b>'+incPill(v.verified?'Verified':'Pending verification',v.verified?'var(--green-light)':'var(--yellow-light)',v.verified?'var(--green)':'var(--yellow)',v.verified?'var(--green-mid)':'var(--yellow-mid)')+'</div><div><b>'+E(x.classification||x.category||'Issue')+':</b> '+E(x.issue||x.description||x.title||'')+'</div>'+(x.remarks?'<div class="inc-help">'+E(x.remarks)+'</div>':'')+'<div class="inc-evidence-section"><b>Audit Evidence</b>'+incEvidenceLinks(x.evidenceUrls||x.evidence||x.evidenceUrl,'View Audit Evidence')+'</div>'+'<div class="inc-evidence-section"><b>Resolution Evidence</b>'+incEvidenceLinks(x.resolutionEvidenceUrls,'View Resolution Evidence')+((incIsMember(x)||CU.isAdmin)&&incWf(x)!=='Closed'?'<textarea class="finput" id="icf-resolution-'+x._key+'" rows="2" placeholder="Paste resolution evidence URLs (one per line)">'+E(incParseEvidence(x.resolutionEvidenceUrls).join('\n'))+'</textarea><button class="btn sm" onclick="incSaveResolutionEvidence(&quot;'+x._key+'&quot;)">Save Resolution Evidence</button>':'')+'</div>'+(v.verified?'<div class="inc-help">Verified by '+E(v.by||'Governance')+' · '+incFmt(v.ts)+' · '+E(v.note||'')+'</div>':'')+(CU.isAdmin&&incWf(x)!=='Closed'?'<button class="btn sm '+(v.verified?'':'approve')+'" onclick="incVerifyFinding(&quot;'+x._key+'&quot;)">'+(v.verified?'Revoke verification':'Mark verified')+'</button>':'')+'</div>';}).join('')+'</div>';
+  return '<div class="inc-panel"><div class="inc-ph">INDIVIDUAL FINDINGS ('+items.length+')</div>'+
+    items.map(function(x,n){return '<div class="inc-finding-row">'
+      +'<div style="display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap"><b>Finding '+(n+1)+' · '+E(x.incidentNo||'—')+'</b></div>'
+      +'<div><b>'+E(x.classification||x.category||'Issue')+':</b> '+E(x.issue||x.description||x.title||'')+'</div>'
+      +(x.remarks?'<div class="inc-help">'+E(x.remarks)+'</div>':'')
+      +'<div class="inc-evidence-section"><b>Audit Evidence (Governance)</b>'+incEvidenceLinks(x.evidenceUrls||x.evidence||x.evidenceUrl,'View Audit Evidence')+'</div>'
+      +(CU.isAdmin?'<div class="inc-evidence-section"><label class="flabel" for="icf-audit-'+E(x._key)+'">Add / Update Audit Evidence URL(s)</label><textarea class="finput" id="icf-audit-'+E(x._key)+'" rows="2" placeholder="OneDrive / SharePoint / Imgur links (one per line)">'+E(incParseEvidence(x.evidenceUrls||x.evidence||x.evidenceUrl).join('\n'))+'</textarea><button class="btn sm" onclick="incEditAuditEvidence(&quot;'+E(x._key)+'&quot;)">Save Audit Evidence</button></div>':'')
+      +'</div>';}).join('')+'</div>';
 }
 function incCats(list){var m={},o=[];list.forEach(function(x){var c=x.category||'Others';if(!m[c]){m[c]=[];o.push(c);}m[c].push(x);});return o.map(function(c){return {cat:c,items:m[c]};});}
 function incAckTargets(i){return incBatch(i).filter(function(x){return incWf(x)==='For Acknowledgement'&&x.appealStatus!=='Under Appeal';});}
@@ -5297,8 +5304,6 @@ function incClose(key){return incRun(async function(){
   var allFindings=incBatch(i);
   if(allFindings.some(function(x){return incWf(x)!=='For Closure'&&incWf(x)!=='Closed';})){toast('All findings must finish acknowledgement and coaching before case closure',4000);return;}
   var tg=allFindings.filter(function(x){return incWf(x)==='For Closure';}),t=Date.now();
-  var pending=allFindings.filter(function(x){return !incFindingResolved(x);});
-  if(pending.length){toast('Verify all '+pending.length+' remaining finding(s) before closure',4000);return;}
   await incCommitMany(tg.map(function(x){return {key:x._key,fields:{wf:'Closed',status:'Resolved',resolvedBy:CU.name,resolvedAt:t,closure:{by:CU.name,username:CU.username,note:n,ts:t,type:'Closed'}},evt:{type:'CLOSED',text:'Incident closed by Governance ('+CU.name+')'}};}),'Closed '+tg.length+' incident(s)');
   _incDraft={};toast(tg.length>1?tg.length+' incidents closed':'Incident closed');renderIncCase();
 });}
@@ -5465,7 +5470,7 @@ function openIncidentForm(){
       <div><label class="flabel">CDM</label><select class="finput nb" id="inc-cdm"><option value="">— Select CDM —</option>${memberOpts}</select></div>
       <div><label class="flabel">CDM Team Lead</label><select class="finput nb" id="inc-cdmtl"><option value="">— Select Team Lead —</option>${tlOpts}</select></div>
     </div>
-    <div class="inc-help" style="margin:4px 0 8px">Issues for the same CDM, brand and incident date are grouped into one batch, so the member acknowledges them together.</div>
+    <div class="inc-help" style="margin:4px 0 8px">Issues with the same CDM, brand, platform, incident date and classification are grouped into one case. Governance provides audit evidence for each finding.</div>
     <div id="inc-rows">${incIssueRow()}</div>
     <button class="btn sm" type="button" onclick="incAddIssueRow()">+ Add another issue</button>
     <div class="form-actions">
