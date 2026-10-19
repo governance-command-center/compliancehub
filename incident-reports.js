@@ -86,7 +86,7 @@
       +'<p class="ir-muted">Legacy incidents without workflow fields are excluded from overdue/late metrics. All totals follow the user’s incident visibility permissions. This page does not alter incident records.</p></div>';
     return html;
   }
-  function refresh(){if(_curPage==='reports')renderReports();}
+  function refresh(){if(_curPage==='incident-analytics'&&window.renderIncidentAnalytics)window.renderIncidentAnalytics();}
   window.incidentReportReset=function(){filters={from:'',to:'',region:'',platform:'',lead:'',search:''};refresh();};
   window.incidentReportCSV=function(){
     var cols=['Incident Date','Incident ID','Region','Platform','Brand','CDM','Team Lead','Classification','Issue','Workflow','Compliance'];
@@ -94,23 +94,15 @@
     var csv='\uFEFF'+lines.map(function(row){return row.map(function(v){var s=String(v==null?'':v);if(/^[=+\-@\t\r]/.test(s))s="'"+s;return '"'+s.replace(/"/g,'""')+'"';}).join(',');}).join('\r\n');
     var link=document.createElement('a');link.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));link.download='GovernanceHub_Incident_Report.csv';document.body.appendChild(link);link.click();link.remove();setTimeout(function(){URL.revokeObjectURL(link.href);},500);
   };
-  window.renderReports=function(){
-    original();
-    var el=document.getElementById('pg-reports');if(!el)return;
-    var header=el.querySelector('.page-header');
-    if(!header)return;
-    var children=Array.from(el.children).filter(function(n){return n!==header;});
-    var weekly=document.createElement('div');weekly.id='ir-weekly';
-    children.forEach(function(n){weekly.appendChild(n);});
-    var tabs=document.createElement('div');tabs.className='ir-tabs';
-    tabs.innerHTML='<button type="button" data-ir-view="weekly" class="'+(reportView==='weekly'?'active':'')+'">Weekly Reports</button><button type="button" data-ir-view="analytics" class="'+(reportView==='analytics'?'active':'')+'">Incident Summary & Analytics</button>';
-    var analytics=document.createElement('div');analytics.id='ir-analytics';analytics.innerHTML=renderAnalytics();
-    weekly.style.display=reportView==='weekly'?'':'none';
-    analytics.style.display=reportView==='analytics'?'':'none';
-    el.appendChild(tabs);el.appendChild(weekly);el.appendChild(analytics);
-    tabs.addEventListener('click',function(e){var b=e.target.closest('[data-ir-view]');if(!b)return;reportView=b.dataset.irView;refresh();});
-    analytics.addEventListener('change',function(e){var k=e.target.dataset.irFilter;if(!k)return;filters[k]=e.target.value;refresh();});
-    analytics.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.dataset.irFilter==='search'){filters.search=e.target.value;refresh();}});
-    analytics.addEventListener('blur',function(e){if(e.target.dataset.irFilter==='search'&&filters.search!==e.target.value){filters.search=e.target.value;refresh();}},true);
+  window.renderIncidentAnalytics=function(){
+    var el=document.getElementById('pg-incident-analytics');if(!el)return;
+    el.innerHTML=renderAnalytics();
+    el.querySelectorAll('[data-ir-filter]').forEach(function(control){
+      control.addEventListener('change',function(){filters[control.dataset.irFilter]=control.value;window.renderIncidentAnalytics();});
+      if(control.dataset.irFilter==='search'){
+        control.addEventListener('keydown',function(e){if(e.key==='Enter'){filters.search=control.value;window.renderIncidentAnalytics();}});
+        control.addEventListener('blur',function(){if(filters.search!==control.value){filters.search=control.value;window.renderIncidentAnalytics();}});
+      }
+    });
   };
 })();
