@@ -11,7 +11,7 @@
   function dateOf(i){return safeDate(i.incidentDate||i.date||'');}
   function statusOf(i){return typeof incWf==='function'?incWf(i):(i.status==='Resolved'?'Closed':'For Acknowledgement');}
   function compOf(i){return typeof incComp==='function'?incComp(i):'N/A';}
-  function leadOf(i){return i.cdmTL||'Unassigned';}
+  function leadOf(i){return (typeof incTlName==='function'&&incTlName(i))||i.cdmTL||'Unassigned';}
   function visible(i){
     if(i._leadTaskEsc||i._archived)return false;
     return typeof incCanSee!=='function'||incCanSee(i);
@@ -35,7 +35,7 @@
     });
   }
   function tally(data,key){var counts={};data.forEach(function(i){var k=String(key(i)||'Unspecified').trim()||'Unspecified';counts[k]=(counts[k]||0)+1;});return Object.entries(counts).sort(function(a,b){return b[1]-a[1]||a[0].localeCompare(b[0]);});}
-  function bars(rows,max){var items=rows.slice(0,max||8),top=items[0]?items[0][1]:1;return items.length?items.map(function(r){return '<div class="ir-bar"><span title="'+esc(r[0])+'">'+esc(r[0])+'</span><div class="ir-track"><div style="width:'+(r[1]/top*100).toFixed(1)+'%"></div></div><strong>'+r[1]+'</strong></div>';}).join(''):'<p class="ir-muted">No matching incidents.</p>';}
+  function bars(rows,max){var items=rows.slice(0,max||8),top=Math.max(1,...items.map(function(r){return r[1];}));return items.length?items.map(function(r){return '<div class="ir-bar"><span title="'+esc(r[0])+'">'+esc(r[0])+'</span><div class="ir-track"><div style="width:'+(r[1]/top*100).toFixed(1)+'%"></div></div><strong>'+r[1]+'</strong></div>';}).join(''):'<p class="ir-muted">No matching incidents.</p>';}
   function panel(title,body){return '<section class="ir-panel"><h4>'+title+'</h4>'+body+'</section>';}
   function stat(label,value,detail){return '<div class="ir-stat"><span>'+label+'</span><strong>'+value+'</strong><small>'+detail+'</small></div>';}
   function insights(data,regions,classes,leads,overdue){
@@ -57,6 +57,17 @@
     var leads=tally(data,leadOf);
     var months=tally(data,function(i){return dateOf(i).slice(0,7)||'Undated';}).sort(function(a,b){return a[0].localeCompare(b[0]);});
     var recurring=tally(data,function(i){return (i.cdm||'Unassigned')+' / '+(i.classification||i.category||'Unspecified');}).filter(function(r){return r[1]>1;});
+    var legacy=data.filter(function(i){return !i.wf;}).length;
+    var unassigned=data.filter(function(i){return leadOf(i)==='Unassigned';}).length;
+    var undated=data.filter(function(i){return !dateOf(i);}).length;
+    var invalidDeadline=data.filter(function(i){return i.wf&&i.wf!=='Closed'&&!i.cancelled&&!i.deadlineAt;}).length;
+    var today=new Date(),thisMonth=today.getFullYear()+'-'+String(today.getMonth()+1).padStart(2,'0');
+    var previousDate=new Date(today.getFullYear(),today.getMonth()-1,1);
+    var lastMonth=previousDate.getFullYear()+'-'+String(previousDate.getMonth()+1).padStart(2,'0');
+    var currentCount=data.filter(function(i){return dateOf(i).slice(0,7)===thisMonth;}).length;
+    var previousCount=data.filter(function(i){return dateOf(i).slice(0,7)===lastMonth;}).length;
+    var comparison='<div class="ir-compare"><div><small>'+esc(lastMonth)+'</small><strong>'+previousCount+'</strong></div><span>→</span><div><small>'+esc(thisMonth)+'</small><strong>'+currentCount+'</strong></div><p>'+esc(previousCount===0?(currentCount?'New incidents this month; no incidents last month for a percentage comparison.':'No incidents in either month.'):(currentCount>=previousCount?'+':'')+Math.round((currentCount-previousCount)/previousCount*100)+'% versus previous month.')+'</p></div>';
+    var quality='<div class="ir-quality"><strong>Data validation</strong><p>'+legacy+' legacy record(s) without workflow tracking · '+unassigned+' without a resolved Team Lead · '+undated+' without a valid incident date · '+invalidDeadline+' active workflow case(s) without a deadline.</p><small>Missing assignments are flagged, not automatically inferred. Review the source incident records before using these figures for accountability decisions.</small></div>';
     var cols=['Incident date','Incident ID','Region','Platform','Brand','CDM','Team Lead','Classification','Issue','Workflow','Compliance'];
     var rows=data.slice().sort(function(a,b){return dateOf(b).localeCompare(dateOf(a));}).slice(0,100).map(function(i){
       return [dateOf(i),i.incidentNo||i.id||'',i.region||'',i.platform||'',i.brand||'',i.cdm||'',leadOf(i),i.classification||i.category||'',i.issue||'',statusOf(i),compOf(i)];
@@ -69,8 +80,8 @@
       +select('lead',distinct(universe,leadOf),'Team Lead')
       +'<label class="ir-filter">Search<input type="search" data-ir-filter="search" value="'+esc(filters.search)+'" placeholder="CDM, brand, issue..."></label></div>'
       +'<div class="ir-stats">'+stat('Total incidents',total,'Filtered incident records')+stat('Active cases',total-closed,'Not workflow-closed')+stat('Overdue',overdue,'Past workflow deadline')+stat('Closure rate',total?Math.round(closed/total*100)+'%':'—',closed+' closed')+stat('Closed late',late,'Recorded late completion')+'</div>'
-      +'<div class="ir-grid">'+panel('Classification breakdown',bars(classes))+panel('Incidents by region',bars(regions))+panel('Team Lead distribution',bars(leads))+panel('Monthly trend',bars(months,18))+'</div>'
-      +'<div class="ir-grid">'+panel('Recurring CDM / classification combinations',recurring.length?bars(recurring,10):'<p class="ir-muted">No repeated combinations in this selection.</p>')+panel('Management insights',insights(data,regions,classes,leads,overdue))+'</div>'
+      +'<div class="ir-grid">'+panel('Classification breakdown',bars(classes))+panel('Incidents by region',bars(regions))+panel('Team Lead distribution',bars(leads))+panel('Monthly trend (shared scale)',bars(months,18))+'</div>'
+      +'<div class="ir-grid">'+panel('Month-over-month comparison',comparison)+panel('Data quality checks',quality)+'</div>'+'<div class="ir-grid">'+panel('Recurring CDM / classification combinations',recurring.length?bars(recurring,10):'<p class="ir-muted">No repeated combinations in this selection.</p>')+panel('Management insights',insights(data,regions,classes,leads,overdue))+'</div>'
       +panel('Incident register — latest 100 of '+total,'<div class="ir-table-scroll"><table class="ir-table"><thead><tr>'+cols.map(function(c){return '<th>'+esc(c)+'</th>';}).join('')+'</tr></thead><tbody>'+rows.map(function(row){return '<tr>'+row.map(function(v){return '<td>'+esc(v)+'</td>';}).join('')+'</tr>';}).join('')+'</tbody></table></div>')
       +'<p class="ir-muted">Legacy incidents without workflow fields are excluded from overdue/late metrics. All totals follow the user’s incident visibility permissions. This page does not alter incident records.</p></div>';
     return html;
