@@ -4293,6 +4293,41 @@ let _incSelKeys=new Set(); // keys of selected incidents for admin delete
 let _wrReportIdx=0; // index into D.weeklyReports for left/right nav
 let _incSumWeekOffset=0; // offset in weeks for incident summary view (0=current)
 if(!window._incSumTLFilter)window._incSumTLFilter='';
+// Phase 1: read-only Incident Intelligence, scoped to the Incident page.
+// Uses the same role-visible Firebase incident records; does not write or sync data.
+function incOverviewHTML(list){
+  var start=_incFrom||'',end=_incTo||ds(now());
+  var data=list.filter(function(i){var d=i.incidentDate||i.date||'';return (!start||d>=start)&&(!end||d<=end);});
+  var total=data.length,closed=0,overdue=0,open=0,late=0;
+  var byClass={},byRegion={},byLead={},byMonth={};
+  function add(o,k){k=String(k||'Unspecified').trim()||'Unspecified';o[k]=(o[k]||0)+1;}
+  data.forEach(function(i){
+    var w=incWf(i),c=incComp(i);
+    if(w==='Closed')closed++;else open++;
+    if(c==='Overdue')overdue++;
+    if(c==='Late')late++;
+    add(byClass,i.classification||i.category);
+    add(byRegion,i.region);
+    add(byLead,incTlName(i));
+    var d=i.incidentDate||i.date||'';
+    if(/^\d{4}-\d{2}/.test(d))add(byMonth,d.slice(0,7));
+  });
+  function metric(name,val,sub){return '<div class="inc-ov-metric"><div class="inc-ov-label">'+name+'</div><div class="inc-ov-value">'+val+'</div><div class="inc-ov-sub">'+sub+'</div></div>';}
+  function bars(obj,max){
+    var entries=Object.keys(obj).map(function(k){return [k,obj[k]];}).sort(function(a,b){return b[1]-a[1]||a[0].localeCompare(b[0]);}).slice(0,max||6);
+    if(!entries.length)return '<div class="inc-ov-empty">No incidents in this period.</div>';
+    var peak=entries[0][1]||1;
+    return entries.map(function(x){return '<div class="inc-ov-bar-row"><span title="'+E(x[0])+'">'+E(x[0])+'</span><div class="inc-ov-track"><div class="inc-ov-fill" style="width:'+(100*x[1]/peak).toFixed(1)+'%"></div></div><b>'+x[1]+'</b></div>';}).join('');
+  }
+  var months=Object.keys(byMonth).sort().slice(-8);
+  var monthHTML=months.length?months.map(function(m){return '<div class="inc-ov-month"><b>'+byMonth[m]+'</b><div class="inc-ov-month-track"><div style="height:'+(100*byMonth[m]/Math.max.apply(null,months.map(function(k){return byMonth[k];})))+'%"></div></div><span>'+E(m.slice(2))+'</span></div>';}).join(''):'<div class="inc-ov-empty">No dated incidents.</div>';
+  return '<section class="inc-ov" aria-label="Incident intelligence overview">'
+    +'<div class="inc-ov-heading"><div><strong>Incident Intelligence</strong><small>Live overview · Incident tab only · '+(start?E(start):'All dates')+' to '+E(end)+'</small></div><span class="inc-ov-tag">'+total+' cases</span></div>'
+    +'<div class="inc-ov-metrics">'+metric('Total incidents',total,'In selected incident-date range')+metric('Active cases',open,'Not yet workflow-closed')+metric('Overdue',overdue,'Workflow cases past deadline')+metric('Closure rate',total?Math.round(closed/total*100)+'%':'—',closed+' closed')+metric('Closed late',late,'Late completion recorded')+'</div>'
+    +'<div class="inc-ov-grid"><div class="inc-ov-panel"><h4>Top classifications</h4>'+bars(byClass,6)+'</div><div class="inc-ov-panel"><h4>Incidents by region</h4>'+bars(byRegion,7)+'</div><div class="inc-ov-panel"><h4>Team Lead distribution</h4>'+bars(byLead,6)+'</div><div class="inc-ov-panel"><h4>Monthly incident trend</h4><div class="inc-ov-months">'+monthHTML+'</div></div></div>'
+    +'<div class="inc-ov-foot">Counts are based on incidents visible to your account. Legacy cases without workflow tracking are excluded from overdue/late counts. Reporting is read-only; Excel and existing incident workflows remain unchanged.</div>'
+    +'</section>';
+}
 function renderIncidents(){
   var el=document.getElementById('pg-incidents');if(!el)return;
   try{incRefreshCase();}catch(e){}
@@ -4604,6 +4639,7 @@ function renderIncidents(){
       +'</div>'
     +'</div>'
     +incSummaryCards(allVisible.filter(function(i){return !i._archived;}))
+    +incOverviewHTML(allVisible.filter(function(i){return !i._archived;}))
     +archiveBanner
     +'<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">'
       +'<label class="flabel" style="display:inline;margin-bottom:0">From</label>'
