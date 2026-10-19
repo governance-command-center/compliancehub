@@ -4330,6 +4330,7 @@ function incOverviewHTML(list){
     +'</section>';
 }
 function renderIncidents(){
+  _incViewMode='table'; // Incident register standard view
   var el=document.getElementById('pg-incidents');if(!el)return;
   try{incRefreshCase();}catch(e){}
 
@@ -4624,19 +4625,15 @@ function renderIncidents(){
   el.innerHTML=
     '<div class="page-header"><div><div class="page-title">Incident Log</div><div class="page-subtitle">Acknowledge, coach and close — one record, one source of truth</div></div>'
       +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
-        // View toggle
-        +'<div style="display:flex;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;flex-shrink:0">'
-          +'<button onclick="_incViewMode=\'table\';renderIncidents()" style="padding:5px 12px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:'+(_incViewMode!=='cards'?'var(--blue)':'var(--surface)')+';color:'+(_incViewMode!=='cards'?'#fff':'var(--text2)')+'" title="Table view">⊞ Table</button>'
-          +'<button onclick="_incViewMode=\'cards\';renderIncidents()" style="padding:5px 12px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:'+(_incViewMode==='cards'?'var(--blue)':'var(--surface)')+';color:'+(_incViewMode==='cards'?'#fff':'var(--text2)')+'" title="Card view">☰ Cards</button>'
-        +'</div>'
-        +'<button class="btn sm" onclick="downloadIncidentTemplate()">&#11015; Template</button>'
-        +'<button class="btn sm teal" onclick="document.getElementById(\'inc-import-f\').click()">&#11014; Import Excel</button>'
-        +'<input type="file" id="inc-import-f" accept=".xlsx,.xls" style="display:none" onchange="importIncidentExcel(event)"/>'
         +'<button class="btn sm" onclick="exportIncidents()">Export Excel</button>'
         +(CU.isAdmin?'<button class="btn sm" onclick="toggleArchivedIncidents()" id="inc-archive-btn">📦 '+((_incShowArchived)?'Hide Archived':'View Archived')+'</button>':'')
-        +(CU.isAdmin?'<button class="btn sm del" onclick="clearAllIncidents()" title="Remove all logged incidents permanently">🗑 Clear All Incidents</button>':'')
-        +'<button class="btn sm success" onclick="syncIncidentsToReports()" title="Push latest incidents into the Reports tab tables">🔄 Sync to Reports</button>'
-        +'<button class="btn primary" onclick="openIncidentForm()">+ Log Incident</button>'
+        +'<input type="file" id="inc-import-f" accept=".xlsx,.xls" style="display:none" onchange="importIncidentExcel(event)"/>'
+        +'<select class="btn primary" aria-label="Log Incident" style="cursor:pointer;max-width:190px" onchange="var v=this.value;this.selectedIndex=0;if(v===\'manual\')openIncidentForm();else if(v===\'bulk\')document.getElementById(\'inc-import-f\').click();else if(v===\'template\')downloadIncidentTemplate()">'
+          +'<option value="" selected>+ Log Incident ▾</option>'
+          +'<option value="manual">Manual Entry</option>'
+          +'<option value="bulk">Bulk Import (Excel)</option>'
+          +'<option value="template">Download Excel Template</option>'
+        +'</select>'
       +'</div>'
     +'</div>'
     +incSummaryCards(allVisible.filter(function(i){return !i._archived;}))
