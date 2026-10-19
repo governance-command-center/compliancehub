@@ -3700,7 +3700,7 @@ function buildWeeklyReportHTML(report){
   // Per-report nav offsets stored in window to survive re-renders without Firebase
   if(!window._wrOff)window._wrOff={};
   // t1: 0=current week is newest in window; t2: -1=previous week (incidents covered); t3: 0=current CW vs prev CW
-  if(!window._wrOff[rKey])window._wrOff[rKey]={t1:0,t2:-1,t3:0};
+  if(!window._wrOff[rKey])window._wrOff[rKey]={t1:0,t2:report._live?0:-1,t3:0};
   const off=window._wrOff[rKey];
 
   // Helper: clamp CW to 1..53 within year
@@ -3971,7 +3971,7 @@ function buildWeeklyReportHTML(report){
     </div>
   </div>`;
 
-  return table1+table2+table3+responseSection;
+  return report._live?table1+table2+table3:table1+table2+table3+responseSection;
 }
 
 async function publishWeeklyReport(){
@@ -4270,7 +4270,17 @@ function renderReports(){
     +'</div>';
   }());
 
-  const tabContent='<div style="margin-bottom:16px">'+reportsBlock+'</div>'+buildIncidentSummary(D.incidents,_incSumWeekOffset);
+  // Current-week live operational tables are independent of the publication calendar.
+  // Published reports below retain their original acknowledgement and history workflow.
+  const today=now(),liveCW=getWeekNumber(ds(today));
+  const isoThursday=new Date(today.getFullYear(),today.getMonth(),today.getDate());
+  isoThursday.setDate(isoThursday.getDate()+4-(isoThursday.getDay()||7));
+  const liveYear=isoThursday.getFullYear();
+  const liveReport={cw:liveCW,year:liveYear,_key:'live-weekly-'+liveYear, _live:true};
+  const liveBlock='<div class="section-hdr sh-blue" style="margin-bottom:10px">📈 Live Weekly Monitoring — CW'+liveCW+' · '+liveYear+' <span style="font-size:11px;font-weight:400;opacity:.75">Automatically updated from incident records; no publishing required</span></div>'
+    +buildWeeklyReportHTML(liveReport);
+  const publishedBlock='<div class="section-hdr sh-blue" style="margin:18px 0 10px">📚 Published Reports & Team Lead Responses</div>'+reportsBlock;
+  const tabContent=liveBlock+'<div style="margin-top:20px">'+publishedBlock+'</div>'+buildIncidentSummary(D.incidents,_incSumWeekOffset);
 
   el.innerHTML=
     '<div class="page-header"><div><div class="page-title">Reports</div><div class="page-subtitle">Weekly compliance and performance summaries</div></div>'
