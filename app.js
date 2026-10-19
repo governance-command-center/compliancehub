@@ -4296,6 +4296,7 @@ if(!window._incSumTLFilter)window._incSumTLFilter='';
 // Phase 1: read-only Incident Intelligence, scoped to the Incident page.
 // Uses the same role-visible Firebase incident records; does not write or sync data.
 function incOverviewHTML(list){
+  var E=escHtml;
   var start=_incFrom||'',end=_incTo||ds(now());
   var data=list.filter(function(i){var d=i.incidentDate||i.date||'';return (!start||d>=start)&&(!end||d<=end);});
   var total=data.length,closed=0,overdue=0,open=0,late=0;
