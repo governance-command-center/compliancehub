@@ -1822,6 +1822,7 @@ function rerender(){
   else if(_curPage==='calendar')renderCalendar();
   else if(_curPage==='incidents')renderIncidents();
   else if(_curPage==='reports')renderReports();
+  else if(_curPage==='incident-analytics'&&window.renderIncidentAnalytics)window.renderIncidentAnalytics();
   else if(_curPage==='live-trackers')renderLiveTrackers();
   else if(_curPage==='tod')renderTOD();
   else if(_curPage==='audit')renderAudit();
@@ -1834,7 +1835,7 @@ function rerender(){
 function showPage(p){
   if(p==='system-health'&&(!CU||!CU.isAdmin)){toast('Admin only');return;}
   _curPage=p;
-  ['dashboard','tasks','members','reports','incidents','calendar','my-tasks','live-trackers','tod','audit','leaves','workspace','notes','bulletin','system-health'].forEach(pg=>{
+  ['dashboard','tasks','members','reports','incident-analytics','incidents','calendar','my-tasks','live-trackers','tod','audit','leaves','workspace','notes','bulletin','system-health'].forEach(pg=>{
     const el=document.getElementById('pg-'+pg);
     if(el){
       if(pg===p){
@@ -1848,7 +1849,7 @@ function showPage(p){
     }
     const b=document.getElementById('ntab-'+pg);if(b)b.classList.toggle('active',pg===p);
   });
-  const ddPages=['members','incidents','reports','leaves'];
+  const ddPages=['members','incidents','reports','incident-analytics','leaves'];
   const ddBtn=document.getElementById('ntab-data');if(ddBtn)ddBtn.classList.toggle('active',ddPages.includes(p));
   const wsPages=['notes','bulletin'];
   const wsBtn=document.getElementById('ntab-ws');if(wsBtn)wsBtn.classList.toggle('active',wsPages.includes(p));
@@ -12417,7 +12418,8 @@ function buildNav(){
     html+='<div class="sidebar-section"><div class="sidebar-section-label">Data & Activity</div>'
       +sItem('members',ICONS.members,'Members',badges.members||0)
       +sItem('incidents',ICONS.incidents,'Incidents',badges.incidents||0)
-      +sItem('reports',ICONS.reports,'Reports',badges.reports||0)
+      +sItem('reports',ICONS.reports,'Weekly Reports',badges.reports||0)
+      +sItem('incident-analytics',ICONS.reports,'Incident Analytics',0)
       +sItem('leaves',ICONS.leaves,'Leaves',badges.leaves||0)
       +'</div>';
     html+='<div class="sidebar-section"><div class="sidebar-section-label">WorkSpace</div>'
@@ -12437,7 +12439,8 @@ function buildNav(){
     html+='<div class="sidebar-section"><div class="sidebar-section-label">Data & Activity</div>'
       +sItem('members',ICONS.members,'Members',badges.members||0)
       +sItem('incidents',ICONS.incidents,'Incidents',badges.incidents||0)
-      +sItem('reports',ICONS.reports,'Reports',badges.reports||0)
+      +sItem('reports',ICONS.reports,'Weekly Reports',badges.reports||0)
+      +sItem('incident-analytics',ICONS.reports,'Incident Analytics',0)
       +sItem('leaves',ICONS.leaves,'Leaves',badges.leaves||0)
       +'</div>';
     html+='<div class="sidebar-section"><div class="sidebar-section-label">WorkSpace</div>'
