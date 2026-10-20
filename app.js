@@ -3971,7 +3971,7 @@ function buildWeeklyReportHTML(report){
     </div>
   </div>`;
 
-  return report._live?table1+table2+table3:table1+table2+table3+responseSection;
+  return report._live?table1+table2+table3:(report._responsesOnly?responseSection:table1+table2+table3+responseSection);
 }
 
 async function publishWeeklyReport(){
@@ -4254,7 +4254,7 @@ function renderReports(){
       +'</div>'
     +'</div>'
     +(pendingForMe?'<div class="wr-tl-pending" style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px"><div style="font-weight:700;color:#92400e;font-size:13px">⏰ Your response for CW'+r.cw+' is pending</div><span style="font-size:11px;color:var(--text3)">Due Friday 5:00 PM</span></div>':'')
-    +'<div>'+buildWeeklyReportHTML(r)+'</div>';
+    +'<div>'+buildWeeklyReportHTML({...r,_responsesOnly:true})+'</div>';
   }());
 
   // ── Weekly-only view (Incident Intelligence tab removed) ──
