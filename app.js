@@ -4212,7 +4212,8 @@ function wrGeneratePreview(){
   const w=Number(document.getElementById('wr-gen-week')?.value);
   if(!Number.isInteger(y)||y<2020||!Number.isInteger(w)||w<1||w>53){alert('Select a valid year and calendar week.');return;}
   _wrGenerated={year:y,cw:w,_key:'generated-'+y+'-'+w,_live:true};
-  renderReports();
+  const target=document.getElementById('wr-generated-content');
+  if(target){target.innerHTML=wrEmailHTML();document.getElementById('wr-copy-btn').disabled=false;document.getElementById('wr-print-btn').disabled=false;}
 }
 
 function wrEmailHTML(){
@@ -4268,23 +4269,29 @@ function wrPrintGenerated(){
  win.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Weekly Incident Email CW'+_wrGenerated.cw+'</title><style>@media print{@page{size:A4;margin:12mm}}body{background:white}</style></head><body>'+node.innerHTML+'</body></html>');
  win.document.close();win.focus();win.print();
 }
-function wrGeneratorHTML(){
- if(!CU.isAdmin)return '';
- const d=now(),y=d.getFullYear(),w=getWeekNumber(ds(d));
- const years=[y-1,y,y+1],sy=_wrGenerated?_wrGenerated.year:y,sw=_wrGenerated?_wrGenerated.cw:w;
- return '<section style="border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px;background:var(--card,#fff)">'
- +'<div style="font-weight:700;font-size:15px;margin-bottom:4px">✉️ Generate Weekly Email Report</div>'
- +'<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Create an Outlook-ready email using incident records. This does not publish a report or notify Team Leads.</div>'
- +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
- +'<label>Year <select id="wr-gen-year" style="padding:7px">'+years.map(v=>'<option value="'+v+'"'+(v===sy?' selected':'')+'>'+v+'</option>').join('')+'</select></label>'
- +'<label>Calendar week <select id="wr-gen-week" style="padding:7px">'+Array.from({length:53},(_,i)=>i+1).map(v=>'<option value="'+v+'"'+(v===sw?' selected':'')+'>CW'+v+'</option>').join('')+'</select></label>'
- +'<button class="btn primary" onclick="wrGeneratePreview()">Generate Email</button>'
- +(_wrGenerated?'<button class="btn" onclick="wrCopyEmail()">📋 Copy & Paste into Outlook / Gmail</button><button class="btn" onclick="wrPrintGenerated()">🖨 Print / PDF</button><button class="btn" onclick="_wrGenerated=null;renderReports()">Clear</button>':'')
- +'</div>'
- +(_wrGenerated?'<div id="wr-generated-content" style="margin-top:16px;border:1px solid #dbe2ea;background:white;color:#17243a">'+wrEmailHTML()+'</div>':'')
- +'</section>';
-}
 
+function wrOpenGenerator(){
+ const d=now(),y=d.getFullYear(),w=getWeekNumber(ds(d));
+ _wrGenerated=null;
+ const years=[y-1,y,y+1];
+ const overlay=document.createElement('div');
+ overlay.id='wr-email-modal';
+ overlay.style.cssText='position:fixed;inset:0;z-index:99999;background:rgba(12,26,47,.72);display:flex;align-items:center;justify-content:center;padding:20px';
+ overlay.innerHTML='<div role="dialog" aria-modal="true" aria-label="Weekly Email Report" style="background:#e9edf2;border-radius:10px;width:min(1080px,96vw);height:min(90vh,900px);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 70px #0005">'
+ +'<div style="background:#204a72;color:#fff;padding:12px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+ +'<b style="margin-right:8px">✉️ Weekly Email Report</b>'
+ +'<label>Year <select id="wr-gen-year" style="padding:5px">'+years.map(v=>'<option value="'+v+'"'+(v===y?' selected':'')+'>'+v+'</option>').join('')+'</select></label>'
+ +'<label>Week <select id="wr-gen-week" style="padding:5px">'+Array.from({length:53},(_,i)=>i+1).map(v=>'<option value="'+v+'"'+(v===w?' selected':'')+'>CW'+v+'</option>').join('')+'</select></label>'
+ +'<button class="btn sm primary" onclick="wrGeneratePreview()">Generate Email</button>'
+ +'<button class="btn sm" id="wr-copy-btn" onclick="wrCopyEmail()" disabled>📋 Copy & Paste into Outlook / Gmail</button>'
+ +'<button class="btn sm" id="wr-print-btn" onclick="wrPrintGenerated()" disabled>🖨 Print / PDF</button>'
+ +'<button type="button" aria-label="Close" onclick="wrCloseGenerator()" style="margin-left:auto;background:transparent;color:white;border:0;font-size:24px;cursor:pointer">×</button>'
+ +'</div><div style="overflow:auto;flex:1;padding:18px"><div id="wr-generated-content" style="max-width:820px;margin:auto;background:white;box-shadow:0 3px 16px #0002;min-height:320px"><div style="padding:35px;color:#64748b;text-align:center">Choose a week and click Generate Email to create the Outlook-ready report.</div></div></div></div>';
+ overlay.addEventListener('click',e=>{if(e.target===overlay)wrCloseGenerator();});
+ document.body.appendChild(overlay);
+}
+function wrCloseGenerator(){document.getElementById('wr-email-modal')?.remove();_wrGenerated=null;}
+function wrGeneratorHTML(){return '';}
 function renderReports(){
   var el=document.getElementById('pg-reports');if(!el)return;
   const reports=D.weeklyReports||[];
@@ -4347,12 +4354,12 @@ function renderReports(){
   const liveBlock='<div class="section-hdr sh-blue" style="margin-bottom:10px">📈 Live Weekly Monitoring — CW'+liveCW+' · '+liveYear+' <span style="font-size:11px;font-weight:400;opacity:.75">Automatically updated from incident records; no publishing required</span></div>'
     +buildWeeklyReportHTML(liveReport);
   const publishedBlock='<div class="section-hdr sh-blue" style="margin:18px 0 10px">📚 Published Reports & Team Lead Responses</div>'+reportsBlock;
-  const tabContent=wrGeneratorHTML()+liveBlock+'<div style="margin-top:20px">'+publishedBlock+'</div>'+buildIncidentSummary(D.incidents,_incSumWeekOffset);
+  const tabContent=liveBlock+'<div style="margin-top:20px">'+publishedBlock+'</div>'+buildIncidentSummary(D.incidents,_incSumWeekOffset);
 
   el.innerHTML=
     '<div class="page-header"><div><div class="page-title">Reports</div><div class="page-subtitle">Weekly compliance and performance summaries</div></div>'
       +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
-        +(CU.isAdmin?'<button class="btn warning" onclick="publishWeeklyReport()">📊 Publish Weekly Report</button>':'')
+        +(CU.isAdmin?'<button class="btn primary" onclick="wrOpenGenerator()">✉️ Generate Email Report</button><button class="btn warning" onclick="publishWeeklyReport()">📊 Publish Weekly Report</button>':'')
       +(CU.isAdmin&&(D.weeklyReports||[]).length?'<button class="btn del" onclick="deleteWeeklyReport()">🗑 Delete This Report</button>':'')
       +'</div>'
     +'</div>'
