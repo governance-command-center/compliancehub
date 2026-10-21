@@ -3753,100 +3753,85 @@ function buildWeeklyReportHTML(report){
       <tr class="grand-row"><td class="left">Grand Total</td>${t1GrandCells}<td style="font-weight:700">${t1Grand._grand||''}</td></tr>
     </tbody></table></div></div>`;
 
-  // ── TABLE 2: Lead → CDM view — week selector, nav fixed (← = older, → = newer) ──
-  // off.t2 default=-1 means we show the previous week's incidents (covered by this report)
-  const t2CW=baseCW+off.t2;
-  const t2WD=getWeekDatesForCW(Math.max(1,t2CW),year);
+  // ── TABLE 2: Team Lead → CDM, selected week ──
+  // Live and published monitoring use the selected incident week; navigation changes the week.
+  const t2CW=Math.max(1,Math.min(53,baseCW+off.t2));
+  const t2WD=getWeekDatesForCW(t2CW,year);
   const t2Inc=getIncidentsForWeek(allInc,t2WD);
   const cdmMap={};
   t2Inc.forEach(i=>{
-    const cdm=i.cdm||'(Unknown)';const tl=i.cdmTL||'—';const key=tl+'|||'+cdm;
+    const cdm=i.cdm||'(Unassigned CDM)';
+    const tl=i.cdmTL||'(Unassigned Team Lead)';
+    const key=JSON.stringify([tl,cdm]);
     if(!cdmMap[key])cdmMap[key]={cdm,tl,counts:{}};
     const cat=cats.includes(i.category)?i.category:'Others';
     cdmMap[key].counts[cat]=(cdmMap[key].counts[cat]||0)+1;
   });
-  // Sort by Lead first, then CDM
   const t2Rows=Object.values(cdmMap).sort((a,b)=>a.tl.localeCompare(b.tl)||a.cdm.localeCompare(b.cdm)).map(r=>{
     const cells=cats.map(c=>`<td>${r.counts[c]||''}</td>`).join('');
     const grand=cats.reduce((s,c)=>s+(r.counts[c]||0),0);
-    return`<tr><td class="left" style="font-weight:600">${r.tl}</td><td class="left">${r.cdm}</td>${cells}<td style="font-weight:700">${grand||''}</td></tr>`;
+    return`<tr><td class="left" style="font-weight:600">${escapeText(r.tl)}</td><td class="left">${escapeText(r.cdm)}</td>${cells}<td style="font-weight:700">${grand}</td></tr>`;
   }).join('');
   const t2Totals={};cats.forEach(c=>{t2Totals[c]=t2Inc.filter(i=>(cats.includes(i.category)?i.category:'Others')===c).length;});
-  const t2GrandTotal=cats.reduce((s,c)=>s+(t2Totals[c]||0),0);
+  const t2GrandTotal=t2Inc.length;
   const t2GrandCells=cats.map(c=>`<td style="font-weight:700">${t2Totals[c]||''}</td>`).join('');
-  const t2Label=cwLabel(t2CW)+(t2CW===baseCW-1?' · incidents covered by '+cwLabel(baseCW):t2CW===baseCW?' (current, published week)':'');
+  const t2Label=cwLabel(t2CW)+(t2CW===baseCW?' (current)':t2CW===baseCW-1?' (previous week)':'');
   const t2DateRange=new Date(t2WD[0]+'T12:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric'})+' – '+new Date(t2WD[6]+'T12:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'});
   const table2=`<div class="wr-card">
     <div class="wr-card-hdr">
       <span class="wr-card-title">👥 CDM & Team Lead View — ${t2Label} · ${t2DateRange}</span>
       <div style="display:flex;align-items:center;gap:6px">
-        ${navBtn('t2',-1,off.t2<=-4)}
+        ${navBtn('t2',-1,off.t2<=-4||t2CW<=1)}
         <span style="font-size:11px;color:#93c5fd;min-width:60px;text-align:center">${t2Inc.length} incident${t2Inc.length!==1?'s':''}</span>
-        ${navBtn('t2',1,off.t2>=4)}
+        ${navBtn('t2',1,off.t2>=0)}
       </div>
     </div>
     <div style="overflow-x:auto;padding:0"><table class="wr-table"><thead><tr>
       <th class="left">Team Lead</th><th class="left">CDM</th>${cats.map(c=>`<th>${c}</th>`).join('')}<th>Grand Total</th>
     </tr></thead><tbody>
-      ${t2Rows||'<tr><td colspan="'+(cats.length+3)+'" style="text-align:center;padding:16px;color:var(--text4)">No incidents this week</td></tr>'}
-      <tr class="grand-row"><td class="left" colspan="2">Grand Total</td>${t2GrandCells}<td style="font-weight:700">${t2GrandTotal||''}</td></tr>
+      ${t2Rows||'<tr><td colspan="'+(cats.length+3)+'" style="text-align:center;padding:16px;color:var(--text4)">No incidents recorded for this selected week. Use the left arrow to review earlier weeks.</td></tr>'}
+      <tr class="grand-row"><td class="left" colspan="2">Grand Total</td>${t2GrandCells}<td style="font-weight:700">${t2GrandTotal}</td></tr>
     </tbody></table></div></div>`;
 
-  // ── TABLE 3: WoW — t3 offset shifts the "current" week; shows t3CW vs t3CW-1 ──
-  // t3=0 → current CW (baseCW) vs previous (baseCW-1); ← goes back in time, → goes forward
-  const t3CW=baseCW+off.t3;
-  const t3Prev=Math.max(1,t3CW-1);
-  const t3CurWD=getWeekDatesForCW(t3CW,year);
-  const t3PrevWD=getWeekDatesForCW(t3Prev,year);
-  const t3CurInc=getIncidentsForWeek(allInc,t3CurWD);
-  const t3PrevInc=getIncidentsForWeek(allInc,t3PrevWD);
+  // ── TABLE 3: Previous week, selected week, and arithmetic difference ──
+  const t3CW=Math.max(1,Math.min(53,baseCW+off.t3));
+  const t3Prev=t3CW-1;
+  const t3CurInc=getIncidentsForWeek(allInc,getWeekDatesForCW(t3CW,year));
+  const t3PrevInc=t3Prev>=1?getIncidentsForWeek(allInc,getWeekDatesForCW(t3Prev,year)):getIncidentsForWeek(allInc,getWeekDatesForCW(53,year-1));
+  const prevLabel=t3Prev>=1?cwLabel(t3Prev):'Prior year';
   const regions=['MY','PH','SG','TH','VN','ID','EP'];
-  const usedReg=regions.filter(r=>t3CurInc.some(i=>i.region===r)||t3PrevInc.some(i=>i.region===r));
+  const usedReg=Array.from(new Set(t3CurInc.concat(t3PrevInc).map(i=>i.region||'(Unassigned)')))
+    .sort((a,b)=>{const ai=regions.indexOf(a),bi=regions.indexOf(b);return(ai<0?99:ai)-(bi<0?99:bi)||a.localeCompare(b);});
+  const countCategory=(items,cat)=>items.filter(i=>(cats.includes(i.category)?i.category:'Others')===cat).length;
+  // Incident increases are unfavorable; decreases are favorable. A zero change is neutral.
+  const changeHtml=(delta)=>delta===0?'<span style="color:var(--text4)">0</span>':
+    delta>0?`<span style="color:var(--red);font-weight:700">▲ +${delta}</span>`:
+    `<span style="color:#15803d;font-weight:700">▼ ${delta}</span>`;
+  const comparisonCells=(prevItems,curItems)=>
+    cats.map(c=>{const p=countCategory(prevItems,c),n=countCategory(curItems,c);return`<td>${p}</td><td>${n}</td><td>${changeHtml(n-p)}</td>`;}).join('');
+  const totalCells=(prevItems,curItems)=>`<td style="font-weight:700">${prevItems.length}</td><td style="font-weight:700">${curItems.length}</td><td>${changeHtml(curItems.length-prevItems.length)}</td>`;
   const t3Rows=usedReg.map(r=>{
-    const rCur=t3CurInc.filter(i=>i.region===r);
-    const rPrev=t3PrevInc.filter(i=>i.region===r);
-    const cells=cats.map(c=>{
-      const cur=rCur.filter(i=>(cats.includes(i.category)?i.category:'Others')===c).length;
-      const prev=rPrev.filter(i=>(cats.includes(i.category)?i.category:'Others')===c).length;
-      const wow=cur-prev;
-      const wowHtml=wow===0?'<span style="color:var(--text4)">0</span>':wow>0?`<span class="pos">+${wow}</span>`:`<span class="neg">${wow}</span>`;
-      return`<td>${cur||''}</td><td>${wowHtml}</td>`;
-    }).join('');
-    const rowTotal=cats.reduce((s,c)=>s+rCur.filter(i=>(cats.includes(i.category)?i.category:'Others')===c).length,0);
-    const prevTotal=cats.reduce((s,c)=>s+rPrev.filter(i=>(cats.includes(i.category)?i.category:'Others')===c).length,0);
-    const rowWow=rowTotal-prevTotal;
-    const rowWowHtml=rowWow===0?'<span style="color:var(--text4)">0</span>':rowWow>0?`<span class="pos">+${rowWow}</span>`:`<span class="neg">${rowWow}</span>`;
-    return`<tr><td class="left"><b>${r}</b></td>${cells}<td style="font-weight:700">${rowTotal||''}</td><td>${rowWowHtml}</td></tr>`;
+    const current=t3CurInc.filter(i=>(i.region||'(Unassigned)')===r);
+    const previous=t3PrevInc.filter(i=>(i.region||'(Unassigned)')===r);
+    return`<tr><td class="left"><b>${escapeText(r)}</b></td>${comparisonCells(previous,current)}${totalCells(previous,current)}</tr>`;
   }).join('');
-  const t3GtCells=cats.map(c=>{
-    const cur=t3CurInc.filter(i=>(cats.includes(i.category)?i.category:'Others')===c).length;
-    const prev=t3PrevInc.filter(i=>(cats.includes(i.category)?i.category:'Others')===c).length;
-    const wow=cur-prev;
-    const wowHtml=wow===0?'<span style="color:var(--text4)">0</span>':wow>0?`<span class="pos">+${wow}</span>`:`<span class="neg">${wow}</span>`;
-    return`<td>${cur||''}</td><td>${wowHtml}</td>`;
-  }).join('');
-  const t3GrandCur=cats.reduce((s,c)=>s+t3CurInc.filter(i=>(cats.includes(i.category)?i.category:'Others')===c).length,0);
-  const t3GrandPrev=cats.reduce((s,c)=>s+t3PrevInc.filter(i=>(cats.includes(i.category)?i.category:'Others')===c).length,0);
-  const t3GrandWow=t3GrandCur-t3GrandPrev;
-  const t3GrandWowHtml=t3GrandWow===0?'<span style="color:var(--text4)">0</span>':t3GrandWow>0?`<span class="pos">+${t3GrandWow}</span>`:`<span class="neg">${t3GrandWow}</span>`;
-  const t3Header=cats.map(c=>`<th colspan="2">${c}</th>`).join('');
-  const t3Sub=cats.map(()=>`<th>${cwLabel(t3CW)}</th><th>WoW</th>`).join('');
-  const t3IsCurrent=t3CW===baseCW;
+  const t3Header=cats.map(c=>`<th colspan="3">${c}</th>`).join('');
+  const t3Sub=cats.map(()=>`<th>${prevLabel}</th><th>${cwLabel(t3CW)}</th><th>Change</th>`).join('');
   const table3=`<div class="wr-card">
     <div class="wr-card-hdr">
-      <span class="wr-card-title">📈 Week-on-Week — ${cwLabel(t3Prev)} vs ${cwLabel(t3CW)}${t3IsCurrent?' (current)':''}</span>
+      <span class="wr-card-title">📈 Week-on-Week — ${prevLabel} vs ${cwLabel(t3CW)}${t3CW===baseCW?' (current)':''}</span>
       <div style="display:flex;align-items:center;gap:6px">
-        ${navBtn('t3',-1,off.t3<=-4)}
-        <span style="font-size:11px;color:#93c5fd;min-width:60px;text-align:center">by Region</span>
+        ${navBtn('t3',-1,off.t3<=-4||t3CW<=1)}
+        <span style="font-size:11px;color:#93c5fd;min-width:60px;text-align:center">▲ more incidents · ▼ fewer incidents</span>
         ${navBtn('t3',1,off.t3>=0)}
       </div>
     </div>
     <div style="overflow-x:auto;padding:0"><table class="wr-table"><thead>
-      <tr><th class="left">Region</th>${t3Header}<th colspan="2">Total</th></tr>
-      <tr><th class="left"></th>${t3Sub}<th>${cwLabel(t3CW)}</th><th>WoW</th></tr>
+      <tr><th class="left" rowspan="2">Region</th>${t3Header}<th colspan="3">Total</th></tr>
+      <tr>${t3Sub}<th>${prevLabel}</th><th>${cwLabel(t3CW)}</th><th>Change</th></tr>
     </thead><tbody>
-      ${t3Rows||'<tr><td colspan="'+(cats.length*2+3)+'" style="text-align:center;padding:16px;color:var(--text4)">No data</td></tr>'}
-      <tr class="grand-row"><td class="left">Grand Total</td>${t3GtCells}<td style="font-weight:700">${t3GrandCur||''}</td><td>${t3GrandWowHtml}</td></tr>
+      ${t3Rows||'<tr><td colspan="'+(cats.length*3+4)+'" style="text-align:center;padding:16px;color:var(--text4)">No incidents in either week</td></tr>'}
+      <tr class="grand-row"><td class="left">Grand Total</td>${comparisonCells(t3PrevInc,t3CurInc)}${totalCells(t3PrevInc,t3CurInc)}</tr>
     </tbody></table></div></div>`;
 
   // ── RESPONSE TRACKER — compact avatar grid, no textarea ──
