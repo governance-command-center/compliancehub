@@ -4214,35 +4214,75 @@ function wrGeneratePreview(){
   _wrGenerated={year:y,cw:w,_key:'generated-'+y+'-'+w,_live:true};
   renderReports();
 }
+
+function wrEmailHTML(){
+ if(!_wrGenerated)return '';
+ const year=_wrGenerated.year,cw=_wrGenerated.cw,cats=INCIDENT_CATS;
+ const all=(D.incidents||[]).filter(i=>!i._leadTaskEsc);
+ const week=(w)=>w<1?[]:getIncidentsForWeek(all,getWeekDatesForCW(w,year));
+ const current=week(cw),previous=week(cw-1);
+ const count=(arr,c)=>arr.filter(i=>(i.classification||i.category||'')===c).length;
+ const E=escHtml;
+ const blue='#20527d',th='background:'+blue+';color:#fff;border:1px solid #b9c7d3;padding:7px;text-align:left;font-size:11px;',td='border:1px solid #cbd5e1;padding:7px;font-size:11px;';
+ const table=(heads,rows)=>'<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;font-family:Arial,sans-serif;margin:5px 0 22px"><thead><tr>'+heads.map(h=>'<th style="'+th+'">'+E(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map((row,i)=>'<tr>'+row.map(v=>'<td style="'+td+(i%2?'background:#f1f5f9;':'')+'">'+E(v)+'</td>').join('')+'</tr>').join('')+'</tbody></table>';
+ const heading=(t)=>'<div style="background:'+blue+';color:white;padding:8px 10px;font:bold 12px Arial;margin-top:22px">'+E(t)+'</div>';
+ const recent=Array.from({length:4},(_,i)=>cw-3+i).filter(w=>w>0);
+ const summary=table(['Week No.',...cats,'Grand Total'],recent.map(w=>{const x=week(w);return ['Week '+w,...cats.map(c=>count(x,c)||''),x.length];}).concat([['Grand Total',...cats.map(c=>recent.reduce((n,w)=>n+count(week(w),c),0)),recent.reduce((n,w)=>n+week(w).length,0)]]));
+ const group={};
+ current.forEach(i=>{const tl=i.cdmTL||i.teamLead||'Unassigned';const cdm=i.cdm||i.cdmName||'Unassigned';const k=tl+' / '+cdm;if(!group[k])group[k]={tl,cdm,items:[]};group[k].items.push(i);});
+ const detail=table(['CDM Team Lead','CDM',...cats,'Grand Total'],Object.values(group).sort((a,b)=>a.tl.localeCompare(b.tl)||a.cdm.localeCompare(b.cdm)).map(g=>[g.tl,g.cdm,...cats.map(c=>count(g.items,c)||''),g.items.length]).concat([['Grand Total','',...cats.map(c=>count(current,c)||''),current.length]]));
+ const regions=[...new Set(previous.concat(current).map(i=>i.region||'Unspecified'))].sort();
+ const regionRows=regions.map(region=>{const p=previous.filter(i=>(i.region||'Unspecified')===region),n=current.filter(i=>(i.region||'Unspecified')===region);return [region,...cats.flatMap(c=>[count(n,c)||'',(count(n,c)-count(p,c)>0?'+':'')+(count(n,c)-count(p,c))]),n.length,(n.length-p.length>0?'+':'')+(n.length-p.length)];});
+ const regional=table(['Region',...cats.flatMap(c=>[c+' CW'+cw,c+' WoW']),'Total CW'+cw,'Total WoW'],regionRows.concat([['Grand Total',...cats.flatMap(c=>[count(current,c),(count(current,c)-count(previous,c)>0?'+':'')+(count(current,c)-count(previous,c))]),current.length,(current.length-previous.length>0?'+':'')+(current.length-previous.length)]]));
+ const dominant=cats.slice().sort((a,b)=>count(current,b)-count(current,a))[0]||'N/A';
+ const change=current.length-previous.length;
+ const insights='<div style="font:12px/1.7 Arial,sans-serif;border:1px solid #cbd5e1;padding:12px;background:#f8fafc">'
+ +'<p><b>Volume trend:</b> '+current.length+' incidents vs '+previous.length+' last week ('+(change>0?'+':'')+change+').</p>'
+ +'<p><b>Dominant issue:</b> '+E(dominant)+' ('+count(current,dominant)+' cases).</p>'
+ +'<p><b>Highest volume region:</b> '+E(regions.slice().sort((a,b)=>current.filter(i=>i.region===b).length-current.filter(i=>i.region===a).length)[0]||'N/A')+'.</p>'
+ +'<p><b>Action:</b> Team Leads to review recorded incidents, discuss root causes with their members, and respond within the required timeline.</p></div>';
+ return '<div style="max-width:780px;margin:auto;background:white;padding:26px;font:12px/1.6 Arial,sans-serif;color:#17243a">'
+ +'<p>Hi Leads,</p><p>Good day!</p><p>Please find below the governance incident summary for <b>Week '+cw+'</b>. Kindly discuss the findings with your members and respond within the week.</p>'
+ +heading('SUMMARY — LAST 4 WEEKS')+summary
+ +heading('WEEKLY VIEW PER CDM TEAM LEAD & CDM — Week '+cw)+detail
+ +heading('REGION BREAKDOWN — WEEK ON WEEK (Week '+(cw-1)+' vs Week '+cw+')')+regional
+ +heading('KEY INSIGHTS & ACTION POINTS — Week '+cw)+insights+'</div>';
+}
+async function wrCopyEmail(){
+ const el=document.getElementById('wr-generated-content');if(!el)return;
+ const html=el.innerHTML;
+ try{
+  if(navigator.clipboard&&window.ClipboardItem){
+   await navigator.clipboard.write([new ClipboardItem({'text/html':new Blob([html],{type:'text/html'}),'text/plain':new Blob([el.innerText],{type:'text/plain'})})]);
+  }else{
+   const range=document.createRange();range.selectNodeContents(el);const sel=window.getSelection();sel.removeAllRanges();sel.addRange(range);
+   if(!document.execCommand('copy'))throw Error('Clipboard unavailable');sel.removeAllRanges();
+  }
+  alert('Formatted email copied. Paste into Outlook or Gmail.');
+ }catch(e){alert('Copy was blocked by the browser. Select the email content and copy manually.');}
+}
 function wrPrintGenerated(){
-  if(!_wrGenerated)return;
-  const node=document.getElementById('wr-generated-content');
-  if(!node)return;
-  const win=window.open('','_blank');
-  if(!win){alert('Allow pop-ups to print or save the report as PDF.');return;}
-  const css=Array.from(document.querySelectorAll('style')).map(x=>x.textContent).join('\n');
-  win.document.open();
-  win.document.write('<!doctype html><html><head><meta charset="utf-8"><title>GovernanceHub CW'+_wrGenerated.cw+' '+_wrGenerated.year+'</title><style>'+css+'body{padding:24px;background:white;color:#17243a;font-family:Arial,sans-serif}.nav-arrow,button{display:none!important}@media print{@page{size:landscape;margin:12mm}}</style></head><body><h2>GovernanceHub · Weekly Incident Report — CW'+_wrGenerated.cw+' / '+_wrGenerated.year+'</h2>'+node.innerHTML+'</body></html>');
-  win.document.close();
-  win.focus();win.print();
+ if(!_wrGenerated)return;
+ const node=document.getElementById('wr-generated-content');if(!node)return;
+ const win=window.open('','_blank');if(!win){alert('Allow pop-ups to print the report.');return;}
+ win.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Weekly Incident Email CW'+_wrGenerated.cw+'</title><style>@media print{@page{size:A4;margin:12mm}}body{background:white}</style></head><body>'+node.innerHTML+'</body></html>');
+ win.document.close();win.focus();win.print();
 }
 function wrGeneratorHTML(){
-  if(!CU.isAdmin)return '';
-  const d=now(),y=d.getFullYear(),w=getWeekNumber(ds(d));
-  const years=[y-1,y,y+1];
-  const selectedYear=_wrGenerated?_wrGenerated.year:y;
-  const selectedWeek=_wrGenerated?_wrGenerated.cw:w;
-  return '<section style="border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px;background:var(--card,#fff)">'
-    +'<div style="font-weight:700;font-size:15px;margin-bottom:4px">🧾 Generate Weekly Incident Report</div>'
-    +'<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Create a read-only preview from incident records. Generating does not publish or notify Team Leads.</div>'
-    +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
-    +'<label>Year <select id="wr-gen-year" style="padding:7px">'+years.map(v=>'<option value="'+v+'"'+(v===selectedYear?' selected':'')+'>'+v+'</option>').join('')+'</select></label>'
-    +'<label>Calendar week <select id="wr-gen-week" style="padding:7px">'+Array.from({length:53},(_,i)=>i+1).map(v=>'<option value="'+v+'"'+(v===selectedWeek?' selected':'')+'>CW'+v+'</option>').join('')+'</select></label>'
-    +'<button class="btn primary" onclick="wrGeneratePreview()">Generate Report</button>'
-    +(_wrGenerated?'<button class="btn" onclick="wrPrintGenerated()">🖨 Print / Save PDF</button><button class="btn" onclick="_wrGenerated=null;renderReports()">Clear Preview</button>':'')
-    +'</div>'
-    +(_wrGenerated?'<div id="wr-generated-content" style="margin-top:16px"><div style="font-weight:700;margin-bottom:8px">Preview · CW'+_wrGenerated.cw+' / '+_wrGenerated.year+'</div>'+buildWeeklyReportHTML(_wrGenerated)+'</div>':'')
-    +'</section>';
+ if(!CU.isAdmin)return '';
+ const d=now(),y=d.getFullYear(),w=getWeekNumber(ds(d));
+ const years=[y-1,y,y+1],sy=_wrGenerated?_wrGenerated.year:y,sw=_wrGenerated?_wrGenerated.cw:w;
+ return '<section style="border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px;background:var(--card,#fff)">'
+ +'<div style="font-weight:700;font-size:15px;margin-bottom:4px">✉️ Generate Weekly Email Report</div>'
+ +'<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Create an Outlook-ready email using incident records. This does not publish a report or notify Team Leads.</div>'
+ +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+ +'<label>Year <select id="wr-gen-year" style="padding:7px">'+years.map(v=>'<option value="'+v+'"'+(v===sy?' selected':'')+'>'+v+'</option>').join('')+'</select></label>'
+ +'<label>Calendar week <select id="wr-gen-week" style="padding:7px">'+Array.from({length:53},(_,i)=>i+1).map(v=>'<option value="'+v+'"'+(v===sw?' selected':'')+'>CW'+v+'</option>').join('')+'</select></label>'
+ +'<button class="btn primary" onclick="wrGeneratePreview()">Generate Email</button>'
+ +(_wrGenerated?'<button class="btn" onclick="wrCopyEmail()">📋 Copy & Paste into Outlook / Gmail</button><button class="btn" onclick="wrPrintGenerated()">🖨 Print / PDF</button><button class="btn" onclick="_wrGenerated=null;renderReports()">Clear</button>':'')
+ +'</div>'
+ +(_wrGenerated?'<div id="wr-generated-content" style="margin-top:16px;border:1px solid #dbe2ea;background:white;color:#17243a">'+wrEmailHTML()+'</div>':'')
+ +'</section>';
 }
 
 function renderReports(){
