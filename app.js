@@ -3696,6 +3696,7 @@ function buildWeeklyReportHTML(report){
   // Exclude auto-escalated lead task compliance incidents — only count real logged incidents
   const allInc=(D.incidents||[]).filter(i=>!i._leadTaskEsc);
   const cats=INCIDENT_CATS;
+  const wrEscape=(v)=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
   // Per-report nav offsets stored in window to survive re-renders without Firebase
   if(!window._wrOff)window._wrOff={};
@@ -3770,7 +3771,7 @@ function buildWeeklyReportHTML(report){
   const t2Rows=Object.values(cdmMap).sort((a,b)=>a.tl.localeCompare(b.tl)||a.cdm.localeCompare(b.cdm)).map(r=>{
     const cells=cats.map(c=>`<td>${r.counts[c]||''}</td>`).join('');
     const grand=cats.reduce((s,c)=>s+(r.counts[c]||0),0);
-    return`<tr><td class="left" style="font-weight:600">${escapeText(r.tl)}</td><td class="left">${escapeText(r.cdm)}</td>${cells}<td style="font-weight:700">${grand}</td></tr>`;
+    return`<tr><td class="left" style="font-weight:600">${wrEscape(r.tl)}</td><td class="left">${wrEscape(r.cdm)}</td>${cells}<td style="font-weight:700">${grand}</td></tr>`;
   }).join('');
   const t2Totals={};cats.forEach(c=>{t2Totals[c]=t2Inc.filter(i=>(cats.includes(i.category)?i.category:'Others')===c).length;});
   const t2GrandTotal=t2Inc.length;
@@ -3813,7 +3814,7 @@ function buildWeeklyReportHTML(report){
   const t3Rows=usedReg.map(r=>{
     const current=t3CurInc.filter(i=>(i.region||'(Unassigned)')===r);
     const previous=t3PrevInc.filter(i=>(i.region||'(Unassigned)')===r);
-    return`<tr><td class="left"><b>${escapeText(r)}</b></td>${comparisonCells(previous,current)}${totalCells(previous,current)}</tr>`;
+    return`<tr><td class="left"><b>${wrEscape(r)}</b></td>${comparisonCells(previous,current)}${totalCells(previous,current)}</tr>`;
   }).join('');
   const t3Header=cats.map(c=>`<th colspan="3">${c}</th>`).join('');
   const t3Sub=cats.map(()=>`<th>${prevLabel}</th><th>${cwLabel(t3CW)}</th><th>Change</th>`).join('');
