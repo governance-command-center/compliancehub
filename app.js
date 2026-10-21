@@ -4204,6 +4204,47 @@ function buildIncidentSummary(incidents, weekOffset){
 
 
 
+
+// Read-only, on-demand weekly report generator. Does not publish or modify cases.
+let _wrGenerated=null;
+function wrGeneratePreview(){
+  const y=Number(document.getElementById('wr-gen-year')?.value);
+  const w=Number(document.getElementById('wr-gen-week')?.value);
+  if(!Number.isInteger(y)||y<2020||!Number.isInteger(w)||w<1||w>53){alert('Select a valid year and calendar week.');return;}
+  _wrGenerated={year:y,cw:w,_key:'generated-'+y+'-'+w,_live:true};
+  renderReports();
+}
+function wrPrintGenerated(){
+  if(!_wrGenerated)return;
+  const node=document.getElementById('wr-generated-content');
+  if(!node)return;
+  const win=window.open('','_blank');
+  if(!win){alert('Allow pop-ups to print or save the report as PDF.');return;}
+  const css=Array.from(document.querySelectorAll('style')).map(x=>x.textContent).join('\n');
+  win.document.open();
+  win.document.write('<!doctype html><html><head><meta charset="utf-8"><title>GovernanceHub CW'+_wrGenerated.cw+' '+_wrGenerated.year+'</title><style>'+css+'body{padding:24px;background:white;color:#17243a;font-family:Arial,sans-serif}.nav-arrow,button{display:none!important}@media print{@page{size:landscape;margin:12mm}}</style></head><body><h2>GovernanceHub · Weekly Incident Report — CW'+_wrGenerated.cw+' / '+_wrGenerated.year+'</h2>'+node.innerHTML+'</body></html>');
+  win.document.close();
+  win.focus();win.print();
+}
+function wrGeneratorHTML(){
+  if(!CU.isAdmin)return '';
+  const d=now(),y=d.getFullYear(),w=getWeekNumber(ds(d));
+  const years=[y-1,y,y+1];
+  const selectedYear=_wrGenerated?_wrGenerated.year:y;
+  const selectedWeek=_wrGenerated?_wrGenerated.cw:w;
+  return '<section style="border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px;background:var(--card,#fff)">'
+    +'<div style="font-weight:700;font-size:15px;margin-bottom:4px">🧾 Generate Weekly Incident Report</div>'
+    +'<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Create a read-only preview from incident records. Generating does not publish or notify Team Leads.</div>'
+    +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+    +'<label>Year <select id="wr-gen-year" style="padding:7px">'+years.map(v=>'<option value="'+v+'"'+(v===selectedYear?' selected':'')+'>'+v+'</option>').join('')+'</select></label>'
+    +'<label>Calendar week <select id="wr-gen-week" style="padding:7px">'+Array.from({length:53},(_,i)=>i+1).map(v=>'<option value="'+v+'"'+(v===selectedWeek?' selected':'')+'>CW'+v+'</option>').join('')+'</select></label>'
+    +'<button class="btn primary" onclick="wrGeneratePreview()">Generate Report</button>'
+    +(_wrGenerated?'<button class="btn" onclick="wrPrintGenerated()">🖨 Print / Save PDF</button><button class="btn" onclick="_wrGenerated=null;renderReports()">Clear Preview</button>':'')
+    +'</div>'
+    +(_wrGenerated?'<div id="wr-generated-content" style="margin-top:16px"><div style="font-weight:700;margin-bottom:8px">Preview · CW'+_wrGenerated.cw+' / '+_wrGenerated.year+'</div>'+buildWeeklyReportHTML(_wrGenerated)+'</div>':'')
+    +'</section>';
+}
+
 function renderReports(){
   var el=document.getElementById('pg-reports');if(!el)return;
   const reports=D.weeklyReports||[];
@@ -4266,7 +4307,7 @@ function renderReports(){
   const liveBlock='<div class="section-hdr sh-blue" style="margin-bottom:10px">📈 Live Weekly Monitoring — CW'+liveCW+' · '+liveYear+' <span style="font-size:11px;font-weight:400;opacity:.75">Automatically updated from incident records; no publishing required</span></div>'
     +buildWeeklyReportHTML(liveReport);
   const publishedBlock='<div class="section-hdr sh-blue" style="margin:18px 0 10px">📚 Published Reports & Team Lead Responses</div>'+reportsBlock;
-  const tabContent=liveBlock+'<div style="margin-top:20px">'+publishedBlock+'</div>'+buildIncidentSummary(D.incidents,_incSumWeekOffset);
+  const tabContent=wrGeneratorHTML()+liveBlock+'<div style="margin-top:20px">'+publishedBlock+'</div>'+buildIncidentSummary(D.incidents,_incSumWeekOffset);
 
   el.innerHTML=
     '<div class="page-header"><div><div class="page-title">Reports</div><div class="page-subtitle">Weekly compliance and performance summaries</div></div>'
