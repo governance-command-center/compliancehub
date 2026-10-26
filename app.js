@@ -4686,7 +4686,7 @@ function renderIncidents(){
     var selBanner=CU.isAdmin&&selCount>0
       ?'<div style="display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--red);border-radius:var(--radius-lg) var(--radius-lg) 0 0;flex-wrap:wrap">'
         +'<span style="font-size:12px;font-weight:700;color:#fff">'+selCount+' incident'+(selCount!==1?'s':'')+' selected</span>'
-        +'<button onclick="incDeleteSelected()" style="padding:5px 16px;border:none;border-radius:var(--radius);font-size:12px;font-weight:700;background:#fff;color:var(--red);cursor:pointer">🗑 Delete Selected</button>'
+        +'<button onclick="incBulkAssign()" style="padding:5px 16px;border:none;border-radius:var(--radius);font-size:12px;font-weight:700;background:#fff;color:#1d4ed8;cursor:pointer">✎ Bulk Correct Assignments</button><button onclick="incDeleteSelected()" style="padding:5px 16px;border:none;border-radius:var(--radius);font-size:12px;font-weight:700;background:#fff;color:var(--red);cursor:pointer">🗑 Delete Selected</button>'
         +'<button onclick="_incSelKeys=new Set();renderIncidents()" style="padding:5px 12px;border:1px solid rgba(255,255,255,.4);border-radius:var(--radius);font-size:11px;font-weight:600;background:transparent;color:#fff;cursor:pointer">✕ Clear selection</button>'
       +'</div>'
       :'';
@@ -12794,4 +12794,43 @@ window.incQuickAssign=function(key){
     await incCommit(key,fields,{type:'ADMIN_EDIT',text:'Admin corrected imported member assignment. Reason: '+reason,reason:reason,changes:changes});
     panel.remove();renderIncidents();toast('Assignment corrected');
   });};
+};
+
+
+// Bulk correction of selected imported incident assignments (Admin only).
+window.incBulkAssign=function(){
+ if(!CU||!CU.isAdmin)return;
+ var selected=Array.from(_incSelKeys).map(incGet).filter(Boolean);
+ if(!selected.length){toast('Select incidents first');return;}
+ var existing=document.getElementById('inc-bulk-assign');if(existing)existing.remove();
+ var p=document.createElement('div');p.id='inc-bulk-assign';p.style.cssText='position:fixed;z-index:99999;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--surface,#fff);border:1px solid var(--border,#ccc);border-radius:12px;padding:22px;box-shadow:0 12px 50px #0005;width:min(550px,94vw);max-height:90vh;overflow:auto';
+ p.innerHTML='<h3>Bulk Correct Assignments</h3><p>'+selected.length+' selected incidents. Only selected fields will change. Acknowledged CDMs cannot be reassigned.</p><label class="flabel">CDM (leave unchanged if blank)</label><select class="finput nb" id="iba-cdm"></select><label class="flabel">Team Lead (leave unchanged if blank)</label><select class="finput nb" id="iba-tl"></select><label class="flabel">Reason for correction</label><textarea class="finput" id="iba-reason" rows="2"></textarea><div id="iba-preview" style="margin:12px 0;font-size:12px"></div><div class="inc-actions"><button class="btn primary" id="iba-save">Confirm bulk update</button><button class="btn" id="iba-cancel">Cancel</button></div>';
+ document.body.appendChild(p);
+ function fill(id,lead){var el=document.getElementById(id);el.add(new Option('— Keep existing —',''));(D.members||[]).filter(function(m){return m.approved&&m.active!==false&&(lead?LEAD_ROLES.includes(m.role):m.role!=='Talent on Demand');}).forEach(function(m){el.add(new Option(m.name,m.username));});}
+ fill('iba-cdm',false);fill('iba-tl',true);
+ function plan(){
+  var cu=document.getElementById('iba-cdm').value,tu=document.getElementById('iba-tl').value;
+  var cm=(D.members||[]).find(function(m){return m.username===cu;});
+  var tm=(D.members||[]).find(function(m){return m.username===tu;});
+  return selected.map(function(i){
+   var fields={},skip='';
+   if(cm){if(i.ack&&incCdmUser(i)!==cu)skip='Acknowledged CDM';else if(incCdmUser(i)!==cu||i.cdm!==cm.name){fields.cdm=cm.name;fields.cdmUser=cm.username;if(!i.ack)fields.tagged=[cm.username];}}
+   if(tm&&(incTlUser(i)!==tu||i.cdmTL!==tm.name)){fields.cdmTL=tm.name;fields.cdmTLUser=tm.username;}
+   if(skip)return {i:i,skip:skip,fields:{}};
+   return {i:i,fields:fields};
+  });
+ }
+ function preview(){var rows=plan(),eligible=rows.filter(function(x){return Object.keys(x.fields).length;});document.getElementById('iba-preview').textContent=eligible.length+' record(s) will change; '+rows.filter(function(x){return x.skip;}).length+' blocked by acknowledgement; '+(rows.length-eligible.length-rows.filter(function(x){return x.skip;}).length)+' unchanged.';}
+ document.getElementById('iba-cdm').onchange=preview;document.getElementById('iba-tl').onchange=preview;preview();
+ document.getElementById('iba-cancel').onclick=function(){p.remove();};
+ document.getElementById('iba-save').onclick=function(){return incRun(async function(){
+  var reason=document.getElementById('iba-reason').value.trim(),cu=document.getElementById('iba-cdm').value,tu=document.getElementById('iba-tl').value;
+  if(!reason||(!cu&&!tu)){toast('Choose at least one assignment and enter a reason');return;}
+  var rows=plan(),eligible=rows.filter(function(x){return Object.keys(x.fields).length;});
+  if(!eligible.length){toast('No eligible changes');return;}
+  if(!confirm('Apply assignment corrections to '+eligible.length+' incidents?'))return;
+  var done=0,failed=0;
+  for(var x of eligible){try{var changes=Object.keys(x.fields).map(function(k){return {field:k,before:x.i[k]||'',after:x.fields[k]};});await incCommit(x.i._key,x.fields,{type:'ADMIN_EDIT',text:'Bulk assignment correction by '+CU.name+'. Reason: '+reason,reason:reason,changes:changes});done++;}catch(e){failed++;}}
+  p.remove();_incSelKeys=new Set();renderIncidents();toast(done+' corrected'+(failed?', '+failed+' failed':''));
+ });};
 };
