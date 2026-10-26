@@ -5254,7 +5254,7 @@ function buildIncidentTableView(incidents){
       +cell('<b>'+E(i.incidentNo||'—')+'</b>'+(i.wf?(bc[incBatchKey(i)]>1?'<div style="font-size:10px;color:var(--blue);font-weight:600">Batch · '+bc[incBatchKey(i)]+' issues</div>':''):'<div style="font-size:10px;color:var(--text4)">Legacy</div>'),'white-space:nowrap')
       +cell('<b>'+E(i.incidentDate||i.date||'—')+'</b><div style="font-size:10px;color:var(--text4)">Logged: '+E(i.date||'—')+'</div>','white-space:nowrap')
       +cell((rbp||dash)+(i.platform?'<div style="font-size:11px;color:var(--text3)">'+E(i.platform)+'</div>':''))
-      +cell(incCdmName(i)?'<b>'+E(incCdmName(i))+'</b>'+(incCdmM(i)?'':'<div style="font-size:10px;color:var(--orange)">⚠ not in Members</div>'):dash)+cell(incTlName(i)?E(incTlName(i)):dash)
+      +cell(incCdmName(i)?'<b>'+E(incCdmName(i))+'</b>'+(incCdmM(i)?'':'<div style="font-size:10px;color:var(--orange)">⚠ not in Members</div>')+(CU.isAdmin?'<button class="btn sm" title="Correct CDM and Team Lead" onclick="incQuickAssign(\''+k+'\')">✎</button>':''):dash)+cell((incTlName(i)?E(incTlName(i)):dash)+(CU.isAdmin?'<button class="btn sm" title="Correct CDM and Team Lead" onclick="incQuickAssign(\''+k+'\')">✎</button>':''))
       +cell('<div>'+E(issue.length>100?issue.slice(0,100)+'…':issue)+'</div>'+(i.classification?'<div style="margin-top:3px;font-size:10px;font-weight:700;color:var(--text3)">'+E(i.classification)+'</div>':''),'min-width:220px')
       +cell(incWfPill(w)+(i.appealStatus==='Under Appeal'?'<div style="margin-top:3px">'+incPill('UNDER APPEAL','var(--yellow-light)','#92400e','var(--yellow-mid)')+'</div>':'')+(i.status==='Escalated'?'<div style="margin-top:3px">'+incPill('ESCALATED','var(--orange-light)','var(--orange)','#fed7aa')+'</div>':''))
       +cell(incCompPill(c))
@@ -12762,3 +12762,36 @@ async function ghExport(){
   }catch(e){toast('Backup failed: '+e.message);}
   finally{ghHealthBusy=false;renderSystemHealth();}
 }
+
+
+// Admin-only inline assignment correction for imported incident names.
+window.incQuickAssign=function(key){
+  if(!CU||!CU.isAdmin)return;
+  var i=incGet(key);if(!i)return;
+  var existing=document.getElementById('inc-quick-assign');if(existing)existing.remove();
+  var panel=document.createElement('div');panel.id='inc-quick-assign';
+  panel.style.cssText='position:fixed;z-index:99999;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--surface,#fff);border:1px solid var(--border,#ccc);border-radius:12px;padding:22px;box-shadow:0 12px 50px #0005;width:min(480px,90vw);max-height:90vh;overflow:auto';
+  panel.innerHTML='<h3>Correct incident assignment</h3><p style="font-size:12px">Original CDM: '+escHtml(i.cdm||'—')+'<br>Original Team Lead: '+escHtml(i.cdmTL||'—')+'</p><label class="flabel">CDM</label><select id="iqa-cdm" class="finput nb"></select><label class="flabel">Team Lead</label><select id="iqa-tl" class="finput nb"></select><label class="flabel">Reason for correction</label><textarea id="iqa-reason" class="finput" rows="2" placeholder="Required"></textarea><div class="inc-actions" style="margin-top:12px"><button class="btn primary" id="iqa-save">Save assignment</button><button class="btn" id="iqa-cancel">Cancel</button></div>';
+  document.body.appendChild(panel);
+  function populate(id,lead,selected){
+    var el=document.getElementById(id);el.add(new Option('— Select member —',''));
+    (D.members||[]).filter(function(m){return m.approved&&m.active!==false&&(lead?LEAD_ROLES.includes(m.role):m.role!=='Talent on Demand');}).forEach(function(m){el.add(new Option(m.name+' ('+(m.role||'')+')',m.username));});
+    el.value=selected||'';
+  }
+  populate('iqa-cdm',false,incCdmUser(i));populate('iqa-tl',true,incTlUser(i));
+  document.getElementById('iqa-cancel').onclick=function(){panel.remove();};
+  document.getElementById('iqa-save').onclick=function(){return incRun(async function(){
+    var cu=document.getElementById('iqa-cdm').value,tu=document.getElementById('iqa-tl').value,reason=document.getElementById('iqa-reason').value.trim();
+    var cm=(D.members||[]).find(function(m){return m.username===cu&&m.approved&&m.active!==false;});
+    var tm=(D.members||[]).find(function(m){return m.username===tu&&m.approved&&m.active!==false&&LEAD_ROLES.includes(m.role);});
+    if(!cm||!tm||!reason){toast('Select both members and enter a correction reason');return;}
+    if(i.ack&&incCdmUser(i)!==cu){toast('Acknowledged CDM cannot be reassigned through quick edit');return;}
+    var fields={cdm:cm.name,cdmUser:cm.username,cdmTL:tm.name,cdmTLUser:tm.username};
+    if(!i.ack)fields.tagged=[cm.username];
+    var changes=Object.keys(fields).filter(function(k){return String(i[k]||'')!==String(fields[k]||'');}).map(function(k){return {field:k,before:i[k]||'',after:fields[k]||''};});
+    if(!changes.length){toast('No changes detected');return;}
+    if(!confirm('Save assignment correction for '+(i.incidentNo||'this incident')+'?'))return;
+    await incCommit(key,fields,{type:'ADMIN_EDIT',text:'Admin corrected imported member assignment. Reason: '+reason,reason:reason,changes:changes});
+    panel.remove();renderIncidents();toast('Assignment corrected');
+  });};
+};
