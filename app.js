@@ -5099,8 +5099,26 @@ let _incFltComp='',_incCaseKey=null,_incCaseSig='',_incDraft={},_incAppealOpen=f
 
 // ── CDM / Team Lead always resolve from the Members tab (by username; name kept only as a fallback/label) ──
 function incMem(user,name){
-  var ms=D.members||[],m=user&&ms.find(function(x){return x.username===user;});if(m)return m;
-  var n=(name||'').trim().toLowerCase();return n?ms.find(function(x){return x.name&&x.name.trim().toLowerCase()===n;})||null:null;
+  var ms=D.members||[];
+  var byUser=user&&ms.find(function(x){return x.username===user;});
+  if(byUser)return byUser;
+  // Excel may use "Surname, Given Middle" while Members uses "Given Middle Surname".
+  // Resolve only UNIQUE matches; never silently assign ambiguous historical records.
+  function norm(v){return String(v||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' ');}
+  var raw=String(name||'').trim(),n=norm(raw);
+  if(!n)return null;
+  function unique(list){return list.length===1?list[0]:null;}
+  var exact=ms.filter(function(x){return norm(x.name)===n;});
+  if(exact.length)return unique(exact);
+  var reordered=raw.includes(',')?norm(raw.split(',').slice(1).join(' ')+' '+raw.split(',')[0]):'';
+  if(reordered){
+    var reorderedMatches=ms.filter(function(x){return norm(x.name)===reordered;});
+    if(reorderedMatches.length)return unique(reorderedMatches);
+  }
+  // Exact token sets also handle surname-first records without commas.
+  function tokens(v){return norm(v).split(' ').filter(Boolean).sort().join('|');}
+  var target=tokens(raw),matches=ms.filter(function(x){return tokens(x.name)===target;});
+  return unique(matches);
 }
 function incCdmM(i){return incMem(i.cdmUser,i.cdm);}
 function incTlM(i){return incMem(i.cdmTLUser,i.cdmTL);}
