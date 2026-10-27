@@ -23,14 +23,14 @@ function input(id){return ($(id)?.value||'').trim()}
 function localHour(region){return Number(pieces(region,{hour:'2-digit',hourCycle:'h23'}).hour)}
 function summary(){
  const today=date(), stores=activeStores(),total=stores.length;
- const done=WINDOWS.map(w=>stores.filter(([id])=>data.checks?.[date(s.region)+'_'+w.id+'_'+id]).length);
+ const done=WINDOWS.map(w=>stores.filter(([id,s])=>data.checks?.[date(s.region)+'_'+w.id+'_'+id]).length);
  const open=allCases().filter(([id,c])=>!['Resolved','Closed – No Further Action'].includes(c.status));
  return {today,total,done,open};
 }
 function render(){
  const root=$('pg-order-health');if(!root)return;
  const x=summary();
- root.innerHTML='<div class="page-header"><div><h1>Order Health Monitoring</h1><p>Seller Center reviews · Morning 9:00 AM / Afternoon 2:00 PM · Philippines time (initial setting)</p></div></div>'+
+ root.innerHTML='<div class="page-header"><div><h1>Order Health Monitoring</h1><p>Seller Center reviews · Morning 9:00 AM / Afternoon 2:00 PM · store-region local time</p></div></div>'+
  '<div class="oh-kpis"><div class="oh-panel"><small>Morning completed</small><strong>'+x.done[0]+' / '+x.total+'</strong></div><div class="oh-panel"><small>Afternoon completed</small><strong>'+x.done[1]+' / '+x.total+'</strong></div><div class="oh-panel"><small>Orders needing attention</small><strong>'+x.open.length+'</strong></div><div class="oh-panel"><small>Overdue follow-ups</small><strong>'+x.open.filter(([id,c])=>c.followupDate&&c.followupDate<x.today).length+'</strong></div></div>'+
  '<div class="oh-tabs">'+[['daily','Daily Monitoring'],['orders','Orders Requiring Attention'],['reports','Monitoring Reports'],...(admin()?[['stores','Store Setup']]:[])].map(([key,label])=>'<button class="btn '+(subtab===key?'primary':'')+'" onclick="OrderHealth.tab(\''+key+'\')">'+label+'</button>').join('')+'</div>'+
  '<div class="oh-panel">'+(subtab==='daily'?daily():subtab==='orders'?orders():subtab==='reports'?reports():stores())+'</div>';
@@ -39,7 +39,7 @@ function daily(){
  const today=date(),storeRows=activeStores();
  return '<h3>Daily Seller Center checks — '+esc(today)+'</h3><p class="oh-muted">Each store requires a morning and afternoon review. A late submission is retained and marked late. Open orders are carried forward automatically.</p>'+
  (!storeRows.length?'<p>No assigned stores yet. Admin can configure stores in Store Setup.</p>':
- '<div class="oh-scroll"><table class="oh-table"><thead><tr><th>Region</th><th>Platform</th><th>Brand / Store</th><th>Fulfilment</th><th>9 AM</th><th>2 PM</th></tr></thead><tbody>'+storeRows.map(([id,s])=>'<tr><td>'+esc(s.region)+'</td><td>'+esc(s.platform)+'</td><td>'+esc(s.brand)+'</td><td>'+esc(s.fulfilment)+'</td>'+WINDOWS.map(w=>{const c=data.checks?.[today+'_'+w.id+'_'+id];return '<td>'+(c?'<span class="oh-status">'+(c.late?'Late':'Completed')+' · '+esc(c.byName||c.by)+'</span>':button('Submit '+w.label,"OrderHealth.check('"+id+"','"+w.id+"')"))+'</td>'}).join('')+'</tr>').join('')+'</tbody></table></div>')+
+ '<div class="oh-scroll"><table class="oh-table"><thead><tr><th>Region</th><th>Platform</th><th>Brand / Store</th><th>Fulfilment</th><th>9 AM</th><th>2 PM</th></tr></thead><tbody>'+storeRows.map(([id,s])=>'<tr><td>'+esc(s.region)+'</td><td>'+esc(s.platform)+'</td><td>'+esc(s.brand)+'</td><td>'+esc(s.fulfilment)+'</td>'+WINDOWS.map(w=>{const c=data.checks?.[date(s.region)+'_'+w.id+'_'+id];return '<td>'+(c?'<span class="oh-status">'+(c.late?'Late':'Completed')+' · '+esc(c.byName||c.by)+'</span>':button('Submit '+w.label,"OrderHealth.check('"+id+"','"+w.id+"')"))+'</td>'}).join('')+'</tr>').join('')+'</tbody></table></div>')+
  '<h3>Pending follow-ups (automatically carried forward)</h3>'+caseTable(allCases().filter(([id,c])=>!['Resolved','Closed – No Further Action'].includes(c.status))) ;
 }
 function caseTable(rows){
@@ -49,7 +49,7 @@ function caseTable(rows){
 function orders(){return '<div class="oh-actions"><h3>Orders Requiring Attention</h3>'+button('Log order','OrderHealth.newCase()',true)+'</div>'+caseTable(allCases());}
 function reports(){
  const stores=activeStores(),today=date(),cases=allCases();
- const result=WINDOWS.map(w=>({w,done:stores.filter(([id])=>data.checks?.[today+'_'+w.id+'_'+id]).length}));
+ const result=WINDOWS.map(w=>({w,done:stores.filter(([id,s])=>data.checks?.[date(s.region)+'_'+w.id+'_'+id]).length}));
  return '<h3>Monitoring compliance — '+esc(today)+'</h3>'+result.map(x=>'<p>'+x.w.label+': '+x.done+' / '+stores.length+' completed ('+(stores.length?Math.round(100*x.done/stores.length):0)+'%)</p>').join('')+
  '<h3>Order follow-up</h3><p>Open / escalated / under investigation: '+cases.filter(([id,c])=>!['Resolved','Closed – No Further Action'].includes(c.status)).length+'</p><p>Resolved: '+cases.filter(([id,c])=>c.status==='Resolved').length+'</p><p class="oh-muted">Completion and follow-up performance are separate: warehouse delays do not automatically count as missed CDM checks.</p>';
 }
