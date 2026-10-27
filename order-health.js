@@ -10,17 +10,20 @@ const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 const me=()=>window.CU||CU;
 const admin=()=>!!me()?.isAdmin;
 const leader=()=>admin()||['HOD','Manager','Assist. Manager','Team Lead'].includes(me()?.role);
-const date=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+const zones={PH:'Asia/Manila',SG:'Asia/Singapore',MY:'Asia/Kuala_Lumpur',ID:'Asia/Jakarta',TH:'Asia/Bangkok',VN:'Asia/Ho_Chi_Minh',TW:'Asia/Taipei',HK:'Asia/Hong_Kong'};
+const zone=r=>zones[String(r||'PH').toUpperCase()]||'Asia/Manila';
+const pieces=(r,opts)=>Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:zone(r),...opts}).formatToParts(new Date()).filter(p=>p.type!=='literal').map(p=>[p.type,p.value]));
+const date=r=>{const p=pieces(r,{year:'numeric',month:'2-digit',day:'2-digit'});return p.year+'-'+p.month+'-'+p.day;};
 const activeStores=()=>Object.entries(data.stores||{}).filter(([id,s])=>s.active!==false&& (admin()||leader()||s.owner===me()?.username));
 const allCases=()=>Object.entries(data.cases||{}).filter(([id,c])=>admin()||leader()||c.owner===me()?.username);
 const button=(txt,fn,primary=false)=>'<button class="btn '+(primary?'primary':'')+'" onclick="'+fn+'">'+esc(txt)+'</button>';
 const opts=(values,selected)=>values.map(v=>'<option value="'+esc(v)+'" '+(v===selected?'selected':'')+'>'+esc(v)+'</option>').join('');
 function save(p,v){return fbRef(PATH+'/'+p).set(v)}
 function input(id){return ($(id)?.value||'').trim()}
-function localHour(){return Number(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Manila',hour:'2-digit',hourCycle:'h23'}).format(new Date()))}
+function localHour(region){return Number(pieces(region,{hour:'2-digit',hourCycle:'h23'}).hour)}
 function summary(){
  const today=date(), stores=activeStores(),total=stores.length;
- const done=WINDOWS.map(w=>stores.filter(([id])=>data.checks?.[today+'_'+w.id+'_'+id]).length);
+ const done=WINDOWS.map(w=>stores.filter(([id])=>data.checks?.[date(s.region)+'_'+w.id+'_'+id]).length);
  const open=allCases().filter(([id,c])=>!['Resolved','Closed – No Further Action'].includes(c.status));
  return {today,total,done,open};
 }
@@ -66,7 +69,7 @@ function field(id,label,value='',type='text'){return '<label class="oh-field">'+
 function select(id,label,values,value){return '<label class="oh-field">'+esc(label)+'<select class="finput" id="'+id+'">'+opts(values,value)+'</select></label>'}
 function check(id,windowId){
  const s=data.stores[id];if(!s)return;
- const today=date();if(data.checks?.[today+'_'+windowId+'_'+id])return toast('Check already submitted');
+ const today=date();if(data.checks?.[date(s.region)+'_'+windowId+'_'+id])return toast('Check already submitted');
  dialog('Submit '+(windowId==='AM'?'morning':'afternoon')+' check — '+s.brand,
  '<p>Review the Seller Center before submitting. Outstanding issues are shown in Pending Follow-ups.</p>'+
  select('oh-concerns','Orders requiring attention?',['No','Yes'],'No')+
@@ -76,7 +79,7 @@ function check(id,windowId){
 async function saveCheck(id,w){
  const concerns=input('oh-concerns'),evidence=input('oh-evidence'),remarks=input('oh-remarks');
  if(!evidence)return toast('Please provide a screenshot or evidence reference');
- const key=date()+'_'+w+'_'+id,record={storeId:id,window:w,date:date(),by:me()?.username,byName:me()?.name||me()?.username,concerns,evidence,remarks,at:new Date().toISOString(),late:localHour()>= (w==='AM'?9:14)};
+ const region=data.stores[id].region;const key=date(region)+'_'+w+'_'+id,record={storeId:id,window:w,date:date(region),by:me()?.username,byName:me()?.name||me()?.username,concerns,evidence,remarks,at:new Date().toISOString(),late:localHour(region)>= (w==='AM'?9:14)};
  try{await fbRef(PATH+'/checks/'+key).transaction(old=>old||record);close();toast('Monitoring recorded');if(concerns==='Yes')newCase(id)}catch(e){toast('Save failed: '+e.message)}
 }
 function newCase(storeId=''){
