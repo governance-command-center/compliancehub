@@ -122,13 +122,33 @@ async function noChange(id){
 }
 function oversight(){
  const stats=compliance(),open=pendingFollowups(),overdue=open.filter(([id,c])=>followupDue(c)),stores=activeStores();
- const byOwner={};stores.forEach(([id,s])=>{const key=s.owner||'Unassigned';const x=byOwner[key]||(byOwner[key]={name:memberName(key),stores:0,missed:0,late:0,open:0});x.stores++;WINDOWS.forEach(w=>{const c=data.checks?.[date(s.region)+'_'+w.id+'_'+id];if(!c&&dueWindow(s.region,w.id))x.missed++;else if(c&&(c.at?windowLate(s.region,w.id,new Date(c.at)):c.late))x.late++})});
+ const members=D.members||[],leads=members.filter(m=>m.username&&m.role==='Team Lead'&&m.active!==false&&m.approved!==false);
+ const byOwner={};
+ stores.forEach(([id,s])=>{
+  const key=s.owner||'Unassigned',x=byOwner[key]||(byOwner[key]={username:key,name:memberName(key),stores:0,missed:0,late:0,open:0,overdue:0});
+  x.stores++;
+  WINDOWS.forEach(w=>{const c=data.checks?.[date(s.region)+'_'+w.id+'_'+id];if(!c&&dueWindow(s.region,w.id))x.missed++;else if(c&&(c.at?windowLate(s.region,w.id,new Date(c.at)):c.late))x.late++});
+ });
  open.forEach(([id,c])=>{if(byOwner[c.owner])byOwner[c.owner].open+=Number(c.remaining??c.affectedCount??1)});
- return '<h3>Lead & Governance oversight</h3><p class="oh-muted">Current-day monitoring, regional local deadlines, and unresolved affected orders.</p>'+
+ overdue.forEach(([id,c])=>{if(byOwner[c.owner])byOwner[c.owner].overdue++});
+ const groups={};leads.forEach(m=>{groups[m.username]={lead:m,team:[]}});
+ const unassigned=[];
+ Object.values(byOwner).forEach(x=>{
+  const member=members.find(m=>m.username===x.username);
+  const leadId=member?.role==='Team Lead'?member.username:member?.reportsTo;
+  if(leadId&&groups[leadId])groups[leadId].team.push(x);else unassigned.push(x);
+ });
+ const aggregate=team=>team.reduce((t,x)=>({stores:t.stores+x.stores,missed:t.missed+x.missed,late:t.late+x.late,open:t.open+x.open,overdue:t.overdue+x.overdue}),{stores:0,missed:0,late:0,open:0,overdue:0});
+ const childRows=team=>'<table class="oh-table" style="margin:0"><thead><tr><th>CDM</th><th>Stores</th><th>Missed</th><th>Late</th><th>Unresolved orders</th><th>Overdue follow-ups</th></tr></thead><tbody>'+team.sort((a,b)=>b.missed-a.missed||b.open-a.open).map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+x.stores+'</td><td>'+x.missed+'</td><td>'+x.late+'</td><td>'+x.open+'</td><td>'+x.overdue+'</td></tr>').join('')+'</tbody></table>';
+ const rows=Object.values(groups).filter(g=>g.team.length).map(g=>{
+  const t=aggregate(g.team),id=esc(g.lead.username);
+  return '<details class="oh-panel" style="margin-bottom:10px;padding:0"><summary style="cursor:pointer;padding:14px;list-style:revert"><strong>'+esc(g.lead.name||g.lead.username)+'</strong><span style="margin-left:12px">'+g.team.length+' members · '+t.stores+' stores · '+t.missed+' missed · '+t.late+' late · '+t.open+' unresolved orders · '+t.overdue+' overdue follow-ups</span></summary><div class="oh-scroll">'+childRows(g.team)+'</div></details>';
+ }).join('');
+ const unassignedSection=unassigned.length?'<details class="oh-panel"><summary style="cursor:pointer"><strong>Needs Assignment</strong> · '+unassigned.length+' CDMs/stores without a mapped Team Lead</summary><div class="oh-scroll">'+childRows(unassigned)+'</div></details>':'';
+ return '<h3>Lead & Governance oversight</h3><p class="oh-muted">Team Lead summary with expandable CDM details. Team assignments follow Members → Reports To.</p>'+
  '<div class="oh-kpis">'+stats.map(x=>'<div class="oh-panel"><small>'+x.window+' monitoring</small><strong>'+x.onTime+' on time · '+x.late+' late</strong><p>'+x.missed+' missed · '+x.notDue+' not yet due</p></div>').join('')+
  '<div class="oh-panel"><small>Overdue follow-up cases</small><strong>'+overdue.length+'</strong></div></div>'+
- '<h3>CDM accountability</h3><div class="oh-scroll"><table class="oh-table"><thead><tr><th>CDM</th><th>Stores</th><th>Missed</th><th>Late</th><th>Unresolved orders</th></tr></thead><tbody>'+
- Object.values(byOwner).sort((a,b)=>b.missed-a.missed||b.open-a.open).map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+x.stores+'</td><td>'+x.missed+'</td><td>'+x.late+'</td><td>'+x.open+'</td></tr>').join('')+'</tbody></table></div>'+
+ '<h3>Team Lead accountability</h3>'+(rows||'<p class="oh-muted">No Team Lead assignments found. Check Members → Reports To.</p>')+unassignedSection+
  '<h3>Follow-ups needing attention</h3>'+caseTable(overdue);
 }
 function orders(){return '<div class="oh-actions"><h3>Orders Requiring Attention</h3>'+button('Log order','OrderHealth.newCase()',true)+'</div>'+caseTable(allCases());}
