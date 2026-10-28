@@ -21,6 +21,14 @@ const opts=(values,selected)=>values.map(v=>'<option value="'+esc(v)+'" '+(v===s
 function save(p,v){return fbRef(PATH+'/'+p).set(v)}
 function input(id){return ($(id)?.value||'').trim()}
 function localHour(region){return Number(pieces(region,{hour:'2-digit',hourCycle:'h23'}).hour)}
+function regionSeconds(region,instant=new Date()){const p=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:zone(region),hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(instant).filter(x=>x.type!=='literal').map(x=>[x.type,x.value]));return Number(p.hour)*3600+Number(p.minute)*60+Number(p.second)}
+function windowLate(region,w,instant=new Date()){return regionSeconds(region,instant)>(w==='AM'?9:14)*3600}
+function dueWindow(region,w){return regionSeconds(region)>(w==='AM'?9:14)*3600}
+function nextFollowup(c){const created=new Date(c.updatedAt||c.createdAt||0);const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:zone(c.region),year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hourCycle:'h23'}).formatToParts(created).filter(x=>x.type!=='literal').map(x=>[x.type,x.value]));const d=p.year+'-'+p.month+'-'+p.day;return Number(p.hour)<14?d+' PM':new Date(Date.UTC(Number(p.year),Number(p.month)-1,Number(p.day)+1)).toISOString().slice(0,10)+' AM'}
+function followupDue(c){const [d,w]=nextFollowup(c).split(' ');return date(c.region)>d||(date(c.region)===d&&dueWindow(c.region,w))}
+function followupUpdated(c){return (c.history||[]).some(h=>h.followupWindow===nextFollowup(c))}
+function pendingFollowups(){return allCases().filter(([id,c])=>!['Resolved','Closed – No Further Action'].includes(c.status))}
+function compliance(){const rows=activeStores();return WINDOWS.map(w=>{const out={window:w.id,onTime:0,late:0,missed:0,notDue:0};rows.forEach(([id,store])=>{const c=data.checks?.[date(store.region)+'_'+w.id+'_'+id];if(c){if(c.at?windowLate(store.region,w.id,new Date(c.at)):c.late)out.late++;else out.onTime++}else if(dueWindow(store.region,w.id))out.missed++;else out.notDue++});return out})}
 function summary(){
  const today=date(), stores=activeStores(),total=stores.length;
  const done=WINDOWS.map(w=>stores.filter(([id,s])=>data.checks?.[date(s.region)+'_'+w.id+'_'+id]).length);
@@ -32,8 +40,8 @@ function render(){
  const x=summary();bindBulkEvents();
  root.innerHTML='<div class="page-header"><div><h1>Order Health Monitoring</h1><p>Seller Center reviews · Morning 9:00 AM / Afternoon 2:00 PM · store-region local time</p></div></div>'+
  '<div class="oh-kpis"><div class="oh-panel"><small>Morning completed</small><strong>'+x.done[0]+' / '+x.total+'</strong></div><div class="oh-panel"><small>Afternoon completed</small><strong>'+x.done[1]+' / '+x.total+'</strong></div><div class="oh-panel"><small>Orders needing attention</small><strong>'+x.open.length+'</strong></div><div class="oh-panel"><small>Overdue follow-ups</small><strong>'+x.open.filter(([id,c])=>c.followupDate&&c.followupDate<x.today).length+'</strong></div></div>'+
- '<div class="oh-tabs">'+[['daily','Daily Monitoring'],['reports','Monitoring Reports'],...(admin()?[['stores','Store Setup']]:[])].map(([key,label])=>'<button class="btn '+(subtab===key?'primary':'')+'" onclick="OrderHealth.tab(\''+key+'\')">'+label+'</button>').join('')+'</div>'+
- '<div class="oh-panel">'+(subtab==='daily'?daily():subtab==='reports'?reports():stores())+'</div>';
+ '<div class="oh-tabs">'+[['daily','Daily Monitoring'],['reports','Monitoring Reports'],...(leader()?[['oversight','Lead & Governance']]:[]),...(admin()?[['stores','Store Setup']]:[])].map(([key,label])=>'<button class="btn '+(subtab===key?'primary':'')+'" onclick="OrderHealth.tab(\''+key+'\')">'+label+'</button>').join('')+'</div>'+
+ '<div class="oh-panel">'+(subtab==='daily'?daily():subtab==='reports'?reports():subtab==='oversight'?oversight():stores())+'</div>';
 }
 
 let bulkWindow='AM', bulkDraft={};
@@ -58,7 +66,7 @@ function daily(){
  '<div class="oh-tabs">'+windows+'</div><p><strong>'+done+' / '+stores.length+'</strong> stores submitted for this window.</p>'+
  (pending.length?'<div class="oh-actions"><button class="btn" data-oh-action="all">Mark all reviewed</button><button class="btn primary" data-oh-action="submit">Submit reviewed stores</button></div>'+
  '<div class="oh-scroll"><table class="oh-table"><thead><tr><th>Reviewed</th><th>Region</th><th>Platform</th><th>Brand</th><th>New affected</th><th>Status</th><th>Remarks</th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<p>All stores submitted for this window.</p>')+
- '<h3>Pending follow-ups (carried forward)</h3>'+caseTable(allCases().filter(([id,c])=>!['Resolved','Closed – No Further Action'].includes(c.status)));
+ '<h3>Pending follow-ups (carried forward)</h3><p class="oh-muted">Update unresolved cases at each subsequent monitoring window. Use No Change — Followed Up when nothing has changed.</p>'+caseTable(pendingFollowups());
 }
 async function bulkSubmit(){
  const rows=bulkPending().filter(([id])=>bulkDraft[bulkKey(id)]?.reviewed);
@@ -73,7 +81,7 @@ async function bulkSubmit(){
  let completed=0;
  for(const [id,store] of rows){
    const key=bulkKey(id),d=bulkDraft[key],n=Number(d.count??0),stamp=new Date().toISOString();
-   const record={storeId:id,window:bulkWindow,date:date(store.region),by:me()?.username,byName:me()?.name||me()?.username,affectedCount:n,status:d.status||'No Issues',remarks:d.remarks||'',at:stamp,late:localHour(store.region)>=(bulkWindow==='AM'?9:14)};
+   const record={storeId:id,window:bulkWindow,date:date(store.region),by:me()?.username,byName:me()?.name||me()?.username,affectedCount:n,status:d.status||'No Issues',remarks:d.remarks||'',at:stamp,late:windowLate(store.region,bulkWindow)};
    try{
      const tx=await fbRef(PATH+'/checks/'+key).transaction(old=>old||record);
      if(!tx.committed)continue;
@@ -104,13 +112,30 @@ function bindBulkEvents(){
 }
 function caseTable(rows){
  if(!rows.length)return '<p class="oh-muted">No matching orders.</p>';
- return '<div class="oh-scroll"><table class="oh-table"><thead><tr><th>Order / AWB</th><th>Store</th><th>Issue</th><th>Status</th><th>Follow-up</th><th></th></tr></thead><tbody>'+rows.map(([id,c])=>'<tr><td>'+esc(c.remaining??c.affectedCount??1)+'<small>'+esc(c.orderId||'')+'</small></td><td>'+esc(c.brand)+'<small>'+esc(c.region)+' · '+esc(c.platform)+'</small></td><td>'+esc(c.remarks||c.description||'')+'</td><td>'+esc(c.status)+'</td><td>'+esc(c.followupDate||'Not set')+'</td><td>'+button('Update',"OrderHealth.edit('"+id+"')")+'</td></tr>').join('')+'</tbody></table></div>';
+ return '<div class="oh-scroll"><table class="oh-table"><thead><tr><th>Unresolved</th><th>Store</th><th>Issue</th><th>Status</th><th>Next follow-up</th><th>Action</th></tr></thead><tbody>'+rows.map(([id,c])=>'<tr><td>'+esc(c.remaining??c.affectedCount??1)+'</td><td>'+esc(c.brand)+'<small>'+esc(c.region)+' · '+esc(c.platform)+'</small></td><td>'+esc(c.remarks||c.description||'')+'</td><td>'+esc(c.status)+'</td><td>'+esc(nextFollowup(c))+(followupDue(c)?' · Due':'')+'</td><td>'+button('Update',"OrderHealth.edit('"+id+"')")+' '+button('No Change — Followed Up',"OrderHealth.noChange('"+id+"')")+'</td></tr>').join('')+'</tbody></table></div>';
+}
+async function noChange(id){
+ const c=data.cases[id];if(!c||!confirm('Confirm follow-up was performed and there is no change?'))return;
+ const stamp=new Date().toISOString(),window=nextFollowup(c);
+ try{await save('cases/'+id,{...c,updatedAt:stamp,history:[...(c.history||[]),{at:stamp,by:me()?.username,action:'No Change — Followed Up',remarks:'Reviewed; no change',count:c.remaining??1,followupWindow:window}]});toast('Follow-up recorded')}
+ catch(e){toast('Save failed: '+e.message)}
+}
+function oversight(){
+ const stats=compliance(),open=pendingFollowups(),overdue=open.filter(([id,c])=>followupDue(c)),stores=activeStores();
+ const byOwner={};stores.forEach(([id,s])=>{const key=s.owner||'Unassigned';const x=byOwner[key]||(byOwner[key]={name:memberName(key),stores:0,missed:0,late:0,open:0});x.stores++;WINDOWS.forEach(w=>{const c=data.checks?.[date(s.region)+'_'+w.id+'_'+id];if(!c&&dueWindow(s.region,w.id))x.missed++;else if(c&&(c.at?windowLate(s.region,w.id,new Date(c.at)):c.late))x.late++})});
+ open.forEach(([id,c])=>{if(byOwner[c.owner])byOwner[c.owner].open+=Number(c.remaining??c.affectedCount??1)});
+ return '<h3>Lead & Governance oversight</h3><p class="oh-muted">Current-day monitoring, regional local deadlines, and unresolved affected orders.</p>'+
+ '<div class="oh-kpis">'+stats.map(x=>'<div class="oh-panel"><small>'+x.window+' monitoring</small><strong>'+x.onTime+' on time · '+x.late+' late</strong><p>'+x.missed+' missed · '+x.notDue+' not yet due</p></div>').join('')+
+ '<div class="oh-panel"><small>Overdue follow-up cases</small><strong>'+overdue.length+'</strong></div></div>'+
+ '<h3>CDM accountability</h3><div class="oh-scroll"><table class="oh-table"><thead><tr><th>CDM</th><th>Stores</th><th>Missed</th><th>Late</th><th>Unresolved orders</th></tr></thead><tbody>'+
+ Object.values(byOwner).sort((a,b)=>b.missed-a.missed||b.open-a.open).map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+x.stores+'</td><td>'+x.missed+'</td><td>'+x.late+'</td><td>'+x.open+'</td></tr>').join('')+'</tbody></table></div>'+
+ '<h3>Follow-ups needing attention</h3>'+caseTable(overdue);
 }
 function orders(){return '<div class="oh-actions"><h3>Orders Requiring Attention</h3>'+button('Log order','OrderHealth.newCase()',true)+'</div>'+caseTable(allCases());}
 function reports(){
  const stores=activeStores(),today=date(),cases=allCases();
- const result=WINDOWS.map(w=>({w,done:stores.filter(([id,s])=>data.checks?.[date(s.region)+'_'+w.id+'_'+id]).length}));
- return '<h3>Monitoring compliance — '+esc(today)+'</h3>'+result.map(x=>'<p>'+x.w.label+': '+x.done+' / '+stores.length+' completed ('+(stores.length?Math.round(100*x.done/stores.length):0)+'%)</p>').join('')+
+ const result=compliance();
+ return '<h3>Monitoring compliance — '+esc(today)+'</h3>'+result.map(x=>'<p>'+x.window+': '+x.onTime+' on time · '+x.late+' late · '+x.missed+' missed · '+x.notDue+' not yet due</p>').join('')+
  '<h3>Order follow-up</h3><p>Open / escalated / under investigation: '+cases.filter(([id,c])=>!['Resolved','Closed – No Further Action'].includes(c.status)).length+'</p><p>Resolved: '+cases.filter(([id,c])=>c.status==='Resolved').length+'</p><p class="oh-muted">Completion and follow-up performance are separate: warehouse delays do not automatically count as missed CDM checks.</p>';
 }
 function memberOptions(){
@@ -198,7 +223,7 @@ async function saveCheck(id,w){
  if(count>0&&(status==='No Issues'||!remarks))return toast('Select a status and enter remarks');
  if(count===0&&status!=='No Issues')return toast('Select No Issues when there are zero new affected orders');
  const stamp=new Date().toISOString(),key=date(s.region)+'_'+w+'_'+id;
- const record={storeId:id,window:w,date:date(s.region),by:me()?.username,byName:me()?.name||me()?.username,affectedCount:count,status,remarks,at:stamp,late:localHour(s.region)>= (w==='AM'?9:14)};
+ const record={storeId:id,window:w,date:date(s.region),by:me()?.username,byName:me()?.name||me()?.username,affectedCount:count,status,remarks,at:stamp,late:windowLate(s.region,w)};
  try{
  const result=await fbRef(PATH+'/checks/'+key).transaction(old=>old||record);
  if(!result.committed)return toast('Already submitted');
@@ -242,7 +267,7 @@ async function updateCase(id){
  if(!remarks)return toast('Remarks are required');
  if((remaining===0)!==(status==='Resolved'))return toast('Resolved requires zero remaining orders');
  const stamp=new Date().toISOString();
- try{await save('cases/'+id,{...c,remaining,status,remarks,updatedAt:stamp,resolvedAt:remaining===0?stamp:null,history:[...(c.history||[]),{at:stamp,by:me()?.username,action:status,remarks,count:remaining}]});close();toast('Follow-up saved')}
+ try{await save('cases/'+id,{...c,remaining,status,remarks,updatedAt:stamp,resolvedAt:remaining===0?stamp:null,history:[...(c.history||[]),{at:stamp,by:me()?.username,action:status,remarks,count:remaining,followupWindow:nextFollowup(c)}]});close();toast('Follow-up saved')}
  catch(e){toast('Save failed: '+e.message)}
 }
 async function addStore(){
@@ -259,6 +284,6 @@ function init(){
  if(bound)return;bound=true;
  fbRef(PATH).on('value',snapshot=>{data=snapshot.val()||{stores:{},checks:{},cases:{}};if(window._curPage==='order-health'||_curPage==='order-health')render()});
 }
-window.OrderHealth={init,render,tab:t=>{subtab=t;render()},check,saveCheck,newCase,saveCase,edit,updateCase,addStore,toggleStore,uploadAllocations,commitImport,close};
+window.OrderHealth={init,render,noChange,tab:t=>{subtab=t;render()},check,saveCheck,newCase,saveCase,edit,updateCase,addStore,toggleStore,uploadAllocations,commitImport,close};
 init();
 })();
