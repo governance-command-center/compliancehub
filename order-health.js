@@ -32,19 +32,19 @@ function render(){
  const x=summary();
  root.innerHTML='<div class="page-header"><div><h1>Order Health Monitoring</h1><p>Seller Center reviews · Morning 9:00 AM / Afternoon 2:00 PM · store-region local time</p></div></div>'+
  '<div class="oh-kpis"><div class="oh-panel"><small>Morning completed</small><strong>'+x.done[0]+' / '+x.total+'</strong></div><div class="oh-panel"><small>Afternoon completed</small><strong>'+x.done[1]+' / '+x.total+'</strong></div><div class="oh-panel"><small>Orders needing attention</small><strong>'+x.open.length+'</strong></div><div class="oh-panel"><small>Overdue follow-ups</small><strong>'+x.open.filter(([id,c])=>c.followupDate&&c.followupDate<x.today).length+'</strong></div></div>'+
- '<div class="oh-tabs">'+[['daily','Daily Monitoring'],['orders','Orders Requiring Attention'],['reports','Monitoring Reports'],...(admin()?[['stores','Store Setup']]:[])].map(([key,label])=>'<button class="btn '+(subtab===key?'primary':'')+'" onclick="OrderHealth.tab(\''+key+'\')">'+label+'</button>').join('')+'</div>'+
- '<div class="oh-panel">'+(subtab==='daily'?daily():subtab==='orders'?orders():subtab==='reports'?reports():stores())+'</div>';
+ '<div class="oh-tabs">'+[['daily','Daily Monitoring'],['reports','Monitoring Reports'],...(admin()?[['stores','Store Setup']]:[])].map(([key,label])=>'<button class="btn '+(subtab===key?'primary':'')+'" onclick="OrderHealth.tab(\''+key+'\')">'+label+'</button>').join('')+'</div>'+
+ '<div class="oh-panel">'+(subtab==='daily'?daily():subtab==='reports'?reports():stores())+'</div>';
 }
 function daily(){
  const today=date(),storeRows=activeStores();
  return '<h3>Daily Seller Center checks — '+esc(today)+'</h3><p class="oh-muted">Each store requires a morning and afternoon review. A late submission is retained and marked late. Open orders are carried forward automatically.</p>'+
  (!storeRows.length?'<p>No assigned stores yet. Admin can configure stores in Store Setup.</p>':
- '<div class="oh-scroll"><table class="oh-table"><thead><tr><th>Region</th><th>Platform</th><th>Brand / Store</th><th>Fulfilment</th><th>9 AM</th><th>2 PM</th></tr></thead><tbody>'+storeRows.map(([id,s])=>'<tr><td>'+esc(s.region)+'</td><td>'+esc(s.platform)+'</td><td>'+esc(s.brand)+'</td><td>'+esc(s.fulfilment)+'</td>'+WINDOWS.map(w=>{const c=data.checks?.[date(s.region)+'_'+w.id+'_'+id];return '<td>'+(c?'<span class="oh-status">'+(c.late?'Late':'Completed')+' · '+esc(c.byName||c.by)+'</span>':button('Submit '+w.label,"OrderHealth.check('"+id+"','"+w.id+"')"))+'</td>'}).join('')+'</tr>').join('')+'</tbody></table></div>')+
+ '<div class="oh-scroll"><table class="oh-table"><thead><tr><th>Region</th><th>Platform</th><th>Brand / Store</th><th>Fulfilment</th><th>9 AM</th><th>2 PM</th></tr></thead><tbody>'+storeRows.map(([id,s])=>'<tr><td>'+esc(s.region)+'</td><td>'+esc(s.platform)+'</td><td>'+esc(s.brand)+'</td><td>'+esc(s.fulfilment)+'</td>'+WINDOWS.map(w=>{const c=data.checks?.[date(s.region)+'_'+w.id+'_'+id];return '<td>'+(c?'<span class="oh-status">'+(c.late?'Late':'Completed')+' · '+esc(c.affectedCount??'Legacy')+' affected'+'</span>':button('Submit '+w.label,"OrderHealth.check('"+id+"','"+w.id+"')"))+'</td>'}).join('')+'</tr>').join('')+'</tbody></table></div>')+
  '<h3>Pending follow-ups (automatically carried forward)</h3>'+caseTable(allCases().filter(([id,c])=>!['Resolved','Closed – No Further Action'].includes(c.status))) ;
 }
 function caseTable(rows){
  if(!rows.length)return '<p class="oh-muted">No matching orders.</p>';
- return '<div class="oh-scroll"><table class="oh-table"><thead><tr><th>Order / AWB</th><th>Store</th><th>Issue</th><th>Status</th><th>Follow-up</th><th></th></tr></thead><tbody>'+rows.map(([id,c])=>'<tr><td>'+esc(c.orderId)+'<small>'+esc(c.awb||'')+'</small></td><td>'+esc(c.brand)+'<small>'+esc(c.region)+' · '+esc(c.platform)+'</small></td><td>'+esc(c.category)+'</td><td>'+esc(c.status)+'</td><td>'+esc(c.followupDate||'Not set')+'</td><td>'+button('Update',"OrderHealth.edit('"+id+"')")+'</td></tr>').join('')+'</tbody></table></div>';
+ return '<div class="oh-scroll"><table class="oh-table"><thead><tr><th>Order / AWB</th><th>Store</th><th>Issue</th><th>Status</th><th>Follow-up</th><th></th></tr></thead><tbody>'+rows.map(([id,c])=>'<tr><td>'+esc(c.remaining??c.affectedCount??1)+'<small>'+esc(c.orderId||'')+'</small></td><td>'+esc(c.brand)+'<small>'+esc(c.region)+' · '+esc(c.platform)+'</small></td><td>'+esc(c.remarks||c.description||'')+'</td><td>'+esc(c.status)+'</td><td>'+esc(c.followupDate||'Not set')+'</td><td>'+button('Update',"OrderHealth.edit('"+id+"')")+'</td></tr>').join('')+'</tbody></table></div>';
 }
 function orders(){return '<div class="oh-actions"><h3>Orders Requiring Attention</h3>'+button('Log order','OrderHealth.newCase()',true)+'</div>'+caseTable(allCases());}
 function reports(){
@@ -128,15 +128,26 @@ function check(id,windowId){
  const today=date();if(data.checks?.[date(s.region)+'_'+windowId+'_'+id])return toast('Check already submitted');
  dialog('Submit '+(windowId==='AM'?'morning':'afternoon')+' check — '+s.brand,
  '<p>Review the Seller Center before submitting. Outstanding issues are shown in Pending Follow-ups.</p>'+
- select('oh-concerns','Orders requiring attention?',['No','Yes'],'No')+
- field('oh-evidence','Evidence reference / link')+field('oh-remarks','Monitoring remarks'),
+ field('oh-count','New affected orders',0,'number')+select('oh-status','Status',['No Issues','Pending','Escalated','Under Investigation','Resolved'],'No Issues')+field('oh-remarks','Remarks / action taken'),
  'Submit review',"OrderHealth.saveCheck('"+id+"','"+windowId+"')");
 }
 async function saveCheck(id,w){
- const concerns=input('oh-concerns'),evidence=input('oh-evidence'),remarks=input('oh-remarks');
- if(!evidence)return toast('Please provide a screenshot or evidence reference');
- const region=data.stores[id].region;const key=date(region)+'_'+w+'_'+id,record={storeId:id,window:w,date:date(region),by:me()?.username,byName:me()?.name||me()?.username,concerns,evidence,remarks,at:new Date().toISOString(),late:localHour(region)>= (w==='AM'?9:14)};
- try{await fbRef(PATH+'/checks/'+key).transaction(old=>old||record);close();toast('Monitoring recorded');if(concerns==='Yes')newCase(id)}catch(e){toast('Save failed: '+e.message)}
+ const s=data.stores[id];if(!s)return;
+ const raw=input('oh-count'),count=Number(raw),status=input('oh-status'),remarks=input('oh-remarks');
+ if(raw===''||!Number.isSafeInteger(count)||count<0)return toast('Enter a valid affected-order count');
+ if(count>0&&(status==='No Issues'||!remarks))return toast('Select a status and enter remarks');
+ if(count===0&&status!=='No Issues')return toast('Select No Issues when there are zero new affected orders');
+ const stamp=new Date().toISOString(),key=date(s.region)+'_'+w+'_'+id;
+ const record={storeId:id,window:w,date:date(s.region),by:me()?.username,byName:me()?.name||me()?.username,affectedCount:count,status,remarks,at:stamp,late:localHour(s.region)>= (w==='AM'?9:14)};
+ try{
+ const result=await fbRef(PATH+'/checks/'+key).transaction(old=>old||record);
+ if(!result.committed)return toast('Already submitted');
+ if(count>0){
+ const cid=fbRef(PATH+'/cases').push().key;
+ await save('cases/'+cid,{storeId:id,brand:s.brand,region:s.region,platform:s.platform,owner:s.owner,affectedCount:count,remaining:status==='Resolved'?0:count,status,remarks,createdAt:stamp,updatedAt:stamp,history:[{at:stamp,by:me()?.username,action:'Created',remarks,count}]});
+ }
+ close();toast('Monitoring recorded');
+ }catch(e){toast('Save failed: '+e.message)}
 }
 function newCase(storeId=''){
  let arr=activeStores();if(!arr.length)return toast('Configure stores first');
@@ -159,22 +170,20 @@ async function saveCase(){
 }
 function edit(id){
  const c=data.cases[id];if(!c)return;
- dialog('Update order — '+c.orderId,
- '<p>'+esc(c.brand)+' · '+esc(c.platform)+' · '+esc(c.fulfilment)+'</p>'+
- select('oh-status','Current status',['Open','Escalated','Under Investigation','Resolved','Closed – No Further Action'],c.status)+
- field('oh-escalated','Escalated to',c.escalatedTo||'')+field('oh-followup','Next follow-up',c.followupDate||date(),'date')+
- field('oh-resolution','Resolution / progress remarks')+field('oh-resolution-evidence','Resolution evidence / reference'),
- 'Save update',"OrderHealth.updateCase('"+id+"')");
- const history=(c.history||[]).map(h=>'<li>'+esc(h.at)+' · '+esc(h.by)+' — '+esc(h.action)+': '+esc(h.remarks||'')+'</li>').join('');
- $('oh-form').insertAdjacentHTML('beforeend','<h4>Activity history</h4><ul>'+history+'</ul>');
+ dialog('Update affected orders — '+(c.brand||'Store'),
+ '<p>Originally affected: '+(c.affectedCount||1)+'</p>'+
+ field('oh-remaining','Still unresolved',c.remaining??1,'number')+
+ select('oh-status','Status',['Pending','Escalated','Under Investigation','Resolved'],c.status)+field('oh-resolution','Remarks / action taken'),
+ 'Save follow-up',"OrderHealth.updateCase('"+id+"')");
 }
 async function updateCase(id){
- const c=data.cases[id],status=input('oh-status'),remarks=input('oh-resolution'),evidence=input('oh-resolution-evidence');
- if(!remarks)return toast('Progress / resolution remarks are required');
- if(['Resolved','Closed – No Further Action'].includes(status)&&!evidence)return toast('Resolution evidence / confirmation is required');
+ const c=data.cases[id],raw=input('oh-remaining'),remaining=Number(raw),status=input('oh-status'),remarks=input('oh-resolution');
+ if(raw===''||!Number.isSafeInteger(remaining)||remaining<0||remaining>Number(c.remaining??1))return toast('Enter a valid unresolved count');
+ if(!remarks)return toast('Remarks are required');
+ if((remaining===0)!==(status==='Resolved'))return toast('Resolved requires zero remaining orders');
  const stamp=new Date().toISOString();
- const next={...c,status,escalatedTo:input('oh-escalated'),followupDate:['Resolved','Closed – No Further Action'].includes(status)?'':input('oh-followup'),updatedAt:stamp,resolvedAt:['Resolved','Closed – No Further Action'].includes(status)?stamp:null,resolutionEvidence:['Resolved','Closed – No Further Action'].includes(status)?evidence:(c.resolutionEvidence||''),history:[...(c.history||[]),{at:stamp,by:me()?.username,action:status,remarks,evidence}]};
- try{await save('cases/'+id,next);close();toast('Order updated')}catch(e){toast('Update failed: '+e.message)}
+ try{await save('cases/'+id,{...c,remaining,status,remarks,updatedAt:stamp,resolvedAt:remaining===0?stamp:null,history:[...(c.history||[]),{at:stamp,by:me()?.username,action:status,remarks,count:remaining}]});close();toast('Follow-up saved')}
+ catch(e){toast('Save failed: '+e.message)}
 }
 async function addStore(){
  if(!admin())return;
