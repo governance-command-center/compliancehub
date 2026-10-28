@@ -16,7 +16,7 @@
    item.className='sidebar-item';
    item.dataset.page='order-health';
    item.title='Order Health Monitoring';
-   item.innerHTML='<span class="sidebar-item-icon">📦</span><span class="sidebar-item-label">Order Health Monitoring</span><span class="sidebar-tooltip">Order Health Monitoring</span>';
+   item.innerHTML='<span class="sidebar-item-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18v13H3z"/><path d="M3 7l3-4h12l3 4"/><path d="M12 3v17"/></svg></span><span class="sidebar-item-label">Order Health Monitoring</span><span class="sidebar-tooltip">Order Health Monitoring</span>';
    item.addEventListener('click',()=>window.showPage('order-health'));
    anchor.after(item);
    item.classList.toggle('active',window._curPage==='order-health');
