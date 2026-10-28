@@ -53,11 +53,16 @@ function reports(){
  return '<h3>Monitoring compliance — '+esc(today)+'</h3>'+result.map(x=>'<p>'+x.w.label+': '+x.done+' / '+stores.length+' completed ('+(stores.length?Math.round(100*x.done/stores.length):0)+'%)</p>').join('')+
  '<h3>Order follow-up</h3><p>Open / escalated / under investigation: '+cases.filter(([id,c])=>!['Resolved','Closed – No Further Action'].includes(c.status)).length+'</p><p>Resolved: '+cases.filter(([id,c])=>c.status==='Resolved').length+'</p><p class="oh-muted">Completion and follow-up performance are separate: warehouse delays do not automatically count as missed CDM checks.</p>';
 }
+function memberOptions(){
+ const members=(D.members||[]).filter(m=>m.username&&m.active!==false&&m.approved!==false&&m.role!=='Talent on Demand');
+ return '<option value="">Select a member</option>'+members.sort((a,b)=>String(a.name||a.username).localeCompare(String(b.name||b.username))).map(m=>'<option value="'+esc(m.username)+'">'+esc((m.name||m.username)+' · '+(m.role||'Member'))+'</option>').join('');
+}
+function memberName(username){const m=(D.members||[]).find(m=>m.username===username);return m?(m.name||m.username):username;}
 function stores(){
  if(!admin())return 'Admin only';
- return '<h3>Store assignments</h3><p class="oh-muted">Set up every Synagie-managed brand/store here. Assign the CDM username exactly as it appears under Members.</p>'+
- '<div class="oh-grid">'+[['oh-brand','Brand / store'],['oh-region','Region'],['oh-platform','Platform'],['oh-owner','CDM username']].map(([id,l])=>'<label>'+l+'<input class="finput" id="'+id+'" placeholder="'+l+'"></label>').join('')+
- '<label>Fulfilment type<select class="finput" id="oh-fulfilment">'+opts(TYPES,TYPES[0])+'</select></label></div>'+button('Add store','OrderHealth.addStore()',true)+
+ return '<h3>Store assignments</h3><p class="oh-muted">Set up every Synagie-managed brand/store here. CDM assignments are linked to the Members directory. Select an existing member rather than typing a name.</p>'+
+ '<div class="oh-grid">'+[['oh-brand','Brand / store'],['oh-region','Region'],['oh-platform','Platform']].map(([id,l])=>'<label>'+l+'<input class="finput" id="'+id+'" placeholder="'+l+'"></label>').join('')+
+ '<label>CDM user<select class="finput" id="oh-owner">'+memberOptions()+'</select></label>'+ '<label>Fulfilment type<select class="finput" id="oh-fulfilment">'+opts(TYPES,TYPES[0])+'</select></label></div>'+button('Add store','OrderHealth.addStore()',true)+
  '<div class="oh-scroll"><table class="oh-table"><thead><tr><th>Brand</th><th>Region</th><th>Platform</th><th>Fulfilment</th><th>CDM</th><th></th></tr></thead><tbody>'+Object.entries(data.stores||{}).map(([id,s])=>'<tr><td>'+esc(s.brand)+'</td><td>'+esc(s.region)+'</td><td>'+esc(s.platform)+'</td><td>'+esc(s.fulfilment)+'</td><td>'+esc(s.owner)+'</td><td>'+button(s.active===false?'Activate':'Deactivate',"OrderHealth.toggleStore('"+id+"')")+'</td></tr>').join('')+'</tbody></table></div>';
 }
 function dialog(title,fields,saveLabel,action){
@@ -124,6 +129,7 @@ async function addStore(){
  if(!admin())return;
  const brand=input('oh-brand'),region=input('oh-region'),platform=input('oh-platform'),owner=input('oh-owner');
  if(!brand||!region||!platform||!owner)return toast('Complete all store fields');
+ if(!(D.members||[]).some(m=>m.username===owner&&m.active!==false&&m.approved!==false))return toast('Select a valid member from the Members directory');
  const id=fbRef(PATH+'/stores').push().key;
  try{await save('stores/'+id,{brand,region,platform,owner,fulfilment:input('oh-fulfilment'),active:true});toast('Store added')}catch(e){toast('Save failed: '+e.message)}
 }
