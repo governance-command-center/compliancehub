@@ -29,18 +29,78 @@ function summary(){
 }
 function render(){
  const root=$('pg-order-health');if(!root)return;
- const x=summary();
+ const x=summary();bindBulkEvents();
  root.innerHTML='<div class="page-header"><div><h1>Order Health Monitoring</h1><p>Seller Center reviews · Morning 9:00 AM / Afternoon 2:00 PM · store-region local time</p></div></div>'+
  '<div class="oh-kpis"><div class="oh-panel"><small>Morning completed</small><strong>'+x.done[0]+' / '+x.total+'</strong></div><div class="oh-panel"><small>Afternoon completed</small><strong>'+x.done[1]+' / '+x.total+'</strong></div><div class="oh-panel"><small>Orders needing attention</small><strong>'+x.open.length+'</strong></div><div class="oh-panel"><small>Overdue follow-ups</small><strong>'+x.open.filter(([id,c])=>c.followupDate&&c.followupDate<x.today).length+'</strong></div></div>'+
  '<div class="oh-tabs">'+[['daily','Daily Monitoring'],['reports','Monitoring Reports'],...(admin()?[['stores','Store Setup']]:[])].map(([key,label])=>'<button class="btn '+(subtab===key?'primary':'')+'" onclick="OrderHealth.tab(\''+key+'\')">'+label+'</button>').join('')+'</div>'+
  '<div class="oh-panel">'+(subtab==='daily'?daily():subtab==='reports'?reports():stores())+'</div>';
 }
+
+let bulkWindow='AM', bulkDraft={};
+function bulkKey(id){const store=data.stores[id];return date(store.region)+'_'+bulkWindow+'_'+id}
+function bulkPending(){return activeStores().filter(([id])=>!data.checks?.[bulkKey(id)])}
+function bulkWindowSet(w){bulkWindow=w;render()}
+function bulkAll(){bulkPending().forEach(([id])=>{bulkDraft[bulkKey(id)]={...(bulkDraft[bulkKey(id)]||{}),reviewed:true}});render()}
+function bulkToggle(id,checked){bulkDraft[bulkKey(id)]={...(bulkDraft[bulkKey(id)]||{}),reviewed:checked};}
+function bulkField(id,field,value){bulkDraft[bulkKey(id)]={...(bulkDraft[bulkKey(id)]||{}),[field]:value};}
 function daily(){
- const today=date(),storeRows=activeStores();
- return '<h3>Daily Seller Center checks — '+esc(today)+'</h3><p class="oh-muted">Each store requires a morning and afternoon review. A late submission is retained and marked late. Open orders are carried forward automatically.</p>'+
- (!storeRows.length?'<p>No assigned stores yet. Admin can configure stores in Store Setup.</p>':
- '<div class="oh-scroll"><table class="oh-table"><thead><tr><th>Region</th><th>Platform</th><th>Brand / Store</th><th>Fulfilment</th><th>9 AM</th><th>2 PM</th></tr></thead><tbody>'+storeRows.map(([id,s])=>'<tr><td>'+esc(s.region)+'</td><td>'+esc(s.platform)+'</td><td>'+esc(s.brand)+'</td><td>'+esc(s.fulfilment)+'</td>'+WINDOWS.map(w=>{const c=data.checks?.[date(s.region)+'_'+w.id+'_'+id];return '<td>'+(c?'<span class="oh-status">'+(c.late?'Late':'Completed')+' · '+esc(c.affectedCount??'Legacy')+' affected'+'</span>':button('Submit '+w.label,"OrderHealth.check('"+id+"','"+w.id+"')"))+'</td>'}).join('')+'</tr>').join('')+'</tbody></table></div>')+
- '<h3>Pending follow-ups (automatically carried forward)</h3>'+caseTable(allCases().filter(([id,c])=>!['Resolved','Closed – No Further Action'].includes(c.status))) ;
+ const stores=activeStores(),pending=bulkPending(),done=stores.length-pending.length;
+ const windows=WINDOWS.map(w=>'<button class="btn '+(bulkWindow===w.id?'primary':'')+'" data-oh-window="'+w.id+'">'+w.label+' · '+w.hour+':00</button>').join('');
+ const rows=pending.map(([id,s])=>{
+   const d=bulkDraft[bulkKey(id)]||{};
+   return '<tr data-oh-store="'+esc(id)+'"><td><input type="checkbox" data-oh-field="reviewed" '+(d.reviewed?'checked':'')+'></td>'+
+   '<td>'+esc(s.region)+'</td><td>'+esc(s.platform)+'</td><td>'+esc(s.brand)+'</td>'+
+   '<td><input class="finput" type="number" min="0" step="1" style="width:80px" data-oh-field="count" value="'+esc(d.count??0)+'"></td>'+
+   '<td><select class="finput" data-oh-field="status">'+opts(['No Issues','Pending','Escalated','Under Investigation','Resolved'],d.status||'No Issues')+'</select></td>'+
+   '<td><input class="finput" data-oh-field="remarks" placeholder="Required for affected orders" value="'+esc(d.remarks||'')+'"></td></tr>';
+ }).join('');
+ return '<h3>Daily Seller Center Monitoring</h3><p class="oh-muted">Review order statuses for delays, cancellations, SLA breaches, RTS and AWB discrepancies. Confirm reviewed stores together. Enter details only for newly affected orders.</p>'+
+ '<div class="oh-tabs">'+windows+'</div><p><strong>'+done+' / '+stores.length+'</strong> stores submitted for this window.</p>'+
+ (pending.length?'<div class="oh-actions"><button class="btn" data-oh-action="all">Mark all reviewed</button><button class="btn primary" data-oh-action="submit">Submit reviewed stores</button></div>'+
+ '<div class="oh-scroll"><table class="oh-table"><thead><tr><th>Reviewed</th><th>Region</th><th>Platform</th><th>Brand</th><th>New affected</th><th>Status</th><th>Remarks</th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<p>All stores submitted for this window.</p>')+
+ '<h3>Pending follow-ups (carried forward)</h3>'+caseTable(allCases().filter(([id,c])=>!['Resolved','Closed – No Further Action'].includes(c.status)));
+}
+async function bulkSubmit(){
+ const rows=bulkPending().filter(([id])=>bulkDraft[bulkKey(id)]?.reviewed);
+ if(!rows.length)return toast('Select at least one reviewed store');
+ for(const [id] of rows){
+   const d=bulkDraft[bulkKey(id)],n=Number(d.count??0),status=d.status||'No Issues';
+   if(!Number.isSafeInteger(n)||n<0)return toast('Affected count must be a nonnegative whole number');
+   if(n>0&&(status==='No Issues'||!String(d.remarks||'').trim()))return toast('Affected orders require status and remarks');
+   if(n===0&&status!=='No Issues')return toast('Use No Issues when new affected count is zero');
+ }
+ if(!confirm('Confirm Seller Center review for '+rows.length+' stores?'))return;
+ let completed=0;
+ for(const [id,store] of rows){
+   const key=bulkKey(id),d=bulkDraft[key],n=Number(d.count??0),stamp=new Date().toISOString();
+   const record={storeId:id,window:bulkWindow,date:date(store.region),by:me()?.username,byName:me()?.name||me()?.username,affectedCount:n,status:d.status||'No Issues',remarks:d.remarks||'',at:stamp,late:localHour(store.region)>=(bulkWindow==='AM'?9:14)};
+   try{
+     const tx=await fbRef(PATH+'/checks/'+key).transaction(old=>old||record);
+     if(!tx.committed)continue;
+     if(n>0){
+       const caseId=fbRef(PATH+'/cases').push().key;
+       await save('cases/'+caseId,{storeId:id,brand:store.brand,region:store.region,platform:store.platform,owner:store.owner,affectedCount:n,remaining:record.status==='Resolved'?0:n,status:record.status,remarks:record.remarks,createdAt:stamp,updatedAt:stamp,history:[{at:stamp,by:me()?.username,action:'Created',remarks:record.remarks,count:n}]});
+     }
+     delete bulkDraft[key];completed++;
+   }catch(e){toast('Saved '+completed+' checks. Error: '+e.message);return}
+ }
+ toast('Saved '+completed+' store checks');render();
+}
+function bindBulkEvents(){
+ const root=$('pg-order-health');if(!root||root.dataset.bulkBound)return;
+ root.dataset.bulkBound='1';
+ root.addEventListener('click',e=>{
+   const w=e.target.closest('[data-oh-window]');if(w){bulkWindowSet(w.dataset.ohWindow);return}
+   const a=e.target.closest('[data-oh-action]');if(!a)return;
+   if(a.dataset.ohAction==='all')bulkAll();
+   if(a.dataset.ohAction==='submit')bulkSubmit();
+ });
+ root.addEventListener('change',e=>{
+   const el=e.target,field=el.dataset.ohField,row=el.closest('[data-oh-store]');
+   if(!field||!row)return;
+   if(field==='reviewed')bulkToggle(row.dataset.ohStore,el.checked);
+   else bulkField(row.dataset.ohStore,field,el.value);
+ });
 }
 function caseTable(rows){
  if(!rows.length)return '<p class="oh-muted">No matching orders.</p>';
