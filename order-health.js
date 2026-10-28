@@ -127,7 +127,7 @@ function check(id,windowId){
  const s=data.stores[id];if(!s)return;
  const today=date();if(data.checks?.[date(s.region)+'_'+windowId+'_'+id])return toast('Check already submitted');
  dialog('Submit '+(windowId==='AM'?'morning':'afternoon')+' check — '+s.brand,
- '<p>Review the Seller Center before submitting. Outstanding issues are shown in Pending Follow-ups.</p>'+
+ '<p>Review Seller Center order statuses for potential issues, including delayed shipments, cancellations, SLA breaches, failed or stuck fulfilment, RTS, and order/AWB discrepancies. Record only newly affected orders here; unresolved issues are carried forward under Pending Follow-ups until resolved.</p>'+
  field('oh-count','New affected orders',0,'number')+select('oh-status','Status',['No Issues','Pending','Escalated','Under Investigation','Resolved'],'No Issues')+field('oh-remarks','Remarks / action taken'),
  'Submit review',"OrderHealth.saveCheck('"+id+"','"+windowId+"')");
 }
