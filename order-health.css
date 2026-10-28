@@ -1,0 +1,22 @@
+/* Isolated Order Health Monitoring UI */
+#pg-order-health{padding-bottom:40px}
+#pg-order-health .page-header{margin-bottom:18px}
+#pg-order-health .page-header h1{font-size:25px;margin:0 0 6px}
+#pg-order-health .page-header p,.oh-muted{font-size:13px;color:var(--text3,#64748b)}
+.oh-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:18px}
+.oh-panel{padding:18px;background:var(--surface,#fff);border:1px solid var(--border,#e2e8f0);border-radius:12px;margin-bottom:14px}
+.oh-panel small{display:block;color:var(--text3,#64748b);font-size:12px}
+.oh-kpis strong{font-size:25px;display:block;margin-top:8px}
+.oh-tabs,.oh-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:16px}
+.oh-actions{justify-content:space-between}
+.oh-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0}
+.oh-grid label,.oh-field{display:flex;flex-direction:column;gap:5px;margin-bottom:12px;font-size:13px}
+.oh-scroll{overflow-x:auto}
+.oh-table{width:100%;border-collapse:collapse;font-size:13px}
+.oh-table th,.oh-table td{text-align:left;padding:10px;border-bottom:1px solid var(--border,#e2e8f0);vertical-align:middle}
+.oh-table th{color:var(--text3,#64748b);white-space:nowrap}
+.oh-status{font-weight:600}
+#oh-modal{z-index:10020}
+#oh-modal .modal{max-height:85vh;overflow-y:auto}
+#oh-modal input,#oh-modal select{width:100%;box-sizing:border-box}
+@media(max-width:850px){.oh-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.oh-grid{grid-template-columns:1fr}}
