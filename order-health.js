@@ -4,7 +4,7 @@
 const PATH='orderHealth';
 const TYPES=['Synagie Fulfilled','Brand Fulfilled','Third-Party 3PL','Marketplace Fulfilled'];
 const WINDOWS=[{id:'AM',label:'Morning',hour:9},{id:'PM',label:'Afternoon',hour:14}];
-let data={stores:{},checks:{},cases:{}},subtab='daily',bound=false;
+let data={stores:{},checks:{},cases:{}},subtab='daily',bound=false,importRows=[];
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const me=()=>window.CU||CU;
@@ -58,10 +58,61 @@ function memberOptions(){
  return '<option value="">Select a member</option>'+members.sort((a,b)=>String(a.name||a.username).localeCompare(String(b.name||b.username))).map(m=>'<option value="'+esc(m.username)+'">'+esc((m.name||m.username)+' · '+(m.role||'Member'))+'</option>').join('');
 }
 function memberName(username){const m=(D.members||[]).find(m=>m.username===username);return m?(m.name||m.username):username;}
+function norm(s){return String(s||'').normalize('NFKD').replace(/[\\u0300-\\u036f]/g,'').replace(/[^a-z0-9]/gi,'').toLowerCase();}
+function matchMember(name){
+ const list=(D.members||[]).filter(m=>m.username&&m.active!==false&&m.approved!==false);
+ const key=norm(name);
+ const found=list.filter(m=>norm(m.name)===key||norm(m.username)===key);
+ return found.length===1?found[0]:null;
+}
+function importPreview(){
+ if(!importRows.length)return '';
+ const matched=importRows.filter(r=>r.member),unmatched=importRows.filter(r=>!r.member);
+ return '<div class="oh-panel"><h3>Allocation import preview</h3><p>'+importRows.length+' unique allocations · '+matched.length+' matched · '+unmatched.length+' unmatched</p>'+
+ (unmatched.length?'<p class="oh-muted">Unmatched names will NOT be imported. Add or correct the corresponding Members account first.</p><div class="oh-scroll"><table class="oh-table"><thead><tr><th>File CDM</th><th>Brand</th><th>Platform</th><th>Region</th></tr></thead><tbody>'+unmatched.map(r=>'<tr><td>'+esc(r.name)+'</td><td>'+esc(r.brand)+'</td><td>'+esc(r.platform)+'</td><td>'+esc(r.region)+'</td></tr>').join('')+'</tbody></table></div>':'')+
+ button('Import '+matched.length+' matched allocations','OrderHealth.commitImport()',true)+'</div>';
+}
+async function uploadAllocations(file){
+ if(!file)return;
+ if(typeof XLSX==='undefined')return toast('Excel reader unavailable');
+ try{
+ const wb=XLSX.read(await file.arrayBuffer(),{type:'array'}),rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});
+ const seen=new Set();
+ importRows=rows.map(r=>{
+ const values=Object.fromEntries(Object.entries(r).map(([k,v])=>[String(k).trim().toLowerCase(),String(v).trim()]));
+ const name=values.username||values.cdm||values.name||'';
+ return {name,brand:values.brand||'',platform:values.platform||'',region:(values.region||'').toUpperCase(),member:matchMember(name)};
+ }).filter(r=>{
+ if(!r.name||!r.brand||!r.platform||!r.region)return false;
+ const key=[r.name,r.brand,r.platform,r.region].map(norm).join('|');
+ if(seen.has(key))return false;seen.add(key);return true;
+ });
+ render();
+ }catch(e){toast('Unable to read allocation file: '+e.message)}
+}
+async function commitImport(){
+ if(!admin())return;
+ const rows=importRows.filter(r=>r.member);
+ if(!rows.length)return toast('No matched allocations to import');
+ const existing=Object.entries(data.stores||{});
+ const updates={};let added=0,updated=0;
+ for(const r of rows){
+ const match=existing.find(([id,s])=>norm(s.brand)===norm(r.brand)&&norm(s.platform)===norm(r.platform)&&norm(s.region)===norm(r.region));
+ if(match){
+   updates[match[0]+'/owner']=r.member.username;updated++;
+ }else{
+   const id=fbRef(PATH+'/stores').push().key;
+   updates[id]={brand:r.brand,platform:r.platform,region:r.region,owner:r.member.username,fulfilment:'Brand Fulfilled',active:true,fulfilmentNeedsReview:true};added++;
+ }
+ }
+ if(!window.confirm('Import '+rows.length+' matched allocations? New stores will use provisional Brand Fulfilled classification until reviewed.'))return;
+ try{await fbRef(PATH+'/stores').update(updates);importRows=[];toast('Imported: '+added+' new stores, '+updated+' updated assignments');render()}
+ catch(e){toast('Import failed: '+e.message)}
+}
 function stores(){
  if(!admin())return 'Admin only';
  return '<h3>Store assignments</h3><p class="oh-muted">Set up every Synagie-managed brand/store here. CDM assignments are linked to the Members directory. Select an existing member rather than typing a name.</p>'+
- '<div class="oh-grid">'+[['oh-brand','Brand / store'],['oh-region','Region'],['oh-platform','Platform']].map(([id,l])=>'<label>'+l+'<input class="finput" id="'+id+'" placeholder="'+l+'"></label>').join('')+
+ '<div class="oh-panel"><h3>Bulk allocation mapping</h3><p class="oh-muted">Upload the masterlist Excel file (username, brand, platform, region). Matches use the Members directory; unmatched rows are excluded. New stores require fulfilment-type review.</p><input type="file" accept=".xlsx,.xls,.csv" onchange="OrderHealth.uploadAllocations(this.files[0])">'+importPreview()+'</div>'+ '<div class="oh-grid">'+[['oh-brand','Brand / store'],['oh-region','Region'],['oh-platform','Platform']].map(([id,l])=>'<label>'+l+'<input class="finput" id="'+id+'" placeholder="'+l+'"></label>').join('')+
  '<label>CDM user<select class="finput" id="oh-owner">'+memberOptions()+'</select></label>'+ '<label>Fulfilment type<select class="finput" id="oh-fulfilment">'+opts(TYPES,TYPES[0])+'</select></label></div>'+button('Add store','OrderHealth.addStore()',true)+
  '<div class="oh-scroll"><table class="oh-table"><thead><tr><th>Brand</th><th>Region</th><th>Platform</th><th>Fulfilment</th><th>CDM</th><th></th></tr></thead><tbody>'+Object.entries(data.stores||{}).map(([id,s])=>'<tr><td>'+esc(s.brand)+'</td><td>'+esc(s.region)+'</td><td>'+esc(s.platform)+'</td><td>'+esc(s.fulfilment)+'</td><td>'+esc(memberName(s.owner))+'</td><td>'+button(s.active===false?'Activate':'Deactivate',"OrderHealth.toggleStore('"+id+"')")+'</td></tr>').join('')+'</tbody></table></div>';
 }
@@ -139,6 +190,6 @@ function init(){
  if(bound)return;bound=true;
  fbRef(PATH).on('value',snapshot=>{data=snapshot.val()||{stores:{},checks:{},cases:{}};if(window._curPage==='order-health'||_curPage==='order-health')render()});
 }
-window.OrderHealth={init,render,tab:t=>{subtab=t;render()},check,saveCheck,newCase,saveCase,edit,updateCase,addStore,toggleStore,close};
+window.OrderHealth={init,render,tab:t=>{subtab=t;render()},check,saveCheck,newCase,saveCase,edit,updateCase,addStore,toggleStore,uploadAllocations,commitImport,close};
 init();
 })();
