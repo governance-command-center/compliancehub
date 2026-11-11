@@ -8,7 +8,7 @@ firebase.initializeApp({
   appId:"1:780924840622:web:5180777620a99d6a731b3f"
 });
 const FDB=firebase.database();
-const ADMIN_UN='governance admin',ADMIN_PW='Governance_Admin2026',ADMIN_NAME='Governance Admin';
+const ADMIN_UN='governancehub_admin',ADMIN_PW='Governance_Admin2026',ADMIN_NAME='Governance Admin';
 const SESSION_KEY='gh_session_v2';
 const ROLES=['HOD','Manager','Assist. Manager','Team Lead','Executive','Talent on Demand'];
 const LEAD_ROLES=['HOD','Manager','Assist. Manager','Team Lead'];
