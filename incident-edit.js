@@ -8,11 +8,14 @@ function memberSelect(id,selected,leadOnly){
   var members=(D.members||[]).filter(function(m){return m.approved&&m.active!==false&&(leadOnly?LEAD_ROLES.includes(m.role):m.role!=='Talent on Demand');});
   return '<select class="finput nb" id="'+id+'"><option value="">— Select member —</option>'+members.map(function(m){return '<option value="'+escapeText(m.username)+'"'+(m.username===selected?' selected':'')+'>'+escapeText(m.name)+' ('+escapeText(m.role||'')+')</option>';}).join('')+'</select>';
 }
+function editInput(id,label,v,type){return '<div><label class="flabel">'+label+'</label><input class="finput" id="icf-edit-'+id+'" type="'+(type||'text')+'" value="'+escapeText(v)+'"></div>';}
+function localDue(ts){if(!ts)return '';var d=new Date(ts);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}
 function editPanel(i){
   var cdm=incCdmM(i),lead=incTlM(i);
   return '<section class="inc-panel" id="icf-edit-panel" style="display:none;border-color:var(--blue-mid);margin-top:12px">'
     +'<div class="inc-ph">EDIT INCIDENT DETAILS <span class="inc-lock">Governance only · Changes recorded</span></div>'
     +'<div class="inc-note warn">Edit this individual incident only. Incident ID, workflow status, acknowledgement, coaching, and closure history are preserved. If you change a CDM, verify their acknowledgement belongs to the correct person.</div>'
+    +'<div class="fg fg2">'+editInput('date','Incident Date',i.incidentDate||i.date,'date')+editInput('due','Due Date',localDue(i.deadlineAt),'datetime-local')+editInput('region','Region',i.region)+editInput('brand','Brand',i.brand)+editInput('platform','Platform',i.platform)+editInput('classification','Classification',i.classification)+editInput('orders','Orders Affected',i.ordersAffected)+editInput('amount','Estimated Amount',i.estimatedAmount)+'</div>'
     +'<div class="fg fg2"><div><label class="flabel">Assigned CDM</label>'+memberSelect('icf-edit-cdm',cdm&&cdm.username||'',false)+'</div>'
     +'<div><label class="flabel">Assigned Team Lead</label>'+memberSelect('icf-edit-tl',lead&&lead.username||'',true)+'</div></div>'
     +'<div class="fg fg2"><div><label class="flabel">Issue / Finding</label><textarea class="finput" id="icf-edit-issue" rows="3">'+escapeText(i.issue||'')+'</textarea></div>'
@@ -27,13 +30,17 @@ window.incSaveAdminEdit=function(){return incRun(async function(){
   var i=incGet(_incCaseKey);if(!i){toast('Incident not found');return;}
   var reason=value('icf-edit-reason'),cu=value('icf-edit-cdm'),tu=value('icf-edit-tl');
   if(!reason){toast('Please enter the reason for correction');return;}
-  if(!cu||!tu){toast('Select both the CDM and Team Lead');return;}
+  
   var cm=(D.members||[]).find(function(m){return m.username===cu&&m.approved&&m.active!==false;});
   var tm=(D.members||[]).find(function(m){return m.username===tu&&m.approved&&m.active!==false&&LEAD_ROLES.includes(m.role);});
-  if(!cm||!tm){toast('Selected members are not valid or active');return;}
-  if(i.ack&&incCdmUser(i)!==cu){toast('CDM cannot be reassigned after acknowledgement. Contact Governance for a reviewed correction.');return;}
-  var fields={cdm:cm.name,cdmUser:cm.username,cdmTL:tm.name,cdmTLUser:tm.username,issue:value('icf-edit-issue'),remarks:value('icf-edit-remarks')};
-  if(!i.ack)fields.tagged=[cm.username];
+  if((cu&&!cm)||(tu&&!tm)){toast('Selected members are not valid or active');return;}
+  if(i.ack&&cu&&incCdmUser(i)!==cu){toast('CDM cannot be reassigned after acknowledgement. Contact Governance for a reviewed correction.');return;}
+  var date=value('icf-edit-date'),due=value('icf-edit-due'),issue=value('icf-edit-issue');
+  if(!date||!issue||!value('icf-edit-brand')){toast('Date, brand and issue are required');return;}
+  var fields={incidentDate:date,region:value('icf-edit-region'),brand:value('icf-edit-brand'),platform:value('icf-edit-platform'),classification:value('icf-edit-classification'),ordersAffected:value('icf-edit-orders'),estimatedAmount:value('icf-edit-amount'),issue:issue,title:issue,description:issue,remarks:value('icf-edit-remarks')};
+  if(due&&due!==localDue(i.deadlineAt))fields.deadlineAt=new Date(due).getTime();
+  if(cm){fields.cdm=cm.name;fields.cdmUser=cm.username;if(!i.ack&&incCdmUser(i)!==cm.username)fields.tagged=[cm.username];}
+  if(tm){fields.cdmTL=tm.name;fields.cdmTLUser=tm.username;}
   var changes=[];
   Object.keys(fields).forEach(function(k){var before=i[k]==null?'':String(i[k]),after=fields[k]==null?'':String(fields[k]);if(before!==after)changes.push({field:k,before:before,after:after});});
   if(!changes.length){toast('No changes detected');return;}
