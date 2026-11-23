@@ -4902,20 +4902,10 @@ async function unarchiveIncident(key){
 }
 
 function downloadIncidentTemplate(){
-  const headers=['Incident Date','Log Date','Region','Brand','Platform','CDM','CDM Team Lead','Category','Classification','Issue','Remarks','Evidence'];
-  const example=['2026-04-20','2026-04-20','SG','Brand Name','Lazada','CDM Name','TL Name','Merchandise Master','Duplicate Information','Product listed without required disclosure','For monitoring','https://example.com/evidence'];
-  const notes=[
-    '→ Region: MY PH TH VN ID SG EP',
-    '→ Platform: Lazada / Shopee / TikTok / Zalora / Qoo10 / All',
-    '→ Category (EXACT): SIS / Listing / Category / Merchandise Master / Compliance / Others',
-    '→ Date format: YYYY-MM-DD (e.g. 2026-04-20)',
-    '→ Evidence: optional OneDrive, SharePoint, Imgur or HTTPS URL(s); separate multiple links with new lines or semicolons.',
-    '→ Delete this row and the note rows before importing. Keep the header row.',
-  ];
-  const wb=XLSX.utils.book_new();
-  const ws=XLSX.utils.aoa_to_sheet([headers,example,...notes.map(n=>[n])]);
-  ws['!cols']=headers.map(()=>({wch:22}));
-  XLSX.utils.book_append_sheet(wb,ws,'Incident Template');
+  const headers=['Month','Week No.','Incident Date','Incident ID','Incident Source','Region','Brand','Platform','CDM','CDM Team Lead','No. of Orders Affected','Estimated Amount, if any','Classification','Issue','Remarks','Remarks'];
+  const wb=XLSX.utils.book_new(),ws=XLSX.utils.aoa_to_sheet([headers]);
+  ws['!cols']=headers.map(()=>({wch:24}));
+  XLSX.utils.book_append_sheet(wb,ws,'GovernanceHub_Export');
   XLSX.writeFile(wb,'Incident_Import_Template.xlsx');
   toast('Template downloaded!');
 }
@@ -4947,72 +4937,63 @@ function parseExcelDate(val){
 }
 
 async function importIncidentExcel(evt){
-  const file=evt.target.files[0];if(!file)return;
-  evt.target.value='';
-  const reader=new FileReader();
-  reader.onload=async function(e){
-    try{
-      // raw:true keeps dates as serial numbers so parseExcelDate handles them correctly
-      const wb=XLSX.read(e.target.result,{type:'binary',cellDates:false});
-      const ws=wb.Sheets[wb.SheetNames[0]];
-      const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:true});
-      if(rows.length<2){toast('File empty or no data rows.');return;}
-      const header=rows[0].map(h=>String(h).trim());
-      const col=h=>header.indexOf(h);
-      let added=0,skipped=0,unlinked=0;
-      const dataRows=rows.slice(1).filter(r=>{
-        const v=String(r[col('Issue')]||r[col('Brand')]||'').trim();
-        return v&&!v.startsWith('\u2192');
-      });
-      const CATS=['SIS','Listing','Category','Merchandise Master','Compliance','Others'];
-      for(const row of dataRows){
-        const issue=String(row[col('Issue')]||'').trim();
-        const brand=String(row[col('Brand')]||'').trim();
-        if(!issue&&!brand){skipped++;continue;}
-        const cdmName=String(row[col('CDM')]||'').trim();
-        const tlName=String(row[col('CDM Team Lead')]||'').trim();
-        // Parse dates properly (Excel serial numbers or strings)
-        const incidentDate=parseExcelDate(row[col('Incident Date')])||ds(now());
-        const logDate=parseExcelDate(row[col('Log Date')])||incidentDate;
-        // Read category — must match INCIDENT_CATS exactly
-        const rawCat=String(row[col('Category')]||'').trim();
-        const category=CATS.includes(rawCat)?rawCat:'Others';
-        // Auto-tag CDM and TL by name lookup
-        const cdmMember=incMem('',cdmName)||undefined;
-        const tlMember=incMem('',tlName)||undefined;
-        if(cdmName&&!cdmMember)unlinked++;
-        const tagged=[...new Set([cdmMember?.username,tlMember?.username].filter(Boolean))];
-        const responses={};tagged.forEach(u=>{responses[u]={action:'Pending'};});
-        await fbPush('incidents',{
-          title:issue||brand,
-          incidentType:'General',
-          incidentDate,
-          date:logDate,
-          severity:'Medium',
-          category,
-          region:String(row[col('Region')]||'').trim(),
-          brand,
-          platform:String(row[col('Platform')]||'').trim(),
-          cdm:cdmMember?cdmMember.name:cdmName,cdmUser:cdmMember?cdmMember.username:'',
-          cdmTL:tlMember?tlMember.name:tlName,cdmTLUser:tlMember?tlMember.username:'',
-          classification:String(row[col('Classification')]||'').trim(),
-          issue,
-          remarks:String(row[col('Remarks')]||'').trim(),
-          evidenceUrls:incParseEvidence(row[col('Evidence')]!==undefined?row[col('Evidence')]:row[col('Audit Evidence')]),
-          description:issue,
-          reportedBy:CU.name,
-          tagged:[],responses:{},
-          status:'Open',
-          ts:Date.now(),
-          importedFrom:'excel',
-          ...(await incInitFields())
-        });
-        added++;
+  const file=evt.target.files[0];evt.target.value='';if(!file||!CU.isAdmin)return;
+  if(window._incidentImportBusy)return;
+  window._incidentImportBusy=true;
+  try{
+    const wb=XLSX.read(await file.arrayBuffer(),{type:'array',cellDates:false});
+    const sheet=wb.SheetNames.includes('GovernanceHub_Export')?'GovernanceHub_Export':wb.SheetNames[0];
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[sheet],{header:1,defval:'',raw:true});
+    const norm=v=>String(v??'').trim().toLowerCase().replace(/\s+/g,' ');
+    const headers=(rows[0]||[]).map(norm);
+    const col=(...names)=>headers.findIndex(h=>names.some(n=>h===norm(n))|| (names.includes('Issue')&&h.startsWith('issue (')));
+    const get=(row,...names)=>String(row[col(...names)]??'').trim();
+    if(['Incident Date','Incident ID','Issue','Brand','CDM'].some(h=>col(h)<0))throw Error('Required headers: Incident Date, Incident ID, Issue, Brand, CDM.');
+    const snapshot=await fbRef('incidents').once('value');
+    const existing=Object.entries(snapshot.val()||{}).map(([k,v])=>({...v,_key:k}));
+    const fingerprint=i=>[i.incidentDate||i.date,i.region,i.brand,i.platform,i.cdm,i.issue||i.description||i.title].map(norm).join('|');
+    const ids=new Set(),plan=[],errors=[];let unchanged=0;
+    for(let n=1;n<rows.length;n++){
+      const row=rows[n];if(!row.some(v=>String(v??'').trim()))continue;
+      const id=get(row,'Incident ID').toUpperCase(),issue=get(row,'Issue'),brand=get(row,'Brand'),cdm=get(row,'CDM');
+      const date=parseExcelDate(row[col('Incident Date')]);
+      if(!/^INC-\d{4}-\d{4,}$/.test(id)||!issue||!brand||!cdm||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||new Date(date).toISOString().slice(0,10)!==date){errors.push('Row '+(n+1)+': missing/invalid ID, date, issue, brand or CDM');continue;}
+      if(ids.has(id)){errors.push('Row '+(n+1)+': duplicate ID '+id);continue;}ids.add(id);
+      const lead=get(row,'CDM Team Lead'),cm=incMem('',cdm),lm=incMem('',lead);
+      const fields={sourceIncidentId:id,incidentDate:date,region:get(row,'Region'),brand,platform:get(row,'Platform'),cdm:cm?cm.name:cdm,cdmUser:cm?cm.username:'',cdmTL:lm?lm.name:lead,cdmTLUser:lm?lm.username:'',classification:get(row,'Classification'),issue,title:issue,description:issue};
+      const optional=[['incidentSource','Incident Source'],['remarks','Remarks'],['ordersAffected','No. of Orders Affected'],['estimatedAmount','Estimated Amount, if any']];
+      optional.forEach(([key,h])=>{if(col(h)>=0)fields[key]=get(row,h);});
+      const remarksCols=headers.map((h,j)=>h==='remarks'?j:-1).filter(j=>j>=0);
+      if(remarksCols.length>1)fields.sourceRemarks2=String(row[remarksCols[1]]??'').trim();
+      if(col('Category')>=0)fields.category=get(row,'Category')||'Others';
+      if(col('Evidence','Audit Evidence')>=0)fields.evidenceUrls=incParseEvidence(get(row,'Evidence','Audit Evidence'));
+      const matches=existing.filter(i=>i.sourceIncidentId===id);
+      const legacy=existing.filter(i=>!i.sourceIncidentId&&fingerprint(i)===fingerprint(fields));
+      if(matches.length>1||(!matches.length&&legacy.length>1)){errors.push('Row '+(n+1)+': ambiguous existing record');continue;}
+      const old=matches[0]||legacy[0];
+      if(old){
+        if(plan.some(p=>p.old?._key===old._key)){errors.push('Row '+(n+1)+': multiple rows match one record');continue;}
+        if(old._archived){errors.push('Row '+(n+1)+': archived record requires review');continue;}
+        if(old.sourceIncidentId&&['cdm','cdmTL'].some(k=>norm(old[k])!==norm(fields[k]))){errors.push('Row '+(n+1)+': assignment changed; review manually');continue;}
+        if(Object.keys(fields).every(k=>JSON.stringify(old[k]??'')===JSON.stringify(fields[k]??''))){unchanged++;continue;}
       }
-      toast('Imported '+added+' incident'+(added!==1?'s':'')+(skipped?' ('+skipped+' skipped)':'')+(unlinked?' — '+unlinked+' CDM name(s) not found in Members; link them in the case view':'')+'!',unlinked?6000:2500);
-    }catch(err){toast('Import error: '+err.message);}
-  };
-  reader.readAsBinaryString(file);
+      plan.push({old,fields});
+    }
+    if(errors.length){alert('Import blocked. Correct these rows before retrying:\n'+errors.slice(0,30).join('\n')+(errors.length>30?'\nMore errors: '+(errors.length-30):''));return;}
+    const added=plan.filter(p=>!p.old).length,updated=plan.length-added;
+    if(!confirm('Import preview — '+sheet+'\nNew: '+added+'\nUpdated / linked: '+updated+'\nUnchanged: '+unchanged+'\nExisting workflow history is preserved. Continue?'))return;
+    const patch={};
+    for(const p of plan){
+      if(p.old){Object.entries(p.fields).forEach(([k,v])=>{patch[p.old._key+'/'+k]=v;});}
+      else{
+        const key=fbRef('incidents').push().key;
+        patch[key]={incidentType:'General',date:p.fields.incidentDate,severity:'Medium',category:'Others',reportedBy:CU.name,tagged:[],responses:{},status:'Open',ts:Date.now(),importedFrom:'excel',...(await incInitFields()),...p.fields};
+      }
+    }
+    if(Object.keys(patch).length)await fbRef('incidents').update(patch);
+    toast('Import complete: '+added+' new, '+updated+' updated, '+unchanged+' unchanged.');
+  }catch(err){toast('Import error: '+err.message);}
+  finally{window._incidentImportBusy=false;}
 }
 
 function openIncidentFormLegacy(){
