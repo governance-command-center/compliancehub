@@ -4902,7 +4902,7 @@ async function unarchiveIncident(key){
 }
 
 function downloadIncidentTemplate(){
-  const headers=['Month','Week No.','Incident Date','Region','Brand','Platform','CDM','CDM Team Lead','No. of Orders Affected','Estimated Amount, if any','Classification','Issue','Remarks','Remarks'];
+  const headers=['Month','Week No.','Incident Date','Region','Brand','Platform','CDM','CDM Team Lead','No. of Orders Affected','Estimated Amount, if any','Classification','Issue','Remarks'];
   const wb=XLSX.utils.book_new(),ws=XLSX.utils.aoa_to_sheet([headers]);
   ws['!cols']=headers.map(()=>({wch:24}));
   XLSX.utils.book_append_sheet(wb,ws,'GovernanceHub_Export');
