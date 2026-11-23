@@ -4902,7 +4902,7 @@ async function unarchiveIncident(key){
 }
 
 function downloadIncidentTemplate(){
-  const headers=['Month','Week No.','Incident Date','Incident ID','Incident Source','Region','Brand','Platform','CDM','CDM Team Lead','No. of Orders Affected','Estimated Amount, if any','Classification','Issue','Remarks','Remarks'];
+  const headers=['Month','Week No.','Incident Date','Region','Brand','Platform','CDM','CDM Team Lead','No. of Orders Affected','Estimated Amount, if any','Classification','Issue','Remarks','Remarks'];
   const wb=XLSX.utils.book_new(),ws=XLSX.utils.aoa_to_sheet([headers]);
   ws['!cols']=headers.map(()=>({wch:24}));
   XLSX.utils.book_append_sheet(wb,ws,'GovernanceHub_Export');
@@ -4948,35 +4948,33 @@ async function importIncidentExcel(evt){
     const headers=(rows[0]||[]).map(norm);
     const col=(...names)=>headers.findIndex(h=>names.some(n=>h===norm(n))|| (names.includes('Issue')&&h.startsWith('issue (')));
     const get=(row,...names)=>String(row[col(...names)]??'').trim();
-    if(['Incident Date','Incident ID','Issue','Brand','CDM'].some(h=>col(h)<0))throw Error('Required headers: Incident Date, Incident ID, Issue, Brand, CDM.');
+    if(['Incident Date','Issue','Brand','CDM'].some(h=>col(h)<0))throw Error('Required headers: Incident Date, Issue, Brand, CDM.');
     const snapshot=await fbRef('incidents').once('value');
     const existing=Object.entries(snapshot.val()||{}).map(([k,v])=>({...v,_key:k}));
     const fingerprint=i=>[i.incidentDate||i.date,i.region,i.brand,i.platform,i.cdm,i.issue||i.description||i.title].map(norm).join('|');
     const ids=new Set(),plan=[],errors=[];let unchanged=0;
     for(let n=1;n<rows.length;n++){
       const row=rows[n];if(!row.some(v=>String(v??'').trim()))continue;
-      const id=get(row,'Incident ID').toUpperCase(),issue=get(row,'Issue'),brand=get(row,'Brand'),cdm=get(row,'CDM');
+      const issue=get(row,'Issue'),brand=get(row,'Brand'),cdm=get(row,'CDM');
       const date=parseExcelDate(row[col('Incident Date')]);
-      if(!/^INC-\d{4}-\d{4,}$/.test(id)||!issue||!brand||!cdm||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||new Date(date).toISOString().slice(0,10)!==date){errors.push('Row '+(n+1)+': missing/invalid ID, date, issue, brand or CDM');continue;}
-      if(ids.has(id)){errors.push('Row '+(n+1)+': duplicate ID '+id);continue;}ids.add(id);
+      if(!issue||!brand||!cdm||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||new Date(date).toISOString().slice(0,10)!==date){errors.push('Row '+(n+1)+': missing/invalid date, issue, brand or CDM');continue;}
       const lead=get(row,'CDM Team Lead'),cm=incMem('',cdm),lm=incMem('',lead);
-      const fields={sourceIncidentId:id,incidentDate:date,region:get(row,'Region'),brand,platform:get(row,'Platform'),cdm:cm?cm.name:cdm,cdmUser:cm?cm.username:'',cdmTL:lm?lm.name:lead,cdmTLUser:lm?lm.username:'',classification:get(row,'Classification'),issue,title:issue,description:issue};
-      const optional=[['incidentSource','Incident Source'],['remarks','Remarks'],['ordersAffected','No. of Orders Affected'],['estimatedAmount','Estimated Amount, if any']];
+      const fields={incidentDate:date,region:get(row,'Region'),brand,platform:get(row,'Platform'),cdm:cm?cm.name:cdm,cdmUser:cm?cm.username:'',cdmTL:lm?lm.name:lead,cdmTLUser:lm?lm.username:'',classification:get(row,'Classification'),issue,title:issue,description:issue};
+      const optional=[['remarks','Remarks'],['ordersAffected','No. of Orders Affected'],['estimatedAmount','Estimated Amount, if any']];
       optional.forEach(([key,h])=>{if(col(h)>=0)fields[key]=get(row,h);});
       const remarksCols=headers.map((h,j)=>h==='remarks'?j:-1).filter(j=>j>=0);
       if(remarksCols.length>1)fields.sourceRemarks2=String(row[remarksCols[1]]??'').trim();
       if(col('Category')>=0)fields.category=get(row,'Category')||'Others';
       if(col('Evidence','Audit Evidence')>=0)fields.evidenceUrls=incParseEvidence(get(row,'Evidence','Audit Evidence'));
-      const matches=existing.filter(i=>i.sourceIncidentId===id);
-      const legacy=existing.filter(i=>!i.sourceIncidentId&&fingerprint(i)===fingerprint(fields));
-      if(matches.length>1||(!matches.length&&legacy.length>1)){errors.push('Row '+(n+1)+': ambiguous existing record');continue;}
-      const old=matches[0]||legacy[0];
-      if(old){
-        if(plan.some(p=>p.old?._key===old._key)){errors.push('Row '+(n+1)+': multiple rows match one record');continue;}
-        if(old._archived){errors.push('Row '+(n+1)+': archived record requires review');continue;}
-        if(old.sourceIncidentId&&['cdm','cdmTL'].some(k=>norm(old[k])!==norm(fields[k]))){errors.push('Row '+(n+1)+': assignment changed; review manually');continue;}
-        if(Object.keys(fields).every(k=>JSON.stringify(old[k]??'')===JSON.stringify(fields[k]??''))){unchanged++;continue;}
-      }
+      const fp=fingerprint(fields);
+      if(ids.has(fp)){unchanged++;continue;}ids.add(fp);
+      const matches=existing.filter(i=>fingerprint(i)===fp);
+      if(matches.length>1){errors.push('Row '+(n+1)+': multiple matching existing incidents; review manually');continue;}
+      const old=matches[0];
+      if(old){unchanged++;continue;}
+      const base=i=>[i.incidentDate||i.date,i.region,i.brand,i.platform,i.cdm].map(norm).join('|');
+      const possible=existing.filter(i=>base(i)===base(fields));
+      if(possible.length&&!confirm('Row '+(n+1)+': '+possible.length+' existing incident(s) for the same date, region, brand, platform and CDM. The issue text differs. Is this a separate NEW incident? Select Cancel to stop the import and review existing records.'))return;
       plan.push({old,fields});
     }
     if(errors.length){alert('Import blocked. Correct these rows before retrying:\n'+errors.slice(0,30).join('\n')+(errors.length>30?'\nMore errors: '+(errors.length-30):''));return;}
