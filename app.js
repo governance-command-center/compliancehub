@@ -8,7 +8,7 @@ firebase.initializeApp({
   appId:"1:780924840622:web:5180777620a99d6a731b3f"
 });
 const FDB=firebase.database();
-const ADMIN_UN='governancehub_admin',ADMIN_PW='Governance_Admin2026',ADMIN_NAME='Governance Admin';
+const ADMIN_UN='governancehub_admin',ADMIN_PW="REDACTED_FOR_SHARING",ADMIN_NAME='Governance Admin';
 const SESSION_KEY='gh_session_v2';
 const ROLES=['HOD','Manager','Assist. Manager','Team Lead','Executive','Talent on Demand'];
 const LEAD_ROLES=['HOD','Manager','Assist. Manager','Team Lead'];
@@ -135,7 +135,7 @@ let D={tasks:[],members:[],statuses:{},actLog:[],calEntries:{},broadcast:null,in
 let FR_WEEK_OFFSET={Lazada:-1,Shopee:0,TikTok:0};
 let _extListenerInit=false;
 let _ncListenerInit=false;
-let _activeTracker=null,_activeTrackerSheet=null,_showOrderHealth=false;
+let _activeTracker=null,_activeTrackerSheet=null;
 
 let _todWeekStart=null;
 let _todViewMode='weekly'; // 'weekly' | 'monthly'
@@ -1056,7 +1056,7 @@ async function doLogin(){
   if(match){CU={username:match.username,name:match.name,isAdmin:false,role:match.role,ltAccess:!!match.ltAccess};saveSession();startApp();return;}
   showMsg('login-err','Incorrect username or password.');
 }
-function doLogout(){stopListeners();window.OrderHealth?.stop();clearSession();CU=null;document.getElementById('app').style.display='none';document.getElementById('auth-screen').style.display='flex';['login-user','login-pass'].forEach(id=>document.getElementById(id).value='');viewDate=new Date();}
+function doLogout(){stopListeners();clearSession();CU=null;document.getElementById('app').style.display='none';document.getElementById('auth-screen').style.display='flex';['login-user','login-pass'].forEach(id=>document.getElementById(id).value='');viewDate=new Date();}
 
 function startApp(){
   document.getElementById('loading-screen').style.display='none';
@@ -2123,26 +2123,144 @@ function buildDashboardTaskRows(list, date){
     </tr>`;
   }).join('');
 }
+// ══ ORDER HEALTH MONITORING ══
+// An AO-style tracker: same table, selection, week navigation, ownership and Active/Inactive/Exited
+// behaviour as Abnormal Order, but the two daily input columns are "To Arrange Shipment" and
+// "To Handover", and its regions are MY / PH / SG / TH / VN. Dashboard progress is derived from the
+// cells people fill in (a brand counts as tracked once either column has a value, 0 included).
+const OH_KEY='orderhealth';
+const OH_REGIONS=['MY','PH','SG','TH','VN'];
+const OH_LABELS=['To Arrange Shipment','To Handover'];
+function ohTracker(){const t=D.trackers&&D.trackers[OH_KEY];return t&&t.ohLinked?t:null;}
+function aoColLabels(t){return t&&t.ohLinked?OH_LABELS:['Order','Product'];}
+
+// Active brand rows of an AO-style sheet → [[brand,platform,cdm,tl],...] + a TOTAL row.
+function ohSeedRows(aoSheet,withTotal){
+  const out=[];
+  ((aoSheet&&aoSheet.rows)||[]).forEach(function(r,ri){
+    if(!r||r[0]==null||!String(r[0]).trim())return;
+    if(String(r[0]).toUpperCase()==='TOTAL'||String(r[3]||'').toUpperCase()==='TOTAL')return;
+    if(!aoRowIsActive(aoSheet,ri))return;
+    out.push([String(r[0]).trim(),r[1]!=null?String(r[1]).trim():'',r[2]!=null?String(r[2]).trim():'',r[3]!=null?String(r[3]).trim():'']);
+  });
+  if(withTotal)out.push(['','','','TOTAL']);
+  return out;
+}
+
+// Admin: create the tracker (fixed key, so it can never be duplicated) and seed brands from the AO tracker.
+async function ohSetupTracker(){
+  if(!CU.isAdmin){toast('Admin only.');return;}
+  if(ohTracker()){ltSelectOrderHealth();return;}
+  const hdr=['Brand','Platform','CDM','Team Lead'];
+  const aoEntry=Object.entries(D.trackers||{}).find(function(e){return e[1]&&e[1].aoLinked;});
+  const sheets={};let seeded=0;
+  OH_REGIONS.forEach(function(r){
+    const rows=ohSeedRows(aoEntry&&aoEntry[1].sheets?aoEntry[1].sheets[r]:null,true);
+    seeded+=rows.length-1;
+    sheets[r]={headerRows:[hdr],row0:hdr,rows:rows};
+  });
+  const rec={name:'Order Health Monitoring',category:'AO Tracker',ohLinked:true,aoLinked:false,tabOrder:OH_REGIONS.slice(),sheets:sheets,uploadedAt:Date.now(),uploadedBy:CU.name};
+  try{
+    await fbSet('trackers/'+OH_KEY,rec);
+    D.trackers[OH_KEY]=rec;
+    _activeTracker=OH_KEY;_activeTrackerSheet=OH_REGIONS[0];
+    toast('Order Health Monitoring created'+(seeded?' with '+seeded+' brand'+(seeded>1?'s':'')+' copied from Abnormal Order.':'. Add brands with + Add Brand.'));
+    if(_curPage==='live-trackers')renderLiveTrackers();else showPage('live-trackers');
+  }catch(e){toast('Could not create tracker: '+e.message);}
+}
+
+// Admin: pull in any AO brands that aren't in Order Health yet (never removes or edits existing rows).
+async function ohSyncFromAO(){
+  if(!CU.isAdmin){toast('Admin only.');return;}
+  const t=ohTracker();if(!t)return;
+  const aoEntry=Object.entries(D.trackers||{}).find(function(e){return e[1]&&e[1].aoLinked;});
+  if(!aoEntry){toast('No Abnormal Order tracker is linked to the dashboard.');return;}
+  const isTR=function(r){return r&&String(r[3]||'').toUpperCase()==='TOTAL';};
+  let added=0;
+  for(const r of OH_REGIONS){
+    const src=aoEntry[1].sheets&&aoEntry[1].sheets[r];
+    const sheet=t.sheets&&t.sheets[r];
+    if(!src||!sheet)continue;
+    const rows=(sheet.rows||[]).slice();
+    const keyOf=function(x){return String(x[0]||'').trim().toLowerCase()+'|'+String(x[1]||'').trim().toLowerCase();};
+    const have=new Set();
+    rows.forEach(function(x){if(x&&x[0])have.add(keyOf(x));});
+    const fresh=ohSeedRows(src,false).filter(function(x){return !have.has(keyOf(x));});
+    if(!fresh.length)continue;
+    let at=rows.length;
+    for(let i=0;i<rows.length;i++){if(isTR(rows[i])){at=i;break;}}
+    rows.splice.apply(rows,[at,0].concat(fresh));
+    D.trackers[OH_KEY].sheets[r].rows=rows;
+    await fbUpd('trackers/'+OH_KEY+'/sheets/'+r,{rows:rows});
+    added+=fresh.length;
+  }
+  toast(added?'Added '+added+' new brand'+(added>1?'s':'')+' from Abnormal Order.':'Already in sync — no new brands to add.');
+  renderLiveTrackers();
+}
+
+// Dashboard progress for one date, computed from the tracker inputs (same rules as AO).
+// Returns null when there is nothing to report (no tracker, future date, weekend, no brands).
+function ohDashboard(date){
+  const t=ohTracker();
+  if(!t||!date||date>ds(now()))return null;
+  const filled=function(v){return v!==null&&v!==undefined&&String(v).trim()!==''&&String(v).toUpperCase()!=='OFF';};
+  let total=0,done=0;
+  const regions=[],ownerNames=new Set();
+  OH_REGIONS.forEach(function(key){
+    const sh=t.sheets&&t.sheets[key];if(!sh)return;
+    const cols=aoFindDateCols(sh.row0||[],date,sh.row1||[]);
+    if(!cols.length)return; // weekend
+    const rows=sh.rows||[];
+    let n=0,f=0,a=0,h=0;
+    rows.forEach(function(row,ri){
+      if(!row||row[0]==null||!String(row[0]).trim()||String(row[0]).toUpperCase()==='TOTAL')return;
+      if(!aoRowIsActive(sh,ri))return;
+      n++;
+      const aF=filled(row[cols[0]]),hF=cols.length>1&&filled(row[cols[1]]);
+      if(aF)a++;if(hF)h++;if(aF||hF)f++;
+      [row[2],row[3]].forEach(function(nm){if(nm&&String(nm).trim())ownerNames.add(String(nm).trim().toLowerCase());});
+    });
+    if(!n)return;
+    total+=n;done+=f;
+    regions.push({name:key,total:n,done:f,pct:Math.round(f/n*100),arrPct:Math.round(a/n*100),handPct:Math.round(h/n*100)});
+  });
+  if(!total)return null;
+  const pct=Math.round(done/total*100);
+  const status=pct>=100?'Done':pct>0?'Ongoing':'Pending';
+  const owners=[];
+  ownerNames.forEach(function(nm){
+    const m=(D.members||[]).find(function(x){return x&&x.name&&x.name.trim().toLowerCase()===nm;});
+    if(m&&m.username)owners.push(m.username);
+  });
+  return {status:status,total:total,done:done,regions:regions,owners:owners};
+}
+
 function buildOrderHealthDashboardRow(progress,date){
   const {status,total,done,regions,owners}=progress;
   const pct=done===total?100:Math.min(99,Math.round(done/total*100));
-  const regionBadges=regions.map(({name,am,pm,total:stores})=>{
-    const color=am+pm===stores*2?'var(--green)':am+pm?'var(--yellow)':'var(--red)';
-    return `<span class="oh-dashboard-region" style="color:${color}"><strong>${escHtml(name)}</strong> AM ${am}/${stores} · PM ${pm}/${stores}</span>`;
+  const colOf=function(p){return p>=100?'var(--green)':p>0?'var(--yellow)':'var(--red)';};
+  const chips=regions.map(function(r){
+    const col=colOf(r.pct);
+    return '<div style="display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:20px;background:'+col+'18;border:1px solid '+col+'44;margin:2px">'
+      +'<span style="font-size:10px;font-weight:700;color:'+col+'">'+escHtml(r.name)+'</span>'
+      +'<span style="font-size:10px;color:'+colOf(r.arrPct)+'">Arr '+r.arrPct+'%</span>'
+      +'<span style="font-size:9px;color:var(--text4)">|</span>'
+      +'<span style="font-size:10px;color:'+colOf(r.handPct)+'">Hnd '+r.handPct+'%</span>'
+    +'</div>';
   }).join('');
-  const assigned=owners.slice(0,4).map(username=>{
+  const assigned=owners.slice(0,4).map(function(username){
     const name=escHtml(getMN(username));
-    return `<span class="av" title="${name}" style="width:20px;height:20px;font-size:8px;margin-right:-2px">${escHtml(ini(getMN(username)))}</span>`;
+    return '<span class="av" title="'+name+'" style="width:20px;height:20px;font-size:8px;margin-right:-2px">'+escHtml(ini(getMN(username)))+'</span>';
   }).join('')+(owners.length>4?' +'+(owners.length-4):'');
   return `<tr>
-    <td><div style="font-weight:600">Order Health Monitoring</div><span class="freq-chip fc-daily">daily</span>
-      <button type="button" class="btn sm" onclick="ltSelectOrderHealth()">Open tracker</button>
-      <div class="oh-dashboard-regions">${regionBadges}</div></td>
+    <td><div style="font-weight:600">Order Health Monitoring <span style="font-size:9px;background:var(--orange-light);color:var(--orange);padding:1px 6px;border-radius:20px;font-weight:700">📋 To Arrange Shipment · To Handover</span></div><span class="freq-chip fc-daily">daily</span>
+      <button type="button" class="btn sm" onclick="ltSelectOrderHealth()" style="font-size:10px;padding:2px 8px">Open tracker</button>
+      <div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:2px">${chips}</div></td>
     <td style="text-align:center">${taskDateChip({},date)}</td>
-    <td style="text-align:center"><span class="dl-chip" title="Store-region local time">9:00 AM · 2:00 PM</span></td>
+    <td style="text-align:center"><span class="dl-chip">—</span></td>
     <td>${assigned||'—'}</td>
     <td style="text-align:center"><span class="sbadge ${sbc(status)}"><span class="sdot ${sdc(status)}"></span>${status}</span></td>
-    <td>${rateBarHtml(pct)}<div style="font-size:10px;color:var(--text3)">${done}/${total} checks done</div></td>
+    <td>${rateBarHtml(pct)}<div style="font-size:10px;color:var(--text3)">${done}/${total} brands tracked</div></td>
   </tr>`;
 }
 function dashTaskTableHead(){
@@ -2265,7 +2383,7 @@ function renderDashboard(){
     return t;
   });
   const schedAll=schedTagged.concat(carried);
-  const orderHealth=canSeeLiveTrackers()?window.OrderHealth?.dashboard(date):null;
+  const orderHealth=canSeeLiveTrackers()?ohDashboard(date):null;
   const healthTask=orderHealth?.total?{_orderHealth:orderHealth}:null;
   const metrics=computeDashboardMetrics(healthTask?[...schedAll,healthTask]:schedAll,date);
 
@@ -2361,7 +2479,6 @@ function renderDashboard(){
     ${escBanner}${extHtml}
     ${quarterReminderBanner}
     ${metricsHTML(metrics)}
-    ${orderHealth?.notice?`<div class="oh-dashboard-notice" role="status"><strong>Order Health Monitoring</strong> · ${escHtml(orderHealth.notice)} <button type="button" class="btn sm" onclick="ltSelectOrderHealth()">Open tracker</button></div>`:''}
     ${pendingSec}
     ${buildDashboardOngoing(byS,date)}
     ${buildDashboardCompleted(byS,date)}
@@ -7979,15 +8096,15 @@ function renderLiveTrackers(){
     if(!byCat[c])return;
     sideHtml+='<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text4);padding:6px 4px 4px;flex-shrink:0;white-space:nowrap">'+c+'</div>';
     byCat[c].forEach(function(t){
-      var isActive=!_showOrderHealth&&_activeTracker===t._key;
+      var isActive=_activeTracker===t._key;
       var bg=isActive?'var(--blue-light)':'transparent';
       var bd=isActive?'var(--blue)':'var(--border)';
       var fw=isActive?'600':'500';
       var fc=isActive?'var(--blue)':'var(--text2)';
       var sheetCount=Object.keys(t.sheets||{}).length;
       var dateStr=t.uploadedAt?new Date(t.uploadedAt).toLocaleDateString('en-PH',{month:'short',day:'numeric'}):'—';
-      var icon=LT_ICONS[t.category]||'📋';
-      var linked=t.aoLinked?'<span style="font-size:9px;background:var(--orange-light);color:var(--orange);padding:1px 5px;border-radius:20px;font-weight:700">📎 Dashboard</span>':t.frLinked?'<span style="font-size:9px;background:var(--blue-light);color:var(--blue);padding:1px 5px;border-radius:20px;font-weight:700">💰 Finance Tasks</span>':'';
+      var icon=t.ohLinked?'📋':(LT_ICONS[t.category]||'📋');
+      var linked=(t.aoLinked||t.ohLinked)?'<span style="font-size:9px;background:var(--orange-light);color:var(--orange);padding:1px 5px;border-radius:20px;font-weight:700">📎 Dashboard</span>':t.frLinked?'<span style="font-size:9px;background:var(--blue-light);color:var(--blue);padding:1px 5px;border-radius:20px;font-weight:700">💰 Finance Tasks</span>':'';
       sideHtml+='<div class="lt-tracker-item'+(isActive?' active':'')+'" data-trackerid="'+t._key+'" style="background:'+bg+';border:1px solid '+bd+';border-radius:var(--radius-lg);flex-shrink:0;min-width:180px">'
         +'<div style="width:28px;height:28px;border-radius:var(--radius);background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">'+icon+'</div>'
         +'<div style="flex:1;min-width:0">'
@@ -8002,22 +8119,26 @@ function renderLiveTrackers(){
     sideHtml='<div style="padding:14px;text-align:center;color:var(--text4);font-size:12px;flex:1">No trackers yet. Upload your first Excel file.</div>';
   }
 
-  if(window.OrderHealth){
-    sideHtml='<button type="button" class="lt-tracker-item oh-tracker-card'+(_showOrderHealth?' active':'')+'" aria-pressed="'+_showOrderHealth+'" onclick="ltSelectOrderHealth()">'
-      +'<span class="oh-tracker-icon" aria-hidden="true">📋</span>'
-      +'<span><strong>Order Health Monitoring</strong><small>Daily store reviews</small></span>'
-      +'</button>'+sideHtml;
+  // Order Health Monitoring is a regular AO-style tracker now. Until an admin creates it, show a one-click setup card.
+  if(CU.isAdmin&&!ohTracker()){
+    sideHtml+='<button type="button" class="lt-tracker-item" onclick="ohSetupTracker()" style="border:1px dashed var(--blue);background:var(--blue-light);border-radius:var(--radius-lg);flex-shrink:0;min-width:180px;display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;font-family:inherit;text-align:left">'
+      +'<span style="font-size:14px">📋</span>'
+      +'<span><strong style="font-size:12px;color:var(--blue)">Set up Order Health Monitoring</strong><div style="font-size:10px;color:var(--text4)">Creates MY · PH · SG · TH · VN sheets</div></span>'
+      +'</button>';
   }
 
   // Build toolbar
   var toolbarHtml='';
-  var activeT=!_showOrderHealth&&_activeTracker&&D.trackers[_activeTracker]?D.trackers[_activeTracker]:null;
+  var activeT=_activeTracker&&D.trackers[_activeTracker]?D.trackers[_activeTracker]:null;
   var ltCanManage=CU.isAdmin; // Only admin can upload/manage trackers
   var ltCanEdit=CU.isAdmin||isLead(); // Leads can still export/view
   if(activeT){
     var linkedBtn='';
     if(ltCanManage){
-      if(activeT.aoLinked){
+      if(activeT.ohLinked){
+        linkedBtn='<span style="font-size:11px;background:var(--orange-light);color:var(--orange);padding:3px 10px;border-radius:20px;font-weight:700">📎 Order Health Dashboard Linked</span>'
+          +' <button class="btn sm" onclick="ohSyncFromAO()" title="Add any brands from the Abnormal Order tracker that are missing here" style="font-size:11px">↻ Sync brands from AO</button>';
+      } else if(activeT.aoLinked){
         linkedBtn='<span style="font-size:11px;background:var(--orange-light);color:var(--orange);padding:3px 10px;border-radius:20px;font-weight:700">📎 AO Dashboard Linked</span>';
       } else if(activeT.frLinked){
         linkedBtn='<span style="font-size:11px;background:var(--blue-light);color:var(--blue);padding:3px 10px;border-radius:20px;font-weight:700">💰 Finance Tasks Linked</span>'
@@ -8040,10 +8161,7 @@ function renderLiveTrackers(){
   }
 
   // Build content area
-  if(_showOrderHealth)toolbarHtml='<div class="oh-tracker-toolbar"><strong>Order Health Monitoring</strong><span>9:00 AM and 2:00 PM · store-region local time</span></div>';
-  var contentHtml=_showOrderHealth
-    ?'<div id="pg-order-health"></div>'
-    :activeT
+  var contentHtml=activeT
     ?buildTrackerContent(_activeTracker)
     :'<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:300px;text-align:center;padding:40px">'
       +'<div style="font-size:40px;margin-bottom:14px">📊</div>'
@@ -8071,8 +8189,6 @@ function renderLiveTrackers(){
       +'</div>'
     +'</div>';
 
-  if(_showOrderHealth)window.OrderHealth?.open();
-
   // ── FIX 3 (continued): Restore scroll position after re-render ──
   if(prevScrollTop||prevScrollLeft){
     var newScroll=document.getElementById('ao-table-scroll');
@@ -8090,12 +8206,18 @@ function renderLiveTrackers(){
 
 
 function ltSelectOrderHealth(){
-  _showOrderHealth=true;
+  const t=ohTracker();
+  if(!t){
+    if(CU.isAdmin){ohSetupTracker();return;}
+    toast('Order Health Monitoring has not been set up yet.');return;
+  }
+  _activeTracker=OH_KEY;
+  _activeTrackerSheet=(t.tabOrder&&t.tabOrder[0])||Object.keys(t.sheets||{})[0]||null;
   if(_curPage==='live-trackers')renderLiveTrackers();
   else showPage('live-trackers');
 }
 
-function ltSelect(key){_showOrderHealth=false;_activeTracker=key;const t=D.trackers[key];_activeTrackerSheet=t?.sheets?Object.keys(t.sheets)[0]:null;renderLiveTrackers();}
+function ltSelect(key){_activeTracker=key;const t=D.trackers[key];_activeTrackerSheet=t?.sheets?Object.keys(t.sheets)[0]:null;renderLiveTrackers();}
 
 function buildTrackerContent(key){
   const t=D.trackers[key];if(!t)return'';
@@ -8677,11 +8799,14 @@ function buildAOExitedTable(trackerKey){
     const actions=isAdmin?'<td style="padding:4px 8px;border:1px solid var(--border);background:'+_rowBg+';text-align:center;white-space:nowrap"><button onclick="aoReactivateRow(\''+_kEsc+'\',\''+_src+'\','+_sri+')" style="padding:2px 8px;border-radius:4px;border:1px solid var(--green);background:var(--green-light);color:var(--green);font-size:11px;font-weight:700;cursor:pointer" title="Move this brand back to Active">↩ Reactivate</button></td>':'';
     return groupHtml+'<tr style="background:'+_rowBg+'">'+cells+statusCell+dateCell+actions+'</tr>';
   }).join(''):'<tr><td colspan="'+colSpan+'" class="empty-state" style="padding:32px;text-align:center;color:var(--text4)">No exited or inactive brands.</td></tr>';
-  const info='<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:#fef2f2;border-bottom:1px solid var(--red-mid);font-size:11px;color:var(--red)"><span>⚠️</span><span>Exited / Inactive brands — <strong>'+collected.length+' record'+(collected.length!==1?'s':'')+'</strong>. These brands are no longer active in the AO tracker.</span></div>';
+  const info='<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:#fef2f2;border-bottom:1px solid var(--red-mid);font-size:11px;color:var(--red)"><span>⚠️</span><span>Exited / Inactive brands — <strong>'+collected.length+' record'+(collected.length!==1?'s':'')+'</strong>. These brands are no longer active in this tracker.</span></div>';
   return'<div style="overflow:auto;max-height:calc(100vh - 220px);position:relative">'+info+'<table style="border-collapse:collapse;font-size:12px;min-width:100%"><thead style="position:sticky;top:0;z-index:4">'+hdr+'</thead><tbody>'+body+'</tbody></table></div>';
 }
 
 function buildAOTable(trackerKey,sheetKey,sheet){
+  const _aoTk=D.trackers[trackerKey]||{};
+  const _aoLbl=aoColLabels(_aoTk);               // ['Order','Product'] or ['To Arrange Shipment','To Handover']
+  const _aoSubW=_aoTk.ohLinked?92:60;            // sub-column min width (Order Health labels are longer)
   if(!sheet)return'<div class="empty-state" style="padding:32px">Empty sheet.</div>';
   const{row0,row1,rows}=sheet;
   if(!row0||!row0.length)return'<div class="empty-state" style="padding:32px">No data. Upload your Excel file.</div>';
@@ -8712,8 +8837,8 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   const dateCols=[];
   for(let ci=4;ci<maxCol;ci+=2){
     const h0=row0[ci]!=null?String(row0[ci]):'';
-    const h1a=row1&&row1[ci]!=null?String(row1[ci]):'Order';
-    const h1b=row1&&row1[ci+1]!=null?String(row1[ci+1]):'Product';
+    const h1a=row1&&row1[ci]!=null?String(row1[ci]):_aoLbl[0];
+    const h1b=row1&&row1[ci+1]!=null?String(row1[ci+1]):_aoLbl[1];
     let colDateStr='',isWeekend=false;
     const dp=h0.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
     if(dp){
@@ -8745,7 +8870,7 @@ function buildAOTable(trackerKey,sheetKey,sheet){
       const isFuture2=wDate>todayStr;
       // Use col indices beyond existing data, unique per calendar week (see aoWeekBlock)
       const vci=maxCol+aoWeekBlock(wDate)*10+wi*2;
-      dateCols.push({ci:vci,h0:displayDate,h1a:'Order',h1b:'Product',
+      dateCols.push({ci:vci,h0:displayDate,h1a:_aoLbl[0],h1b:_aoLbl[1],
         isToday:isToday2,isPast:isPast2,isFuture:isFuture2,
         isCurrentWeek:true,colDateStr:wDate,virtual:true});
     });
@@ -8762,7 +8887,7 @@ function buildAOTable(trackerKey,sheetKey,sheet){
       const isFuture2=wDate>todayStr;
       // Virtual column index mirrors ltUpdateCell/aoFindDateCols: maxCol + weekBlock*10 + weekday-position*2
       const vci=maxCol+aoWeekBlock(wDate)*10+wi*2;
-      dateCols.push({ci:vci,h0:displayDate,h1a:'Order',h1b:'Product',
+      dateCols.push({ci:vci,h0:displayDate,h1a:_aoLbl[0],h1b:_aoLbl[1],
         isToday:isToday2,isPast:isPast2,isFuture:isFuture2,
         isCurrentWeek:true,colDateStr:wDate,virtual:true});
     });
@@ -8825,7 +8950,7 @@ function buildAOTable(trackerKey,sheetKey,sheet){
     const dayName=dc.colDateStr?['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(dc.colDateStr+'T12:00:00').getDay()]:'';
     // Mark Done button removed from member view — status driven by tracker input only
     let doneBtnHtml='';
-    hR1+='<th colspan="2" style="text-align:center;padding:5px 6px;background:'+bg+';border:1px solid var(--border);border-left:2px solid var(--blue-mid);font-size:10px;font-weight:700;color:'+fg+';white-space:nowrap;min-width:130px">'
+    hR1+='<th colspan="2" style="text-align:center;padding:5px 6px;background:'+bg+';border:1px solid var(--border);border-left:2px solid var(--blue-mid);font-size:10px;font-weight:700;color:'+fg+';white-space:nowrap;min-width:'+(_aoSubW*2+10)+'px">'
       +'<div>'+dc.h0+'</div>'
       +'<div style="font-size:9px;font-weight:600;opacity:.7">'+dayName+todayMark+'</div>'
       +doneBtnHtml
@@ -8837,8 +8962,8 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   let hR2='<tr>';
   dateCols.forEach(function(dc){
     const bg=dc.isToday?'#eff6ff':dc.isPast?'#f8fafc':'#f5f5f5';
-    hR2+='<th style="padding:4px 5px;background:'+bg+';border:1px solid var(--border);border-left:2px solid var(--blue-mid);font-size:10px;font-weight:600;color:var(--text3);text-align:center;min-width:60px">'+dc.h1a+'</th>';
-    hR2+='<th style="padding:4px 5px;background:'+bg+';border:1px solid var(--border);font-size:10px;font-weight:600;color:var(--text3);text-align:center;min-width:60px">'+dc.h1b+'</th>';
+    hR2+='<th style="padding:4px 5px;background:'+bg+';border:1px solid var(--border);border-left:2px solid var(--blue-mid);font-size:10px;font-weight:600;color:var(--text3);text-align:center;line-height:1.15;min-width:'+_aoSubW+'px">'+dc.h1a+'</th>';
+    hR2+='<th style="padding:4px 5px;background:'+bg+';border:1px solid var(--border);font-size:10px;font-weight:600;color:var(--text3);text-align:center;line-height:1.15;min-width:'+_aoSubW+'px">'+dc.h1b+'</th>';
   });
   hR2+='</tr>';
 
@@ -9101,7 +9226,7 @@ async function ltUpdateCell(trackerKey,sheetKey,ri,ci,val){
   // Guard: for AO-linked trackers, only admin or the CDM/Team Lead assigned to this row
   // may write to it. Other tracker types (e.g. Finance Report) are unaffected.
   const _tkr=D.trackers[trackerKey];
-  if(_tkr&&_tkr.aoLinked){
+  if(_tkr&&(_tkr.aoLinked||_tkr.ohLinked)){
     const _existingRow=(_tkr.sheets&&_tkr.sheets[sheetKey]&&_tkr.sheets[sheetKey].rows)?_tkr.sheets[sheetKey].rows[ri]:null;
     if(!aoIsRowOwner(_existingRow)){toast('View only — this row is assigned to another member.');renderLiveTrackers();return;}
   }
@@ -9218,6 +9343,11 @@ async function ltUpdateCell(trackerKey,sheetKey,ri,ci,val){
     if(_curPage==='dashboard')renderDashboard();
     else if(_curPage==='my-tasks')renderMyTasks();
     else ltPatchAODashboard(); // patch AO chips if on another page
+  }
+  if(D.trackers[trackerKey]&&D.trackers[trackerKey].ohLinked){
+    // Order Health dashboard progress is computed live from these cells — just refresh the view.
+    if(_curPage==='dashboard')renderDashboard();
+    else if(_curPage==='my-tasks')renderMyTasks();
   }
   if(D.trackers[trackerKey]&&D.trackers[trackerKey].frLinked){
     if(_curPage==='dashboard')renderDashboard();
@@ -9414,7 +9544,7 @@ async function ltSave(){
       for(const k of allKeys){if(k!==key)await fbUpd('trackers/'+k,{frLinked:false});}
       await frLinkTasks();
     }
-    _ltParsed=null;_showOrderHealth=false;_activeTracker=key;_activeTrackerSheet=null;
+    _ltParsed=null;_activeTracker=key;_activeTrackerSheet=null;
     closeModal('modal-lt-upload');
     toast('Tracker "'+name+'" saved!'+(isAO?' & linked to AO Dashboard':isFR?' & linked to Finance Report tasks':''));
   }catch(e){toast('Error saving: '+e.message);}
@@ -9474,9 +9604,13 @@ function getAOCompletionForDashboard(date){
   // Use live D.trackers so local edits from ltUpdateCell are reflected immediately
   const linkedEntry=Object.entries(D.trackers||{}).find(function(e){return e[1]&&e[1].aoLinked;});
   if(!linkedEntry)return null;
+  return aoCompletionForEntry(linkedEntry,date,['MY','SG','TH','VN']);
+}
+// Shared by the AO dashboard widget and Order Health: per-region completion of the two input columns.
+function aoCompletionForEntry(linkedEntry,date,regionKeys){
   const linked=linkedEntry[1];
   const today=date||ds(now());
-  const AO_R=[{key:'MY'},{key:'SG'},{key:'TH'},{key:'VN'}];
+  const AO_R=regionKeys.map(function(k){return{key:k};});
   const results={};
   AO_R.forEach(function(r){
     const sh=linked.sheets&&linked.sheets[r.key];
