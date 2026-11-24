@@ -135,7 +135,7 @@ let D={tasks:[],members:[],statuses:{},actLog:[],calEntries:{},broadcast:null,in
 let FR_WEEK_OFFSET={Lazada:-1,Shopee:0,TikTok:0};
 let _extListenerInit=false;
 let _ncListenerInit=false;
-let _activeTracker=null,_activeTrackerSheet=null;
+let _activeTracker=null,_activeTrackerSheet=null,_showOrderHealth=false;
 
 let _todWeekStart=null;
 let _todViewMode='weekly'; // 'weekly' | 'monthly'
@@ -7952,7 +7952,7 @@ function renderLiveTrackers(){
     if(!byCat[c])return;
     sideHtml+='<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text4);padding:6px 4px 4px;flex-shrink:0;white-space:nowrap">'+c+'</div>';
     byCat[c].forEach(function(t){
-      var isActive=_activeTracker===t._key;
+      var isActive=!_showOrderHealth&&_activeTracker===t._key;
       var bg=isActive?'var(--blue-light)':'transparent';
       var bd=isActive?'var(--blue)':'var(--border)';
       var fw=isActive?'600':'500';
@@ -7975,9 +7975,13 @@ function renderLiveTrackers(){
     sideHtml='<div style="padding:14px;text-align:center;color:var(--text4);font-size:12px;flex:1">No trackers yet. Upload your first Excel file.</div>';
   }
 
+  if(window.OrderHealth){
+    sideHtml='<button type="button" class="btn '+(_showOrderHealth?'primary':'')+'" aria-pressed="'+_showOrderHealth+'" style="flex-shrink:0" onclick="ltSelectOrderHealth()">Order Health Monitoring</button>'+sideHtml;
+  }
+
   // Build toolbar
   var toolbarHtml='';
-  var activeT=_activeTracker&&D.trackers[_activeTracker]?D.trackers[_activeTracker]:null;
+  var activeT=!_showOrderHealth&&_activeTracker&&D.trackers[_activeTracker]?D.trackers[_activeTracker]:null;
   var ltCanManage=CU.isAdmin; // Only admin can upload/manage trackers
   var ltCanEdit=CU.isAdmin||isLead(); // Leads can still export/view
   if(activeT){
@@ -8006,7 +8010,9 @@ function renderLiveTrackers(){
   }
 
   // Build content area
-  var contentHtml=activeT
+  var contentHtml=_showOrderHealth
+    ?'<div id="pg-order-health"></div>'
+    :activeT
     ?buildTrackerContent(_activeTracker)
     :'<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:300px;text-align:center;padding:40px">'
       +'<div style="font-size:40px;margin-bottom:14px">📊</div>'
@@ -8034,6 +8040,8 @@ function renderLiveTrackers(){
       +'</div>'
     +'</div>';
 
+  if(_showOrderHealth)window.OrderHealth?.open();
+
   // ── FIX 3 (continued): Restore scroll position after re-render ──
   if(prevScrollTop||prevScrollLeft){
     var newScroll=document.getElementById('ao-table-scroll');
@@ -8050,7 +8058,12 @@ function renderLiveTrackers(){
 }
 
 
-function ltSelect(key){_activeTracker=key;const t=D.trackers[key];_activeTrackerSheet=t?.sheets?Object.keys(t.sheets)[0]:null;renderLiveTrackers();}
+function ltSelectOrderHealth(){
+  _showOrderHealth=true;
+  renderLiveTrackers();
+}
+
+function ltSelect(key){_showOrderHealth=false;_activeTracker=key;const t=D.trackers[key];_activeTrackerSheet=t?.sheets?Object.keys(t.sheets)[0]:null;renderLiveTrackers();}
 
 function buildTrackerContent(key){
   const t=D.trackers[key];if(!t)return'';
@@ -9369,7 +9382,7 @@ async function ltSave(){
       for(const k of allKeys){if(k!==key)await fbUpd('trackers/'+k,{frLinked:false});}
       await frLinkTasks();
     }
-    _ltParsed=null;_activeTracker=key;_activeTrackerSheet=null;
+    _ltParsed=null;_showOrderHealth=false;_activeTracker=key;_activeTrackerSheet=null;
     closeModal('modal-lt-upload');
     toast('Tracker "'+name+'" saved!'+(isAO?' & linked to AO Dashboard':isFR?' & linked to Finance Report tasks':''));
   }catch(e){toast('Error saving: '+e.message);}

@@ -5,6 +5,7 @@ const PATH='orderHealth';
 const TYPES=['Synagie Fulfilled','Brand Fulfilled','Third-Party 3PL','Marketplace Fulfilled'];
 const WINDOWS=[{id:'AM',label:'Morning',hour:9},{id:'PM',label:'Afternoon',hour:14}];
 let data={stores:{},checks:{},cases:{}},subtab='daily',bound=false,importRows=[];
+let region='',loadState='loading',loadError='';
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const me=()=>window.CU||CU;
@@ -14,8 +15,21 @@ const zones={PH:'Asia/Manila',SG:'Asia/Singapore',MY:'Asia/Kuala_Lumpur',ID:'Asi
 const zone=r=>zones[String(r||'PH').toUpperCase()]||'Asia/Manila';
 const pieces=(r,opts)=>Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:zone(r),...opts}).formatToParts(new Date()).filter(p=>p.type!=='literal').map(p=>[p.type,p.value]));
 const date=r=>{const p=pieces(r,{year:'numeric',month:'2-digit',day:'2-digit'});return p.year+'-'+p.month+'-'+p.day;};
-const activeStores=()=>Object.entries(data.stores||{}).filter(([id,s])=>s.active!==false&& (admin()||leader()||s.owner===me()?.username));
-const allCases=()=>Object.entries(data.cases||{}).filter(([id,c])=>admin()||leader()||c.owner===me()?.username);
+const regionKey=value=>String(value||'').trim().toUpperCase()||'Unassigned';
+const visibleToUser=record=>leader()||record.owner===me()?.username;
+const visibleStores=()=>Object.entries(data.stores||{}).filter(([,store])=>visibleToUser(store)&&(admin()||store.active!==false));
+const visibleCases=()=>Object.entries(data.cases||{}).filter(([,order])=>visibleToUser(order));
+const inRegion=record=>regionKey(record.region)===region;
+const activeStores=()=>visibleStores().filter(([,store])=>store.active!==false&&inRegion(store));
+const allCases=()=>visibleCases().filter(([,order])=>inRegion(order));
+function regionTabs(){
+ const regions=[...new Set([...visibleStores(),...visibleCases()].map(([,record])=>regionKey(record.region)))].sort();
+ if(!regions.includes(region))region=regions[0]||'';
+ if(!regions.length)return '';
+ return '<div class="oh-tabs" aria-label="Store regions">'+regions.map(name=>
+  '<button type="button" class="btn '+(name===region?'primary':'')+'" aria-pressed="'+(name===region)+'" data-oh-region="'+esc(name)+'">'+esc(name)+'</button>'
+ ).join('')+'</div>';
+}
 const button=(txt,fn,primary=false)=>'<button class="btn '+(primary?'primary':'')+'" onclick="'+fn+'">'+esc(txt)+'</button>';
 const opts=(values,selected)=>values.map(v=>'<option value="'+esc(v)+'" '+(v===selected?'selected':'')+'>'+esc(v)+'</option>').join('');
 function save(p,v){return fbRef(PATH+'/'+p).set(v)}
@@ -30,15 +44,22 @@ function followupUpdated(c){return (c.history||[]).some(h=>h.followupWindow===ne
 function pendingFollowups(){return allCases().filter(([id,c])=>!['Resolved','Closed – No Further Action'].includes(c.status))}
 function compliance(){const rows=activeStores();return WINDOWS.map(w=>{const out={window:w.id,onTime:0,late:0,missed:0,notDue:0};rows.forEach(([id,store])=>{const c=data.checks?.[date(store.region)+'_'+w.id+'_'+id];if(c){if(c.at?windowLate(store.region,w.id,new Date(c.at)):c.late)out.late++;else out.onTime++}else if(dueWindow(store.region,w.id))out.missed++;else out.notDue++});return out})}
 function summary(){
- const today=date(), stores=activeStores(),total=stores.length;
+ const today=date(region), stores=activeStores(),total=stores.length;
  const done=WINDOWS.map(w=>stores.filter(([id,s])=>data.checks?.[date(s.region)+'_'+w.id+'_'+id]).length);
  const open=allCases().filter(([id,c])=>!['Resolved','Closed – No Further Action'].includes(c.status));
  return {today,total,done,open};
 }
 function render(){
  const root=$('pg-order-health');if(!root)return;
- const x=summary();bindBulkEvents();
- root.innerHTML='<div class="page-header"><div><h1>Order Health Monitoring</h1><p>Seller Center reviews · Morning 9:00 AM / Afternoon 2:00 PM · store-region local time</p></div></div>'+
+ const header='<div class="page-header"><div><h1>Order Health Monitoring</h1><p>Seller Center reviews · Morning 9:00 AM / Afternoon 2:00 PM · store-region local time</p></div></div>';
+ if(loadState!=='ready'){
+  root.innerHTML=header+(loadState==='error'
+   ?'<div class="oh-panel" role="alert">Could not load Order Health data from Firebase. '+esc(loadError)+' '+button('Retry','OrderHealth.retry()')+'</div>'
+   :'<div class="oh-panel" role="status">Loading Order Health data from Firebase…</div>');
+  return;
+ }
+ const regions=regionTabs(),x=summary();bindBulkEvents();
+ root.innerHTML=header+regions+
  '<div class="oh-kpis"><div class="oh-panel"><small>Morning completed</small><strong>'+x.done[0]+' / '+x.total+'</strong></div><div class="oh-panel"><small>Afternoon completed</small><strong>'+x.done[1]+' / '+x.total+'</strong></div><div class="oh-panel"><small>Orders needing attention</small><strong>'+x.open.length+'</strong></div><div class="oh-panel"><small>Overdue follow-ups</small><strong>'+x.open.filter(([id,c])=>c.followupDate&&c.followupDate<x.today).length+'</strong></div></div>'+
  '<div class="oh-tabs">'+[['daily','Daily Monitoring'],['reports','Monitoring Reports'],...(leader()?[['oversight','Lead & Governance']]:[]),...(admin()?[['stores','Store Setup']]:[])].map(([key,label])=>'<button class="btn '+(subtab===key?'primary':'')+'" onclick="OrderHealth.tab(\''+key+'\')">'+label+'</button>').join('')+'</div>'+
  '<div class="oh-panel">'+(subtab==='daily'?daily():subtab==='reports'?reports():subtab==='oversight'?oversight():stores())+'</div>';
@@ -98,6 +119,8 @@ function bindBulkEvents(){
  const root=$('pg-order-health');if(!root||root.dataset.bulkBound)return;
  root.dataset.bulkBound='1';
  root.addEventListener('click',e=>{
+   const tab=e.target.closest('[data-oh-region]');
+   if(tab){region=tab.dataset.ohRegion;render();return}
    const w=e.target.closest('[data-oh-window]');if(w){bulkWindowSet(w.dataset.ohWindow);return}
    const a=e.target.closest('[data-oh-action]');if(!a)return;
    if(a.dataset.ohAction==='all')bulkAll();
@@ -153,7 +176,7 @@ function oversight(){
 }
 function orders(){return '<div class="oh-actions"><h3>Orders Requiring Attention</h3>'+button('Log order','OrderHealth.newCase()',true)+'</div>'+caseTable(allCases());}
 function reports(){
- const stores=activeStores(),today=date(),cases=allCases();
+ const stores=activeStores(),today=date(region),cases=allCases();
  const result=compliance();
  return '<h3>Monitoring compliance — '+esc(today)+'</h3>'+result.map(x=>'<p>'+x.window+': '+x.onTime+' on time · '+x.late+' late · '+x.missed+' missed · '+x.notDue+' not yet due</p>').join('')+
  '<h3>Order follow-up</h3><p>Open / escalated / under investigation: '+cases.filter(([id,c])=>!['Resolved','Closed – No Further Action'].includes(c.status)).length+'</p><p>Resolved: '+cases.filter(([id,c])=>c.status==='Resolved').length+'</p><p class="oh-muted">Completion and follow-up performance are separate: warehouse delays do not automatically count as missed CDM checks.</p>';
@@ -219,7 +242,7 @@ function stores(){
  return '<h3>Store assignments</h3><p class="oh-muted">Set up every Synagie-managed brand/store here. CDM assignments are linked to the Members directory. Select an existing member rather than typing a name.</p>'+
  '<div class="oh-panel"><h3>Bulk allocation mapping</h3><p class="oh-muted">Upload the masterlist Excel file (username, brand, platform, region). Matches use the Members directory; unmatched rows are excluded. New stores require fulfilment-type review.</p><input type="file" accept=".xlsx,.xls,.csv" onchange="OrderHealth.uploadAllocations(this.files[0])">'+importPreview()+'</div>'+ '<div class="oh-grid">'+[['oh-brand','Brand / store'],['oh-region','Region'],['oh-platform','Platform']].map(([id,l])=>'<label>'+l+'<input class="finput" id="'+id+'" placeholder="'+l+'"></label>').join('')+
  '<label>CDM user<select class="finput" id="oh-owner">'+memberOptions()+'</select></label>'+ '<label>Fulfilment type<select class="finput" id="oh-fulfilment">'+opts(TYPES,TYPES[0])+'</select></label></div>'+button('Add store','OrderHealth.addStore()',true)+
- '<div class="oh-scroll"><table class="oh-table"><thead><tr><th>Brand</th><th>Region</th><th>Platform</th><th>Fulfilment</th><th>CDM</th><th></th></tr></thead><tbody>'+Object.entries(data.stores||{}).map(([id,s])=>'<tr><td>'+esc(s.brand)+'</td><td>'+esc(s.region)+'</td><td>'+esc(s.platform)+'</td><td>'+esc(s.fulfilment)+'</td><td>'+esc(memberName(s.owner))+'</td><td>'+button(s.active===false?'Activate':'Deactivate',"OrderHealth.toggleStore('"+id+"')")+'</td></tr>').join('')+'</tbody></table></div>';
+ '<div class="oh-scroll"><table class="oh-table"><thead><tr><th>Brand</th><th>Region</th><th>Platform</th><th>Fulfilment</th><th>CDM</th><th></th></tr></thead><tbody>'+Object.entries(data.stores||{}).filter(([,store])=>inRegion(store)).map(([id,s])=>'<tr><td>'+esc(s.brand)+'</td><td>'+esc(s.region)+'</td><td>'+esc(s.platform)+'</td><td>'+esc(s.fulfilment)+'</td><td>'+esc(memberName(s.owner))+'</td><td>'+button(s.active===false?'Activate':'Deactivate',"OrderHealth.toggleStore('"+id+"')")+'</td></tr>').join('')+'</tbody></table></div>';
 }
 function dialog(title,fields,saveLabel,action){
  const body='<form id="oh-form" onsubmit="event.preventDefault();'+action+'">'+fields+'<div class="oh-actions">'+button('Cancel','OrderHealth.close()')+'<button type="submit" class="btn primary">'+saveLabel+'</button></div></form>';
@@ -302,8 +325,16 @@ async function toggleStore(id){if(!admin())return;try{await save('stores/'+id+'/
 function close(){$('oh-modal')?.remove()}
 function init(){
  if(bound)return;bound=true;
- fbRef(PATH).on('value',snapshot=>{data=snapshot.val()||{stores:{},checks:{},cases:{}};if(window._curPage==='order-health'||_curPage==='order-health')render()});
+ fbRef(PATH).on('value',snapshot=>{
+  data=snapshot.val()||{stores:{},checks:{},cases:{}};
+  loadState='ready';
+  if(_curPage==='live-trackers')render();
+ },error=>{
+  bound=false;
+  loadState='error';
+  loadError=error.message||String(error);
+  if(_curPage==='live-trackers')render();
+ });
 }
-window.OrderHealth={init,render,noChange,tab:t=>{subtab=t;render()},check,saveCheck,newCase,saveCase,edit,updateCase,addStore,toggleStore,uploadAllocations,commitImport,close};
-init();
+window.OrderHealth={open:()=>{init();render()},retry:()=>{loadState='loading';init();render()},noChange,tab:t=>{subtab=t;render()},check,saveCheck,newCase,saveCase,edit,updateCase,addStore,toggleStore,uploadAllocations,commitImport,close};
 })();
