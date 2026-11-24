@@ -853,8 +853,8 @@ function computeDashboardMetrics(tasks, date){
   tasks.forEach(t=>{
     // frLinked and aoLinked tasks have no per-member statuses — use computeTaskOverall
     // so the assignment-level counters reflect actual tracker data instead of always "Pending"
-    if(t.frLinked||t.aoLinked){
-      const ov=computeTaskOverall(t.id,date);
+    if(t.frLinked||t.aoLinked||t._orderHealth){
+      const ov=t._orderHealth?.status||computeTaskOverall(t.id,date);
       totalAssignments++;
       if(ov==='Done')doneAssignments++;
       else if(ov==='Ongoing')ongoingAssignments++;
@@ -892,7 +892,7 @@ function computeDashboardMetrics(tasks, date){
   // Task-level counts — cumulative overall for carried tasks
   let taskDone=0,taskOngoing=0,taskPending=0;
   tasks.forEach(t=>{
-    const ov=t._carryOrigin?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date);
+    const ov=t._orderHealth?.status||(t._carryOrigin?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date));
     if(ov==='Done')taskDone++;
     else if(ov==='Ongoing')taskOngoing++;
     else taskPending++;
@@ -1056,7 +1056,7 @@ async function doLogin(){
   if(match){CU={username:match.username,name:match.name,isAdmin:false,role:match.role,ltAccess:!!match.ltAccess};saveSession();startApp();return;}
   showMsg('login-err','Incorrect username or password.');
 }
-function doLogout(){stopListeners();clearSession();CU=null;document.getElementById('app').style.display='none';document.getElementById('auth-screen').style.display='flex';['login-user','login-pass'].forEach(id=>document.getElementById(id).value='');viewDate=new Date();}
+function doLogout(){stopListeners();window.OrderHealth?.stop();clearSession();CU=null;document.getElementById('app').style.display='none';document.getElementById('auth-screen').style.display='flex';['login-user','login-pass'].forEach(id=>document.getElementById(id).value='');viewDate=new Date();}
 
 function startApp(){
   document.getElementById('loading-screen').style.display='none';
@@ -2063,6 +2063,7 @@ function buildDashboardTaskRows(list, date){
   // shows that Thursday's own report status, not today's.
   const liveTrackerNote=t=>'';
   return list.map(t=>{
+    if(t._orderHealth)return buildOrderHealthDashboardRow(t._orderHealth,date);
     const _cc=t._carryOrigin&&!t._trackerCarry; // cumulative (member-status) carry
     const ov=_cc?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date),rate=_cc?taskCompletionRateCumulative(t,t._carryOrigin,date):taskCompletionRate(t.id,date),isOv=isOverdue(t,date)&&ov!=='Done';
     const mAv=(t.assignees||[]).slice(0,4).map(u=>`<span class="av" title="${getMN(u)}" style="width:20px;height:20px;font-size:8px;margin-right:-2px">${ini(getMN(u))}</span>`).join('');
@@ -2121,6 +2122,28 @@ function buildDashboardTaskRows(list, date){
       <td style="width:16%">${completionCell}</td>
     </tr>`;
   }).join('');
+}
+function buildOrderHealthDashboardRow(progress,date){
+  const {status,total,done,regions,owners}=progress;
+  const pct=done===total?100:Math.min(99,Math.round(done/total*100));
+  const regionBadges=regions.map(({name,am,pm,total:stores})=>{
+    const color=am+pm===stores*2?'var(--green)':am+pm?'var(--yellow)':'var(--red)';
+    return `<span class="oh-dashboard-region" style="color:${color}"><strong>${escHtml(name)}</strong> AM ${am}/${stores} · PM ${pm}/${stores}</span>`;
+  }).join('');
+  const assigned=owners.slice(0,4).map(username=>{
+    const name=escHtml(getMN(username));
+    return `<span class="av" title="${name}" style="width:20px;height:20px;font-size:8px;margin-right:-2px">${escHtml(ini(getMN(username)))}</span>`;
+  }).join('')+(owners.length>4?' +'+(owners.length-4):'');
+  return `<tr>
+    <td><div style="font-weight:600">Order Health Monitoring</div><span class="freq-chip fc-daily">daily</span>
+      <button type="button" class="btn sm" onclick="ltSelectOrderHealth()">Open tracker</button>
+      <div class="oh-dashboard-regions">${regionBadges}</div></td>
+    <td style="text-align:center">${taskDateChip({},date)}</td>
+    <td style="text-align:center"><span class="dl-chip" title="Store-region local time">9:00 AM · 2:00 PM</span></td>
+    <td>${assigned||'—'}</td>
+    <td style="text-align:center"><span class="sbadge ${sbc(status)}"><span class="sdot ${sdc(status)}"></span>${status}</span></td>
+    <td>${rateBarHtml(pct)}<div style="font-size:10px;color:var(--text3)">${done}/${total} checks done</div></td>
+  </tr>`;
 }
 function dashTaskTableHead(){
   return '<thead><tr><th style="width:32%">Task</th><th style="width:13%;text-align:center">Task Date</th><th style="width:13%;text-align:center">Deadline</th><th style="width:18%">Assigned</th><th style="width:12%;text-align:center">Status</th><th style="width:16%">Completion</th></tr></thead>';
@@ -2242,10 +2265,13 @@ function renderDashboard(){
     return t;
   });
   const schedAll=schedTagged.concat(carried);
-  const metrics=computeDashboardMetrics(schedAll,date);
+  const orderHealth=canSeeLiveTrackers()?window.OrderHealth?.dashboard(date):null;
+  const healthTask=orderHealth?.total?{_orderHealth:orderHealth}:null;
+  const metrics=computeDashboardMetrics(healthTask?[...schedAll,healthTask]:schedAll,date);
 
   const byS={Done:[],Ongoing:[],Pending:[],'Needs Extension':[]};
   schedAll.forEach(t=>{const ov=(t._carryOrigin&&!t._trackerCarry)?computeTaskOverallCumulative(t,t._carryOrigin,date):computeTaskOverall(t.id,date);if(!byS[ov])byS[ov]=[];byS[ov].push(t);});
+  if(healthTask)byS[orderHealth.status].push(healthTask);
   // Inject admin's own personal tasks into the dashboard buckets
   (D.personalTasks||[]).filter(t=>t._owner===CU.username).forEach(t=>{
     const bucket=(t.status==='Done')?'Done':'Pending';
@@ -2335,6 +2361,7 @@ function renderDashboard(){
     ${escBanner}${extHtml}
     ${quarterReminderBanner}
     ${metricsHTML(metrics)}
+    ${orderHealth?.notice?`<div class="oh-dashboard-notice" role="status"><strong>Order Health Monitoring</strong> · ${escHtml(orderHealth.notice)} <button type="button" class="btn sm" onclick="ltSelectOrderHealth()">Open tracker</button></div>`:''}
     ${pendingSec}
     ${buildDashboardOngoing(byS,date)}
     ${buildDashboardCompleted(byS,date)}
@@ -7976,7 +8003,10 @@ function renderLiveTrackers(){
   }
 
   if(window.OrderHealth){
-    sideHtml='<button type="button" class="btn '+(_showOrderHealth?'primary':'')+'" aria-pressed="'+_showOrderHealth+'" style="flex-shrink:0" onclick="ltSelectOrderHealth()">Order Health Monitoring</button>'+sideHtml;
+    sideHtml='<button type="button" class="lt-tracker-item oh-tracker-card'+(_showOrderHealth?' active':'')+'" aria-pressed="'+_showOrderHealth+'" onclick="ltSelectOrderHealth()">'
+      +'<span class="oh-tracker-icon" aria-hidden="true">📋</span>'
+      +'<span><strong>Order Health Monitoring</strong><small>Daily store reviews</small></span>'
+      +'</button>'+sideHtml;
   }
 
   // Build toolbar
@@ -8010,6 +8040,7 @@ function renderLiveTrackers(){
   }
 
   // Build content area
+  if(_showOrderHealth)toolbarHtml='<div class="oh-tracker-toolbar"><strong>Order Health Monitoring</strong><span>9:00 AM and 2:00 PM · store-region local time</span></div>';
   var contentHtml=_showOrderHealth
     ?'<div id="pg-order-health"></div>'
     :activeT
@@ -8060,7 +8091,8 @@ function renderLiveTrackers(){
 
 function ltSelectOrderHealth(){
   _showOrderHealth=true;
-  renderLiveTrackers();
+  if(_curPage==='live-trackers')renderLiveTrackers();
+  else showPage('live-trackers');
 }
 
 function ltSelect(key){_showOrderHealth=false;_activeTracker=key;const t=D.trackers[key];_activeTrackerSheet=t?.sheets?Object.keys(t.sheets)[0]:null;renderLiveTrackers();}

@@ -5,7 +5,7 @@ const PATH='orderHealth';
 const TYPES=['Synagie Fulfilled','Brand Fulfilled','Third-Party 3PL','Marketplace Fulfilled'];
 const WINDOWS=[{id:'AM',label:'Morning',hour:9},{id:'PM',label:'Afternoon',hour:14}];
 let data={stores:{},checks:{},cases:{}},subtab='daily',bound=false,importRows=[];
-let region='',loadState='loading',loadError='';
+let region='',loadState='loading',loadError='',stopWatching=null;
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const me=()=>window.CU||CU;
@@ -26,8 +26,8 @@ function regionTabs(){
  const regions=[...new Set([...visibleStores(),...visibleCases()].map(([,record])=>regionKey(record.region)))].sort();
  if(!regions.includes(region))region=regions[0]||'';
  if(!regions.length)return '';
- return '<div class="oh-tabs" aria-label="Store regions">'+regions.map(name=>
-  '<button type="button" class="btn '+(name===region?'primary':'')+'" aria-pressed="'+(name===region)+'" data-oh-region="'+esc(name)+'">'+esc(name)+'</button>'
+ return '<div class="oh-region-tabs" aria-label="Store regions">'+regions.map(name=>
+  '<button type="button" class="lt-sheet-tab" aria-pressed="'+(name===region)+'" data-oh-region="'+esc(name)+'">'+esc(name)+'</button>'
  ).join('')+'</div>';
 }
 const button=(txt,fn,primary=false)=>'<button class="btn '+(primary?'primary':'')+'" onclick="'+fn+'">'+esc(txt)+'</button>';
@@ -51,18 +51,17 @@ function summary(){
 }
 function render(){
  const root=$('pg-order-health');if(!root)return;
- const header='<div class="page-header"><div><h1>Order Health Monitoring</h1><p>Seller Center reviews · Morning 9:00 AM / Afternoon 2:00 PM · store-region local time</p></div></div>';
  if(loadState!=='ready'){
-  root.innerHTML=header+(loadState==='error'
+  root.innerHTML=(loadState==='error'
    ?'<div class="oh-panel" role="alert">Could not load Order Health data from Firebase. '+esc(loadError)+' '+button('Retry','OrderHealth.retry()')+'</div>'
    :'<div class="oh-panel" role="status">Loading Order Health data from Firebase…</div>');
   return;
  }
  const regions=regionTabs(),x=summary();bindBulkEvents();
- root.innerHTML=header+regions+
+ root.innerHTML=regions+'<div class="oh-tracker-body">'+
  '<div class="oh-kpis"><div class="oh-panel"><small>Morning completed</small><strong>'+x.done[0]+' / '+x.total+'</strong></div><div class="oh-panel"><small>Afternoon completed</small><strong>'+x.done[1]+' / '+x.total+'</strong></div><div class="oh-panel"><small>Orders needing attention</small><strong>'+x.open.length+'</strong></div><div class="oh-panel"><small>Overdue follow-ups</small><strong>'+x.open.filter(([id,c])=>c.followupDate&&c.followupDate<x.today).length+'</strong></div></div>'+
  '<div class="oh-tabs">'+[['daily','Daily Monitoring'],['reports','Monitoring Reports'],...(leader()?[['oversight','Lead & Governance']]:[]),...(admin()?[['stores','Store Setup']]:[])].map(([key,label])=>'<button class="btn '+(subtab===key?'primary':'')+'" onclick="OrderHealth.tab(\''+key+'\')">'+label+'</button>').join('')+'</div>'+
- '<div class="oh-panel">'+(subtab==='daily'?daily():subtab==='reports'?reports():subtab==='oversight'?oversight():stores())+'</div>';
+ '<div class="oh-panel">'+(subtab==='daily'?daily():subtab==='reports'?reports():subtab==='oversight'?oversight():stores())+'</div></div>';
 }
 
 let bulkWindow='AM', bulkDraft={};
@@ -323,18 +322,63 @@ async function addStore(){
 }
 async function toggleStore(id){if(!admin())return;try{await save('stores/'+id+'/active',data.stores[id].active===false);toast('Store updated')}catch(e){toast(e.message)}}
 function close(){$('oh-modal')?.remove()}
+function dashboard(day){
+ init();
+ if(loadState!=='ready')return {notice:loadState==='error'?'Could not load Firebase progress.':'Loading progress…'};
+ const stores=visibleStores().filter(([,store])=>store.active!==false);
+ if(!stores.length)return admin()?{notice:'No active stores configured.'}:null;
+ const byRegion=new Map(),owners=new Set();
+ let done=0;
+ for(const [id,store] of stores){
+  const name=regionKey(store.region);
+  if(!byRegion.has(name))byRegion.set(name,{name,am:0,pm:0,total:0});
+  const group=byRegion.get(name);
+  group.total++;
+  if(store.owner)owners.add(store.owner);
+  for(const {id:window} of WINDOWS){
+   if(!data.checks?.[day+'_'+window+'_'+id])continue;
+   group[window.toLowerCase()]++;
+   done++;
+  }
+ }
+ const total=stores.length*WINDOWS.length;
+ return {done,total,status:done===total?'Done':done?'Ongoing':'Pending',
+  regions:[...byRegion.values()].sort((a,b)=>a.name.localeCompare(b.name)),owners:[...owners]};
+}
+function refresh(){
+ if(!me())return;
+ if(_curPage==='dashboard')renderDashboard();
+ if(_curPage==='live-trackers')render();
+}
+function stop(){
+ stopWatching?.();
+ stopWatching=null;
+ bound=false;
+ data={stores:{},checks:{},cases:{}};
+ loadState='loading';
+ loadError='';
+ importRows=[];
+ bulkDraft={};
+ subtab='daily';
+ region='';
+ bulkWindow='AM';
+ close();
+}
 function init(){
- if(bound)return;bound=true;
- fbRef(PATH).on('value',snapshot=>{
+ if(bound||loadState==='error')return;bound=true;
+ const ref=fbRef(PATH);
+ const onValue=snapshot=>{
   data=snapshot.val()||{stores:{},checks:{},cases:{}};
   loadState='ready';
-  if(_curPage==='live-trackers')render();
- },error=>{
+  refresh();
+ };
+ stopWatching=()=>ref.off('value',onValue);
+ ref.on('value',onValue,error=>{
   bound=false;
   loadState='error';
   loadError=error.message||String(error);
-  if(_curPage==='live-trackers')render();
+  refresh();
  });
 }
-window.OrderHealth={open:()=>{init();render()},retry:()=>{loadState='loading';init();render()},noChange,tab:t=>{subtab=t;render()},check,saveCheck,newCase,saveCase,edit,updateCase,addStore,toggleStore,uploadAllocations,commitImport,close};
+window.OrderHealth={dashboard,stop,open:()=>{init();render()},retry:()=>{loadState='loading';init();render()},noChange,tab:t=>{subtab=t;render()},check,saveCheck,newCase,saveCase,edit,updateCase,addStore,toggleStore,uploadAllocations,commitImport,close};
 })();
