@@ -1044,7 +1044,7 @@ function initApp(){
     if(!existing){const obj={};DEFAULT_TASKS.forEach(function(t){obj[t.id]=t;});fbSet('tasks',obj);fbSet('taskNextId',10);}
   }).catch(function(){});
 }
-initApp();
+document.addEventListener('DOMContentLoaded', initApp, {once:true});
 
 async function doLogin(){
   hideMsg('login-err');
