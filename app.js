@@ -2198,6 +2198,125 @@ async function ohSyncFromAO(){
   renderLiveTrackers();
 }
 
+const OH_IMPORT_HEADERS=['Region','Brand','Platform','CDM','Team Lead'];
+function ohImportTemplate(){
+  const book=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book,XLSX.utils.aoa_to_sheet([OH_IMPORT_HEADERS]),'Brand allocations');
+  XLSX.writeFile(book,'Order_Status_Brand_Import.xlsx');
+}
+
+function ohOpenImport(){
+  if(!CU?.isAdmin||!ohTracker())return;
+  const modal=document.getElementById('modal-lt-addrow');
+  modal.querySelector('h3').textContent='Import Brand Allocations';
+  document.getElementById('mltar-body').innerHTML=
+    '<p>Use one row per brand, platform, and region ('+OH_REGIONS.join(', ')+'). Enter a CDM name or username. Team Lead is optional.</p>'+
+    '<p>Existing allocations and daily inputs are preserved.</p>'+
+    '<button type="button" class="btn sm" onclick="ohImportTemplate()">Download Excel Template</button>'+
+    '<div class="fg" style="margin-top:12px"><label class="flabel" for="oh-import-file">Excel workbook</label>'+
+    '<input class="finput" type="file" id="oh-import-file" accept=".xlsx,.xls"></div>'+
+    '<div id="oh-import-result" role="status" style="white-space:pre-wrap;max-height:180px;overflow:auto"></div>'+
+    '<div class="form-actions"><button class="btn primary" type="button" onclick="ohImportExcel(this)">Import Excel</button></div>';
+  openModal('modal-lt-addrow');
+}
+
+function ohParseAllocations(grid,members){
+  const clean=value=>String(value??'').trim().replace(/\s+/g,' ');
+  const norm=value=>clean(value).toLowerCase();
+  const [header=[],...rows]=grid;
+  const columns=OH_IMPORT_HEADERS.map(name=>header.findIndex(cell=>norm(cell)===norm(name)));
+  if(columns.slice(0,4).some(index=>index<0))throw Error('Expected headers: Region, Brand, Platform, CDM, and optional Team Lead.');
+  const active=members.filter(member=>member.approved&&member.active!==false);
+  const resolve=value=>{
+    const matches=active.filter(member=>[member.name,member.username].some(field=>norm(field)===norm(value)));
+    return value&&matches.length===1?matches[0].name:null;
+  };
+  const allocations=[],errors=[];
+  rows.forEach((row,index)=>{
+    if(!row.some(cell=>clean(cell)))return;
+    const [regionValue,brand,platform,cdm,lead]=columns.map(column=>clean(row[column]));
+    const region=regionValue.toUpperCase(),owner=resolve(cdm),teamLead=lead?resolve(lead):'';
+    const issues=[];
+    if(!OH_REGIONS.includes(region))issues.push('unsupported region');
+    if(!brand||norm(brand)==='total'||!platform)issues.push('valid brand and platform required');
+    if(!owner)issues.push('CDM does not match one active member');
+    if(lead&&!teamLead)issues.push('Team Lead does not match one active member');
+    if(issues.length)errors.push('Row '+(index+2)+': '+issues.join(', '));
+    else allocations.push({region,row:[brand,platform,owner,teamLead]});
+  });
+  return {allocations,errors};
+}
+
+function ohApplyAllocations(tracker,allocations){
+  const key=row=>JSON.stringify([row[0],row[1]].map(value=>String(value??'').trim().replace(/\s+/g,' ').toLowerCase()));
+  const sheets={...tracker.sheets};
+  let added=0;
+  for(const region of OH_REGIONS){
+    const incoming=allocations.filter(item=>item.region===region);
+    if(!incoming.length)continue;
+    const sheet=sheets[region];
+    if(!sheet)throw Error('Missing region sheet: '+region);
+    const rows=(sheet.rows||[]).slice();
+    const seen=new Set(rows.filter(row=>row?.[0]).map(key)),fresh=[];
+    for(const {row} of incoming){
+      const id=key(row);
+      if(seen.has(id))continue;
+      seen.add(id);
+      fresh.push(row);
+    }
+    if(!fresh.length)continue;
+    const isTotal=row=>String(row?.[3]||'').trim().toUpperCase()==='TOTAL';
+    const at=rows.findIndex(isTotal);
+    if(at>=0&&at!==rows.length-1)throw Error('The '+region+' sheet has a misplaced TOTAL row.');
+    const next={...sheet,rows:rows.slice(0,at<0?rows.length:at).concat(fresh,at<0?[]:rows.slice(at))};
+    if(at>=0){
+      if(sheet.aoMeta?.[at]){
+        next.aoMeta={...sheet.aoMeta,[at+fresh.length]:sheet.aoMeta[at]};
+        delete next.aoMeta[at];
+      }
+      if(sheet.timestamps){
+        next.timestamps=Object.fromEntries(Object.entries(sheet.timestamps).map(([stamp,value])=>
+          [stamp.startsWith(at+'_')?(at+fresh.length)+stamp.slice(String(at).length):stamp,value]));
+      }
+    }
+    sheets[region]=next;
+    added+=fresh.length;
+  }
+  return {tracker:{...tracker,sheets},added};
+}
+
+async function ohImportExcel(button){
+  if(!CU?.isAdmin||!ohTracker())return;
+  const file=document.getElementById('oh-import-file').files[0];
+  const result=document.getElementById('oh-import-result');
+  if(!file){result.textContent='Choose an Excel workbook.';return;}
+  button.disabled=true;
+  try{
+    const book=XLSX.read(await file.arrayBuffer(),{type:'array'});
+    const grid=XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]],{header:1,defval:'',blankrows:true});
+    const {allocations,errors}=ohParseAllocations(grid,D.members||[]);
+    if(errors.length){result.textContent=errors.join('\n');return;}
+    if(!allocations.length){result.textContent='No brand allocations found.';return;}
+    if(!CU?.isAdmin)return;
+    let added=0,problem;
+    const outcome=await fbRef('trackers/'+OH_KEY).transaction(current=>{
+      added=0;
+      problem=null;
+      if(current===null)return null;
+      if(!current.ohLinked)return;
+      try{
+        const update=ohApplyAllocations(current,allocations);
+        added=update.added;
+        if(added)return update.tracker;
+      }catch(error){problem=error;}
+    },undefined,false);
+    if(problem)throw problem;
+    if(!outcome.snapshot.val()?.ohLinked)throw Error('Order Status Monitoring is unavailable.');
+    result.textContent='Added '+added+' allocation(s). Skipped '+(allocations.length-added)+' duplicate(s).';
+  }catch(error){result.textContent='Import failed: '+error.message;}
+  finally{button.disabled=false;}
+}
+
 // Dashboard progress for one date, computed from the tracker inputs (same rules as AO).
 // Returns null when there is nothing to report (no tracker, future date, weekend, no brands).
 function ohDashboard(date){
@@ -8141,6 +8260,7 @@ function renderLiveTrackers(){
     if(ltCanManage){
       if(activeT.ohLinked){
         linkedBtn='<span style="font-size:11px;background:var(--orange-light);color:var(--orange);padding:3px 10px;border-radius:20px;font-weight:700">📎 Order Status Dashboard Linked</span>'
+          +' <button class="btn sm" onclick="ohOpenImport()">Import Excel</button>'
           +' <button class="btn sm" onclick="ohSyncFromAO()" title="Add any brands from the Abnormal Order tracker that are missing here" style="font-size:11px">↻ Sync brands from AO</button>';
       } else if(activeT.aoLinked){
         linkedBtn='<span style="font-size:11px;background:var(--orange-light);color:var(--orange);padding:3px 10px;border-radius:20px;font-weight:700">📎 AO Dashboard Linked</span>';
