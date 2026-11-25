@@ -2123,7 +2123,7 @@ function buildDashboardTaskRows(list, date){
     </tr>`;
   }).join('');
 }
-// ══ ORDER HEALTH MONITORING ══
+// ══ ORDER STATUS MONITORING ══
 // An AO-style tracker: same table, selection, week navigation, ownership and Active/Inactive/Exited
 // behaviour as Abnormal Order, but the two daily input columns are "To Arrange Shipment" and
 // "To Handover", and its regions are MY / PH / SG / TH / VN. Dashboard progress is derived from the
@@ -2159,17 +2159,17 @@ async function ohSetupTracker(){
     seeded+=rows.length-1;
     sheets[r]={headerRows:[hdr],row0:hdr,rows:rows};
   });
-  const rec={name:'Order Health Monitoring',category:'AO Tracker',ohLinked:true,aoLinked:false,tabOrder:OH_REGIONS.slice(),sheets:sheets,uploadedAt:Date.now(),uploadedBy:CU.name};
+  const rec={name:'Order Status Monitoring',category:'AO Tracker',ohLinked:true,aoLinked:false,tabOrder:OH_REGIONS.slice(),sheets:sheets,uploadedAt:Date.now(),uploadedBy:CU.name};
   try{
     await fbSet('trackers/'+OH_KEY,rec);
     D.trackers[OH_KEY]=rec;
     _activeTracker=OH_KEY;_activeTrackerSheet=OH_REGIONS[0];
-    toast('Order Health Monitoring created'+(seeded?' with '+seeded+' brand'+(seeded>1?'s':'')+' copied from Abnormal Order.':'. Add brands with + Add Brand.'));
+    toast('Order Status Monitoring created'+(seeded?' with '+seeded+' brand'+(seeded>1?'s':'')+' copied from Abnormal Order.':'. Add brands with + Add Brand.'));
     if(_curPage==='live-trackers')renderLiveTrackers();else showPage('live-trackers');
   }catch(e){toast('Could not create tracker: '+e.message);}
 }
 
-// Admin: pull in any AO brands that aren't in Order Health yet (never removes or edits existing rows).
+// Admin: pull in any AO brands that aren't in Order Status yet (never removes or edits existing rows).
 async function ohSyncFromAO(){
   if(!CU.isAdmin){toast('Admin only.');return;}
   const t=ohTracker();if(!t)return;
@@ -2253,7 +2253,7 @@ function buildOrderHealthDashboardRow(progress,date){
     return '<span class="av" title="'+name+'" style="width:20px;height:20px;font-size:8px;margin-right:-2px">'+escHtml(ini(getMN(username)))+'</span>';
   }).join('')+(owners.length>4?' +'+(owners.length-4):'');
   return `<tr>
-    <td><div style="font-weight:600">Order Health Monitoring <span style="font-size:9px;background:var(--orange-light);color:var(--orange);padding:1px 6px;border-radius:20px;font-weight:700">📋 To Arrange Shipment · To Handover</span></div><span class="freq-chip fc-daily">daily</span>
+    <td><div style="font-weight:600">Order Status Monitoring <span style="font-size:9px;background:var(--orange-light);color:var(--orange);padding:1px 6px;border-radius:20px;font-weight:700">📋 To Arrange Shipment · To Handover</span></div><span class="freq-chip fc-daily">daily</span>
       <button type="button" class="btn sm" onclick="ltSelectOrderHealth()" style="font-size:10px;padding:2px 8px">Open tracker</button>
       <div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:2px">${chips}</div></td>
     <td style="text-align:center">${taskDateChip({},date)}</td>
@@ -8071,6 +8071,10 @@ function exportTODMonthSummary(){
 const LT_CATS=['AO Tracker','Finance','Inventory','Marketing','Operations','Other'];
 const LT_ICONS={'AO Tracker':'\u{1F4CA}','Finance':'\u{1F4B0}','Inventory':'\u{1F4E6}','Marketing':'\u{1F4E3}','Operations':'\u2699\uFE0F','Other':'\u{1F4CB}'};
 
+function liveTrackerName(tracker){
+  return tracker.ohLinked?'Order Status Monitoring':tracker.name;
+}
+
 function renderLiveTrackers(){
   var el=document.getElementById('pg-live-trackers');
   if(!el)return;
@@ -8086,7 +8090,7 @@ function renderLiveTrackers(){
   var trackers=Object.entries(D.trackers||{}).map(function(e){return Object.assign({},e[1],{_key:e[0]});});
   var qEl=document.getElementById('lt-search-val');
   var q=qEl?qEl.value.toLowerCase():'';
-  var filtered=trackers.filter(function(t){return t.name&&t.name.toLowerCase().includes(q);});
+  var filtered=trackers.filter(function(t){return (liveTrackerName(t)||'').toLowerCase().includes(q);});
   var byCat={};
   filtered.forEach(function(t){var c=t.category||'Other';if(!byCat[c])byCat[c]=[];byCat[c].push(t);});
 
@@ -8108,7 +8112,7 @@ function renderLiveTrackers(){
       sideHtml+='<div class="lt-tracker-item'+(isActive?' active':'')+'" data-trackerid="'+t._key+'" style="background:'+bg+';border:1px solid '+bd+';border-radius:var(--radius-lg);flex-shrink:0;min-width:180px">'
         +'<div style="width:28px;height:28px;border-radius:var(--radius);background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">'+icon+'</div>'
         +'<div style="flex:1;min-width:0">'
-          +'<div style="font-size:12px;font-weight:'+fw+';color:'+fc+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+t.name+'</div>'
+          +'<div style="font-size:12px;font-weight:'+fw+';color:'+fc+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+liveTrackerName(t)+'</div>'
           +'<div style="font-size:10px;color:var(--text4);white-space:nowrap">'+sheetCount+' sheet(s) · '+dateStr+'</div>'
           +linked
         +'</div>'
@@ -8119,11 +8123,11 @@ function renderLiveTrackers(){
     sideHtml='<div style="padding:14px;text-align:center;color:var(--text4);font-size:12px;flex:1">No trackers yet. Upload your first Excel file.</div>';
   }
 
-  // Order Health Monitoring is a regular AO-style tracker now. Until an admin creates it, show a one-click setup card.
+  // Order Status Monitoring is a regular AO-style tracker now. Until an admin creates it, show a one-click setup card.
   if(CU.isAdmin&&!ohTracker()){
     sideHtml+='<button type="button" class="lt-tracker-item" onclick="ohSetupTracker()" style="border:1px dashed var(--blue);background:var(--blue-light);border-radius:var(--radius-lg);flex-shrink:0;min-width:180px;display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;font-family:inherit;text-align:left">'
       +'<span style="font-size:14px">📋</span>'
-      +'<span><strong style="font-size:12px;color:var(--blue)">Set up Order Health Monitoring</strong><div style="font-size:10px;color:var(--text4)">Creates MY · PH · SG · TH · VN sheets</div></span>'
+      +'<span><strong style="font-size:12px;color:var(--blue)">Set up Order Status Monitoring</strong><div style="font-size:10px;color:var(--text4)">Creates MY · PH · SG · TH · VN sheets</div></span>'
       +'</button>';
   }
 
@@ -8136,7 +8140,7 @@ function renderLiveTrackers(){
     var linkedBtn='';
     if(ltCanManage){
       if(activeT.ohLinked){
-        linkedBtn='<span style="font-size:11px;background:var(--orange-light);color:var(--orange);padding:3px 10px;border-radius:20px;font-weight:700">📎 Order Health Dashboard Linked</span>'
+        linkedBtn='<span style="font-size:11px;background:var(--orange-light);color:var(--orange);padding:3px 10px;border-radius:20px;font-weight:700">📎 Order Status Dashboard Linked</span>'
           +' <button class="btn sm" onclick="ohSyncFromAO()" title="Add any brands from the Abnormal Order tracker that are missing here" style="font-size:11px">↻ Sync brands from AO</button>';
       } else if(activeT.aoLinked){
         linkedBtn='<span style="font-size:11px;background:var(--orange-light);color:var(--orange);padding:3px 10px;border-radius:20px;font-weight:700">📎 AO Dashboard Linked</span>';
@@ -8150,7 +8154,7 @@ function renderLiveTrackers(){
       }
     }
     toolbarHtml='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">'
-      +'<div style="font-size:15px;font-weight:700;flex:1">'+activeT.name+'</div>'
+      +'<div style="font-size:15px;font-weight:700;flex:1">'+liveTrackerName(activeT)+'</div>'
       +linkedBtn
       +(ltCanManage&&activeT.category==='Finance'?'<button class="btn sm primary" data-action="fr-add-brand" data-key="'+_activeTracker+'">+ Add Brand</button>':'')
       +(ltCanManage&&activeT.category==='Finance'?'<button class="btn sm warning" data-action="fr-manage-dates" data-key="'+_activeTracker+'">🗑 Manage Columns</button>':'')
@@ -8209,7 +8213,7 @@ function ltSelectOrderHealth(){
   const t=ohTracker();
   if(!t){
     if(CU.isAdmin){ohSetupTracker();return;}
-    toast('Order Health Monitoring has not been set up yet.');return;
+    toast('Order Status Monitoring has not been set up yet.');return;
   }
   _activeTracker=OH_KEY;
   _activeTrackerSheet=(t.tabOrder&&t.tabOrder[0])||Object.keys(t.sheets||{})[0]||null;
@@ -8806,7 +8810,7 @@ function buildAOExitedTable(trackerKey){
 function buildAOTable(trackerKey,sheetKey,sheet){
   const _aoTk=D.trackers[trackerKey]||{};
   const _aoLbl=aoColLabels(_aoTk);               // ['Order','Product'] or ['To Arrange Shipment','To Handover']
-  const _aoSubW=_aoTk.ohLinked?92:60;            // sub-column min width (Order Health labels are longer)
+  const _aoSubW=_aoTk.ohLinked?92:60;            // sub-column min width (Order Status labels are longer)
   if(!sheet)return'<div class="empty-state" style="padding:32px">Empty sheet.</div>';
   const{row0,row1,rows}=sheet;
   if(!row0||!row0.length)return'<div class="empty-state" style="padding:32px">No data. Upload your Excel file.</div>';
@@ -9345,7 +9349,7 @@ async function ltUpdateCell(trackerKey,sheetKey,ri,ci,val){
     else ltPatchAODashboard(); // patch AO chips if on another page
   }
   if(D.trackers[trackerKey]&&D.trackers[trackerKey].ohLinked){
-    // Order Health dashboard progress is computed live from these cells — just refresh the view.
+    // Order Status dashboard progress is computed live from these cells — just refresh the view.
     if(_curPage==='dashboard')renderDashboard();
     else if(_curPage==='my-tasks')renderMyTasks();
   }
@@ -9593,7 +9597,7 @@ function ltExport(key){
     (sh.rows||[]).forEach(r=>data.push(r||[]));
     XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(data),name);
   });
-  XLSX.writeFile(wb,`${t.name}_${ds(now())}.xlsx`);toast('Exported!');
+  XLSX.writeFile(wb,`${liveTrackerName(t)}_${ds(now())}.xlsx`);toast('Exported!');
 }
 
 // AO completion from linked tracker - Order and Product separately
@@ -9606,7 +9610,7 @@ function getAOCompletionForDashboard(date){
   if(!linkedEntry)return null;
   return aoCompletionForEntry(linkedEntry,date,['MY','SG','TH','VN']);
 }
-// Shared by the AO dashboard widget and Order Health: per-region completion of the two input columns.
+// Shared by the AO dashboard widget and Order Status: per-region completion of the two input columns.
 function aoCompletionForEntry(linkedEntry,date,regionKeys){
   const linked=linkedEntry[1];
   const today=date||ds(now());
