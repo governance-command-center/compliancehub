@@ -2137,13 +2137,16 @@ const OH_STATUSES={
 };
 const OH_LEGACY=[[0,OH_LABELS[0]],[1,OH_LABELS[1]]];
 const ohSelections={};
-function ohPlatform(row){return String(row?.[1]||'').trim().toLowerCase();}
+function ohPlatform(row){
+  const platform=String(row?.[1]||'').trim().toLowerCase();
+  return platform==='tiktok shop'?'tiktok':platform;
+}
 function ohView(sheet,sheetKey){
   const platforms=new Map(Object.entries({lazada:'Lazada',shopee:'Shopee'}));
   (sheet.rows||[]).forEach(row=>{
     if(!row?.[0]||String(row[3]||'').toUpperCase()==='TOTAL')return;
     const key=ohPlatform(row);
-    if(!platforms.has(key))platforms.set(key,String(row[1]||'').trim()||'Unassigned');
+    if(!platforms.has(key))platforms.set(key,key==='tiktok'?'TikTok Shop':String(row[1]||'').trim()||'Unassigned');
   });
   const keys=[...platforms.keys()];
   const [savedPlatform,savedStatus]=ohSelections[sheetKey]||[];
