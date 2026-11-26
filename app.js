@@ -392,30 +392,6 @@ async function ltSetRowAssignee(trackerKey,sheetKey,ri,colIdx,value){
   if(!D.trackers[trackerKey].sheets)D.trackers[trackerKey].sheets={};
   if(!D.trackers[trackerKey].sheets[sheetKey])D.trackers[trackerKey].sheets[sheetKey]={rows:[],timestamps:{}};
   const localSheet=D.trackers[trackerKey].sheets[sheetKey];
-  if(_tkr?.ohLinked&&typeof ci==='string'){
-    const updates={};
-    updates['ohCounts/'+ri+'/'+ci]=parsed===null?null:{value:parsed,stamp:ts};
-    try{await fbUpd(path,updates);}
-    catch(error){toast('Unable to save order count. Please reload and retry.');renderLiveTrackers();return;}
-    ohWriteExtra(localSheet,updates,ri,ci,parsed,ts);
-    const inp=document.querySelector('input[data-ri="'+ri+'"][data-ci="'+ci+'"][data-tk="'+trackerKey+'"][data-sk="'+sheetKey+'"]');
-    const cell=inp?.closest('td');
-    if(cell){
-      let label=cell.querySelector('.ao-ts');
-      if(parsed===null)label?.remove();
-      else{
-        if(!label){
-          label=document.createElement('div');
-          label.className='ao-ts';
-          label.style.cssText='font-size:9px;color:var(--text4);line-height:1.2';
-          cell.appendChild(label);
-        }
-        label.textContent=ts;
-      }
-    }
-    ohRefreshTotal(trackerKey,sheetKey,ci);
-    return;
-  }
   if(!localSheet.rows)localSheet.rows=[];
   if(!localSheet.rows[ri])localSheet.rows[ri]=[];
   localSheet.rows[ri][colIdx]=value||'';
@@ -9488,6 +9464,30 @@ async function ltUpdateCell(trackerKey,sheetKey,ri,ci,val){
   if(!D.trackers[trackerKey].sheets)D.trackers[trackerKey].sheets={};
   if(!D.trackers[trackerKey].sheets[sheetKey])D.trackers[trackerKey].sheets[sheetKey]={rows:[],timestamps:{}};
   const localSheet=D.trackers[trackerKey].sheets[sheetKey];
+  if(_tkr?.ohLinked&&typeof ci==='string'){
+    const updates={};
+    updates['ohCounts/'+ri+'/'+ci]=parsed===null?null:{value:parsed,stamp:ts};
+    try{await fbUpd(path,updates);}
+    catch(error){toast('Unable to save order count. Please reload and retry.');renderLiveTrackers();return;}
+    ohWriteExtra(localSheet,updates,ri,ci,parsed,ts);
+    const inp=document.querySelector('input[data-ri="'+ri+'"][data-ci="'+ci+'"][data-tk="'+trackerKey+'"][data-sk="'+sheetKey+'"]');
+    const cell=inp?.closest('td');
+    if(cell){
+      let label=cell.querySelector('.ao-ts');
+      if(parsed===null)label?.remove();
+      else{
+        if(!label){
+          label=document.createElement('div');
+          label.className='ao-ts';
+          label.style.cssText='font-size:9px;color:var(--text4);line-height:1.2';
+          cell.appendChild(label);
+        }
+        label.textContent=ts;
+      }
+    }
+    ohRefreshTotal(trackerKey,sheetKey,ci);
+    return;
+  }
   if(!localSheet.rows)localSheet.rows=[];
   if(!localSheet.rows[ri])localSheet.rows[ri]=[];
   localSheet.rows[ri][ci]=parsed;
