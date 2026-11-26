@@ -2133,7 +2133,9 @@ const OH_REGIONS=['MY','PH','SG','TH','VN'];
 const OH_LABELS=['To Arrange Shipment','To Handover'];
 const OH_STATUSES={
   lazada:[['pack','To Pack'],[0,OH_LABELS[0]],[1,OH_LABELS[1]]],
-  shopee:[['process','To Process'],['processed','Processed']]
+  shopee:[['process','To Process'],['processed','Processed']],
+  tiktok:[['tiktokPending','Pending'],['tiktokToShip','To Ship']],
+  zalora:[['zaloraPending','Pending'],['zaloraReadyToShip','Ready to Ship']]
 };
 const OH_LEGACY=[[0,OH_LABELS[0]],[1,OH_LABELS[1]]];
 const ohSelections={};
@@ -2153,9 +2155,10 @@ function ohView(sheet,sheetKey){
   const [savedPlatform,savedStatus]=ohSelections[sheetKey]||[];
   const platform=keys.includes(savedPlatform)?savedPlatform:keys[0];
   const statuses=Object.hasOwn(OH_STATUSES,platform)?OH_STATUSES[platform]:OH_LEGACY;
-  const legacy=savedStatus===statuses.length&&platform==='shopee';
+  const hasPreviousFields=Object.hasOwn(OH_STATUSES,platform)&&statuses.every(([id])=>typeof id==='string');
+  const legacy=savedStatus===statuses.length&&hasPreviousFields;
   const index=(statuses[savedStatus]||legacy)?savedStatus:0;
-  return {platform,platforms,statuses,index,status:legacy?null:statuses[index][0]};
+  return {platform,platforms,statuses,index,hasPreviousFields,status:legacy?null:statuses[index][0]};
 }
 function ohSelectTab(sheetKey,platformIndex,statusIndex){
   const sheet=ohTracker()?.sheets?.[sheetKey];
@@ -2171,7 +2174,7 @@ function ohTabs(sheetKey,view){
   const button=(label,active,p,i)=>`<button type="button" class="btn sm ${active?'primary':''}" aria-pressed="${active}" onclick="ohSelectTab(${escHtml(key)},${p},${i})">${escHtml(label)}</button>`;
   const bar=buttons=>`<div style="display:flex;gap:8px;flex-wrap:wrap;padding:7px 14px;border-bottom:1px solid var(--border)">${buttons.join('')}</div>`;
   const statuses=view.statuses.map(([,label],i)=>button(label,i===view.index,platformIndex,i));
-  if(view.platform==='shopee')statuses.push(button('Previous fields',view.status===null,platformIndex,statuses.length));
+  if(view.hasPreviousFields)statuses.push(button('Previous fields',view.status===null,platformIndex,statuses.length));
   return bar([...view.platforms.values()].map((label,i)=>button(label,i===platformIndex,i,0)))+bar(statuses);
 }
 function ohVisibleRow(row,view){
