@@ -2135,7 +2135,8 @@ const OH_STATUSES={
   lazada:[['pack','To Pack'],[0,OH_LABELS[0]],[1,OH_LABELS[1]]],
   shopee:[['process','To Process'],['processed','Processed']],
   tiktok:[['tiktokPending','Pending'],['tiktokToShip','To Ship']],
-  zalora:[['zaloraPending','Pending'],['zaloraReadyToShip','Ready to Ship']]
+  zalora:[['zaloraPending','Pending'],['zaloraReadyToShip','Ready to Ship']],
+  shopify:[['shopifyUnfulfilled','Unfulfilled']]
 };
 const OH_LEGACY=[[0,OH_LABELS[0]],[1,OH_LABELS[1]]];
 const ohSelections={};
