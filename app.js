@@ -2172,8 +2172,8 @@ function ohTabs(sheetKey,view){
   const platformIndex=[...view.platforms.keys()].indexOf(view.platform);
   const button=(label,active,p,i)=>`<button type="button" class="btn sm ${active?'primary':''}" aria-pressed="${active}" onclick="ohSelectTab(${escHtml(key)},${p},${i})">${escHtml(label)}</button>`;
   const bar=buttons=>`<div style="display:flex;gap:8px;flex-wrap:wrap;padding:7px 14px;border-bottom:1px solid var(--border)">${buttons.join('')}</div>`;
-  const statuses=view.statuses.map(([,label],i)=>button(label,i===view.index,platformIndex,i));
-  return bar([...view.platforms.values()].map((label,i)=>button(label,i===platformIndex,i,0)))+bar(statuses);
+  // Platform tabs only — the order statuses are now column headers under each date.
+  return bar([...view.platforms.values()].map((label,i)=>button(label,i===platformIndex,i,0)));
 }
 function ohVisibleRow(row,view){
   return ohPlatform(row)===view.platform&&['brand','cdm','tl'].every((field,index)=>{
@@ -8723,10 +8723,10 @@ async function aoSetSelectedToZero(trackerKey,sheetKey){
   // separate copy of this logic, so the two can never drift out of sync again.
   let editableCols=aoFindTodayCols(sheet);
   if(t.ohLinked){
-    const {status}=ohView(sheet,sheetKey);
+    const {statuses}=ohView(sheet,sheetKey);
     const date=ds(now());
     const cols=aoFindDateCols(sheet.row0||[],date,sheet.row1||[]);
-    editableCols=status!==null&&cols.length?[ohColumn(status,date,cols)]:[];
+    editableCols=cols.length?statuses.map(function(x){return ohColumn(x[0],date,cols);}):[];
   }
   if(!editableCols.length){toast('No editable column found for today.');return;}
   // Ownership guard: same rule as single-cell edits (ltUpdateCell) — a non-admin may only
@@ -8798,10 +8798,10 @@ async function aoClearSelectedToday(trackerKey,sheetKey){
   const rows=sheet.rows;
   let editableCols=aoFindTodayCols(sheet);
   if(t.ohLinked){
-    const {status}=ohView(sheet,sheetKey);
+    const {statuses}=ohView(sheet,sheetKey);
     const date=ds(now());
     const cols=aoFindDateCols(sheet.row0||[],date,sheet.row1||[]);
-    editableCols=status!==null&&cols.length?[ohColumn(status,date,cols)]:[];
+    editableCols=cols.length?statuses.map(function(x){return ohColumn(x[0],date,cols);}):[];
   }
   if(!editableCols.length){toast('No editable column found for today.');return;}
   const path='trackers/'+trackerKey+'/sheets/'+sheetKey;
@@ -9031,12 +9031,13 @@ function buildAOExitedTable(trackerKey){
 function buildAOTable(trackerKey,sheetKey,sheet){
   const _aoTk=D.trackers[trackerKey]||{};
   const _aoLbl=aoColLabels(_aoTk);               // ['Order','Product'] or ['To Arrange Shipment','To Handover']
-  const _aoSubW=_aoTk.ohLinked?92:60;            // sub-column min width (Order Status labels are longer)
+  const _aoSubW=_aoTk.ohLinked?80:60;            // sub-column min width (Order Status labels are longer)
   if(!sheet)return'<div class="empty-state" style="padding:32px">Empty sheet.</div>';
   const{row0,row1,rows}=sheet;
   const view=_aoTk.ohLinked?ohView(sheet,sheetKey):null;
-  const single=!!view&&view.status!==null;
-  const span=single?1:2;
+  // Order Status: one sub-column per status of the selected platform (e.g. Lazada = To Pack / To Arrange Shipment / To Handover).
+  const single=false;
+  const span=view?view.statuses.length:2;   // sub-columns per date
   if(!row0||!row0.length)return'<div class="empty-state" style="padding:32px">No data. Upload your Excel file.</div>';
   const isAdmin=CU.isAdmin;
 
@@ -9163,14 +9164,14 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   // Done button is embedded inside each date header cell (above the date label)
   let hR1='<tr>';
   // Checkbox "select all" header cell (sticky at left:0)
-  hR1+='<th rowspan="'+span+'" style="position:sticky;left:0;z-index:5;background:#f0f4f8;padding:4px 6px;border:1px solid var(--border);text-align:center;vertical-align:middle;min-width:'+CB_W+'px;width:'+CB_W+'px" title="Select / deselect all">'
+  hR1+='<th rowspan="2" style="position:sticky;left:0;z-index:5;background:#f0f4f8;padding:4px 6px;border:1px solid var(--border);text-align:center;vertical-align:middle;min-width:'+CB_W+'px;width:'+CB_W+'px" title="Select / deselect all">'
     +(isRefWeek||view?.status===null?'':'<input type="checkbox" id="ao-sel-all-'+trackerKey+'-'+sheetKey+'" style="cursor:pointer;width:14px;height:14px;accent-color:var(--blue)" onchange="aoSelectAll(\''+trackerKey+'\',\''+sheetKey+'\',this)" title="Select all brands">')
   +'</th>';
   fixedW.forEach(function(w,i){
     const sl=aoFixedLefts[i];
     const isLast=i===lastFixedIdx;
     const shadowStyle=isLast?'box-shadow:2px 0 4px rgba(0,0,0,0.08);':'';
-    hR1+='<th rowspan="'+span+'" style="position:sticky;left:'+sl+'px;z-index:4;'+shadowStyle+'background:#f0f4f8;padding:6px 8px;border:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);text-align:left;vertical-align:middle;min-width:'+w+'px;white-space:nowrap">'+fixedL[i]+'</th>';
+    hR1+='<th rowspan="2" style="position:sticky;left:'+sl+'px;z-index:4;'+shadowStyle+'background:#f0f4f8;padding:6px 8px;border:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);text-align:left;vertical-align:middle;min-width:'+w+'px;white-space:nowrap">'+fixedL[i]+'</th>';
   });
   dateCols.forEach(function(dc){
     const bg=dc.isToday?'#dbeafe':dc.isPast?'#f8fafc':'#f1f5f9';
@@ -9191,8 +9192,10 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   let hR2='<tr>';
   dateCols.forEach(function(dc){
     const bg=dc.isToday?'#eff6ff':dc.isPast?'#f8fafc':'#f5f5f5';
-    hR2+='<th style="padding:4px 5px;background:'+bg+';border:1px solid var(--border);border-left:2px solid var(--blue-mid);font-size:10px;font-weight:600;color:var(--text3);text-align:center;line-height:1.15;min-width:'+_aoSubW+'px">'+dc.h1a+'</th>';
-    hR2+='<th style="padding:4px 5px;background:'+bg+';border:1px solid var(--border);font-size:10px;font-weight:600;color:var(--text3);text-align:center;line-height:1.15;min-width:'+_aoSubW+'px">'+dc.h1b+'</th>';
+    const _subLabels=view?view.statuses.map(function(x){return x[1];}):[dc.h1a,dc.h1b];
+    _subLabels.forEach(function(lbl,i){
+      hR2+='<th style="padding:4px 5px;background:'+bg+';border:1px solid var(--border);'+(i===0?'border-left:2px solid var(--blue-mid);':'')+'font-size:10px;font-weight:600;color:var(--text3);text-align:center;line-height:1.15;min-width:'+_aoSubW+'px">'+escHtml(lbl)+'</th>';
+    });
   });
   hR2+='</tr>';
 
@@ -9310,7 +9313,7 @@ function buildAOTable(trackerKey,sheetKey,sheet){
     });
     // Date cols
     dateCols.forEach(function(dc){
-      const columns=single?[ohColumn(view.status,dc.colDateStr,[dc.ci,dc.ci+1])]:[dc.ci,dc.ci+1];
+      const columns=view?view.statuses.map(function(x){return ohColumn(x[0],dc.colDateStr,[dc.ci,dc.ci+1]);}):[dc.ci,dc.ci+1];
       columns.forEach(function(c,index){
         const isLeft=index===0;
         const bl=isLeft?'border-left:2px solid var(--blue-mid);':'';
