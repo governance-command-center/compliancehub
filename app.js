@@ -2400,7 +2400,7 @@ async function ohImportExcel(button){
 function ohDashboard(date){
   const t=ohTracker();
   if(!t||!date||date>ds(now()))return null;
-  const filled=function(v){return v!==null&&v!==undefined&&String(v).trim()!==''&&String(v).toUpperCase()!=='OFF';};
+  const filled=function(v){return v!==null&&v!==undefined&&String(v).trim()!==''&&String(v).trim().toUpperCase()!=='OFF';};
   let total=0,done=0;
   const regions=[],ownerNames=new Set();
   OH_REGIONS.forEach(function(key){
@@ -2409,25 +2409,44 @@ function ohDashboard(date){
     if(!cols.length)return; // weekend
     const rows=sh.rows||[];
     let n=0,f=0;
+    const platforms=new Map();
     rows.forEach(function(row,ri){
       if(!row||row[0]==null||!String(row[0]).trim()||String(row[0]).toUpperCase()==='TOTAL')return;
       if(!aoRowIsActive(sh,ri)||!ohTracksPlatform(ohPlatform(row)))return;
-      n++;
       const platform=ohPlatform(row);
       const statuses=Object.hasOwn(OH_STATUSES,platform)?OH_STATUSES[platform]:OH_LEGACY;
-      if(statuses.some(([id])=>{
+      if(!platforms.has(platform)){
+        platforms.set(platform,{
+          name:platform==='tiktok'?'TikTok':String(row[1]||'').trim()||'Unassigned',
+          done:0,total:0,
+          statuses:statuses.map(([,label])=>({label,done:0,total:0}))
+        });
+      }
+      const platformProgress=platforms.get(platform);
+      let completedInputs=0;
+      statuses.forEach(([id],index)=>{
         const column=ohColumn(id,date,cols);
-        return filled(typeof id==='number'?row[column]:sh.ohCounts?.[ri]?.[column]?.value);
-      }))f++;
+        const value=typeof id==='number'?row[column]:sh.ohCounts?.[ri]?.[column]?.value;
+        platformProgress.statuses[index].total++;
+        if(filled(value)){
+          completedInputs++;
+          platformProgress.statuses[index].done++;
+        }
+      });
+      n++;
+      platformProgress.total++;
+      if(completedInputs===statuses.length){
+        f++;
+        platformProgress.done++;
+      }
       [row[2],row[3]].forEach(function(nm){if(nm&&String(nm).trim())ownerNames.add(String(nm).trim().toLowerCase());});
     });
     if(!n)return;
     total+=n;done+=f;
-    regions.push({name:key,total:n,done:f,pct:Math.round(f/n*100)});
+    regions.push({name:key,total:n,done:f,pct:f===n?100:Math.min(99,Math.round(f/n*100)),platforms:[...platforms.values()]});
   });
   if(!total)return null;
-  const pct=Math.round(done/total*100);
-  const status=pct>=100?'Done':pct>0?'Ongoing':'Pending';
+  const status=done===total?'Done':done>0?'Ongoing':'Pending';
   const owners=[];
   ownerNames.forEach(function(nm){
     const m=(D.members||[]).find(function(x){return x&&x.name&&x.name.trim().toLowerCase()===nm;});
@@ -2442,10 +2461,14 @@ function buildOrderHealthDashboardRow(progress,date){
   const colOf=function(p){return p>=100?'var(--green)':p>0?'var(--yellow)':'var(--red)';};
   const chips=regions.map(function(r){
     const col=colOf(r.pct);
-    return '<div style="display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:20px;background:'+col+'18;border:1px solid '+col+'44;margin:2px">'
+    const breakdown=r.platforms.map(platform=>
+      '<div style="font-size:10px;margin-top:3px"><strong>'+escHtml(platform.name)+'</strong> '+platform.done+'/'+platform.total+' brands complete · '
+      +platform.statuses.map(cell=>escHtml(cell.label)+' '+cell.done+'/'+cell.total).join(' · ')+'</div>'
+    ).join('');
+    return '<div style="flex-basis:100%"><div style="display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:20px;background:'+col+'18;border:1px solid '+col+'44;margin:2px">'
       +'<span style="font-size:10px;font-weight:700;color:'+col+'">'+escHtml(r.name)+'</span>'
-      +'<span style="font-size:10px;color:'+col+'">'+r.done+'/'+r.total+' tracked</span>'
-    +'</div>';
+      +'<span style="font-size:10px;color:'+col+'">'+r.done+'/'+r.total+' brands complete</span>'
+    +'</div>'+breakdown+'</div>';
   }).join('');
   const assigned=owners.slice(0,4).map(function(username){
     const name=escHtml(getMN(username));
@@ -2459,7 +2482,7 @@ function buildOrderHealthDashboardRow(progress,date){
     <td style="text-align:center"><span class="dl-chip">—</span></td>
     <td>${assigned||'—'}</td>
     <td style="text-align:center"><span class="sbadge ${sbc(status)}"><span class="sdot ${sdc(status)}"></span>${status}</span></td>
-    <td>${rateBarHtml(pct)}<div style="font-size:10px;color:var(--text3)">${done}/${total} brands tracked</div></td>
+    <td>${rateBarHtml(pct)}<div style="font-size:10px;color:var(--text3)">${done}/${total} brands complete</div></td>
   </tr>`;
 }
 function dashTaskTableHead(){
