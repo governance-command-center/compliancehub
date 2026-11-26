@@ -2141,12 +2141,13 @@ function ohPlatform(row){
   const platform=String(row?.[1]||'').trim().toLowerCase();
   return platform==='tiktok shop'?'tiktok':platform;
 }
+function ohTracksPlatform(platform){return platform!=='kso'&&platform!=='amazon';}
 function ohView(sheet,sheetKey){
   const platforms=new Map(Object.entries({lazada:'Lazada',shopee:'Shopee'}));
   (sheet.rows||[]).forEach(row=>{
     if(!row?.[0]||String(row[3]||'').toUpperCase()==='TOTAL')return;
     const key=ohPlatform(row);
-    if(!platforms.has(key))platforms.set(key,key==='tiktok'?'TikTok Shop':String(row[1]||'').trim()||'Unassigned');
+    if(ohTracksPlatform(key)&&!platforms.has(key))platforms.set(key,key==='tiktok'?'TikTok':String(row[1]||'').trim()||'Unassigned');
   });
   const keys=[...platforms.keys()];
   const [savedPlatform,savedStatus]=ohSelections[sheetKey]||[];
@@ -2409,7 +2410,7 @@ function ohDashboard(date){
     let n=0,f=0;
     rows.forEach(function(row,ri){
       if(!row||row[0]==null||!String(row[0]).trim()||String(row[0]).toUpperCase()==='TOTAL')return;
-      if(!aoRowIsActive(sh,ri))return;
+      if(!aoRowIsActive(sh,ri)||!ohTracksPlatform(ohPlatform(row)))return;
       n++;
       const aF=filled(row[cols[0]]),hF=cols.length>1&&filled(row[cols[1]]);
       if(aF||hF||Object.entries(sh.ohCounts?.[ri]||{}).some(([cell,entry])=>cell.endsWith('-'+date)&&filled(entry.value)))f++;
