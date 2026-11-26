@@ -10641,14 +10641,14 @@ function buildFRInlineRegions(platform,wantMonthly,refDateStr,cwRefStr){
     const pct=rd.total?Math.round(rd.done/rd.total*100):0;
     const col=pct>=100?'var(--green)':pct>0?'var(--yellow)':'var(--red)';
     const tipContent=rd.notDone.length
-      ?'<b style="color:#fca5a5">Pending ('+rd.notDone.length+'):</b><br>'+rd.notDone.slice(0,8).join('<br>')+(rd.notDone.length>8?'<br>+more':'')
+      ?'<b style="color:#fca5a5">Pending ('+rd.notDone.length+'):</b><br>'+rd.notDone.slice(0,8).map(escHtml).join('<br>')+(rd.notDone.length>8?'<br>+more':'')
       :'<span style="color:#4ade80">All done ✓</span>';
-    return'<div class="tt-wrap" style="display:inline-block;margin:2px">'
+    return'<div style="display:inline-block;margin:2px" tabindex="0" onmouseenter="frShowInlineTip(this)" onmouseleave="frHideCWTip()" onfocus="frShowInlineTip(this)" onblur="frHideCWTip()">'
       +'<div style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:20px;background:'+col+'18;border:1px solid '+col+'44;cursor:default">'
         +'<span style="font-size:10px;font-weight:700;color:'+col+'">'+reg+'</span>'
         +'<span style="font-size:10px;color:'+col+'">'+rd.done+'/'+rd.total+'</span>'
       +'</div>'
-      +'<div class="tt-box" style="min-width:180px;white-space:normal;line-height:1.6">'+tipContent+'</div>'
+      +'<template>'+tipContent+'</template>'
     +'</div>';
   }).join('');
 
@@ -10657,20 +10657,20 @@ function buildFRInlineRegions(platform,wantMonthly,refDateStr,cwRefStr){
   // counts come from the monthly column, not the weekly one).
   const monthLabel=now().toLocaleDateString('en-PH',{month:'long',year:'numeric'});
   const weekChip=wantMonthly
-    ?'<div class="tt-wrap" style="display:inline-block;margin:2px">'
+    ?'<div style="display:inline-block;margin:2px" tabindex="0" onmouseenter="frShowInlineTip(this)" onmouseleave="frHideCWTip()" onfocus="frShowInlineTip(this)" onblur="frHideCWTip()">'
       +'<span style="font-size:10px;color:var(--green);background:var(--green-light);padding:2px 7px;border-radius:20px;font-weight:700;cursor:default;display:inline-block">🗓️ Monthly</span>'
-      +'<div class="tt-box" style="min-width:180px;white-space:normal;line-height:1.5;font-size:11px;font-weight:400">'
+      +'<template>'
         +'<b>'+monthLabel+' monthly report</b><br>'
         +'Counts read from the monthly column. Hover region chips to see pending stores.'
-      +'</div>'
+      +'</template>'
     +'</div>'
-    :'<div class="tt-wrap" style="display:inline-block;margin:2px">'
+    :'<div style="display:inline-block;margin:2px" tabindex="0" onmouseenter="frShowInlineTip(this)" onmouseleave="frHideCWTip()" onfocus="frShowInlineTip(this)" onblur="frHideCWTip()">'
       +'<span style="font-size:10px;color:var(--blue);background:var(--blue-light);padding:2px 7px;border-radius:20px;font-weight:700;cursor:default;display:inline-block">📅 '+cwLabel+'</span>'
-      +'<div class="tt-box" style="min-width:180px;white-space:normal;line-height:1.5;font-size:11px;font-weight:400">'
+      +'<template>'
         +'<b>Work week '+cwLabel+'</b><br>Coverage: '+effLabel+'<br>'
         +(offset!==0?'<span style="color:#fca5a5">Offset: '+(offset<0?Math.abs(offset)+' week(s) behind':'ahead by '+offset+'w')+'</span><br>':'')
         +'Hover region chips to see pending stores.'
-      +'</div>'
+      +'</template>'
     +'</div>';
 
   // Progress bar + summary line
@@ -10707,7 +10707,10 @@ function buildFRInlineRegionsForTask(task,refDateStr){
 // ── FR CW Header Tooltip (fixed-position, immune to sticky thead overflow clipping) ──
 (function(){
   let _tip=null;
-  window.frShowCWTip=function(el,htmlContent){
+  window.frShowInlineTip=function(el){
+    window.frShowCWTip(el,el.querySelector('template').innerHTML,true);
+  };
+  window.frShowCWTip=function(el,htmlContent,inline=false){
     if(!_tip){
       _tip=document.createElement('div');
       _tip.id='fr-cw-floating-tip';
@@ -10729,19 +10732,35 @@ function buildFRInlineRegionsForTask(task,refDateStr){
     }
     _tip.appendChild(content);
     _tip.style.display='block';
-    // Position below the element
     const r=el.getBoundingClientRect();
-    const tipW=250;
-    let left=r.left+r.width/2-tipW/2;
-    left=Math.max(8,Math.min(left,window.innerWidth-tipW-8));
-    _tip.style.width=tipW+'px';
-    _tip.style.left=left+'px';
-    _tip.style.top=(r.bottom+8)+'px';
-    // Reposition arrow horizontally to point at element center
-    const arrowEl=_tip.querySelector('div');
-    if(arrowEl){const elCenter=r.left+r.width/2;arrowEl.style.left=(elCenter-left)+'px';arrowEl.style.transform='none';}
+    const edge=8;
+    const viewportWidth=document.documentElement.clientWidth;
+    const viewportHeight=document.documentElement.clientHeight;
+    const width=Math.min(inline?210:250,viewportWidth-2*edge);
+    const center=r.left+r.width/2;
+    const left=Math.max(edge,Math.min(center-width/2,viewportWidth-width-edge));
+    Object.assign(_tip.style,{
+      width:width+'px',minWidth:'0',boxSizing:'border-box',
+      left:left+'px',overflowWrap:'anywhere'
+    });
+    const height=_tip.getBoundingClientRect().height;
+    const above=r.top-edge-height;
+    const below=r.bottom+edge;
+    const placeAbove=above>=edge&&(inline||below+height>viewportHeight-edge);
+    const top=Math.max(edge,Math.min(placeAbove?above:below,viewportHeight-height-edge));
+    _tip.style.top=top+'px';
+    const arrow=_tip.firstElementChild;
+    Object.assign(arrow.style,{
+      left:Math.max(edge,Math.min(center-left,width-edge))+'px',
+      transform:'translateX(-50%)',
+      top:placeAbove?'100%':'-6px',
+      borderTop:placeAbove?'6px solid #1f2937':'0',
+      borderBottom:placeAbove?'0':'6px solid #1f2937'
+    });
   };
   window.frHideCWTip=function(){if(_tip)_tip.style.display='none';};
+  window.addEventListener('scroll',window.frHideCWTip,true);
+  window.addEventListener('resize',window.frHideCWTip);
 })();
 
 // Build the Finance Report tracker table view
