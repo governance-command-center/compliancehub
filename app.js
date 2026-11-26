@@ -392,6 +392,30 @@ async function ltSetRowAssignee(trackerKey,sheetKey,ri,colIdx,value){
   if(!D.trackers[trackerKey].sheets)D.trackers[trackerKey].sheets={};
   if(!D.trackers[trackerKey].sheets[sheetKey])D.trackers[trackerKey].sheets[sheetKey]={rows:[],timestamps:{}};
   const localSheet=D.trackers[trackerKey].sheets[sheetKey];
+  if(_tkr?.ohLinked&&typeof ci==='string'){
+    const updates={};
+    updates['ohCounts/'+ri+'/'+ci]=parsed===null?null:{value:parsed,stamp:ts};
+    try{await fbUpd(path,updates);}
+    catch(error){toast('Unable to save order count. Please reload and retry.');renderLiveTrackers();return;}
+    ohWriteExtra(localSheet,updates,ri,ci,parsed,ts);
+    const inp=document.querySelector('input[data-ri="'+ri+'"][data-ci="'+ci+'"][data-tk="'+trackerKey+'"][data-sk="'+sheetKey+'"]');
+    const cell=inp?.closest('td');
+    if(cell){
+      let label=cell.querySelector('.ao-ts');
+      if(parsed===null)label?.remove();
+      else{
+        if(!label){
+          label=document.createElement('div');
+          label.className='ao-ts';
+          label.style.cssText='font-size:9px;color:var(--text4);line-height:1.2';
+          cell.appendChild(label);
+        }
+        label.textContent=ts;
+      }
+    }
+    ohRefreshTotal(trackerKey,sheetKey,ci);
+    return;
+  }
   if(!localSheet.rows)localSheet.rows=[];
   if(!localSheet.rows[ri])localSheet.rows[ri]=[];
   localSheet.rows[ri][colIdx]=value||'';
@@ -2131,6 +2155,79 @@ function buildDashboardTaskRows(list, date){
 const OH_KEY='orderhealth';
 const OH_REGIONS=['MY','PH','SG','TH','VN'];
 const OH_LABELS=['To Arrange Shipment','To Handover'];
+const OH_STATUSES={
+  lazada:[['pack','To Pack'],[0,OH_LABELS[0]],[1,OH_LABELS[1]]],
+  shopee:[['process','To Process'],['processed','Processed']]
+};
+const OH_LEGACY=[[0,OH_LABELS[0]],[1,OH_LABELS[1]]];
+const ohSelections={};
+function ohPlatform(row){return String(row?.[1]||'').trim().toLowerCase();}
+function ohView(sheet,sheetKey){
+  const platforms=new Map(Object.entries({lazada:'Lazada',shopee:'Shopee'}));
+  (sheet.rows||[]).forEach(row=>{
+    if(!row?.[0]||String(row[3]||'').toUpperCase()==='TOTAL')return;
+    const key=ohPlatform(row);
+    if(!platforms.has(key))platforms.set(key,String(row[1]||'').trim()||'Unassigned');
+  });
+  const keys=[...platforms.keys()];
+  const [savedPlatform,savedStatus]=ohSelections[sheetKey]||[];
+  const platform=keys.includes(savedPlatform)?savedPlatform:keys[0];
+  const statuses=Object.hasOwn(OH_STATUSES,platform)?OH_STATUSES[platform]:OH_LEGACY;
+  const legacy=savedStatus===statuses.length&&platform==='shopee';
+  const index=(statuses[savedStatus]||legacy)?savedStatus:0;
+  return {platform,platforms,statuses,index,status:legacy?null:statuses[index][0]};
+}
+function ohSelectTab(sheetKey,platformIndex,statusIndex){
+  const sheet=ohTracker()?.sheets?.[sheetKey];
+  if(!sheet)return;
+  const platform=[...ohView(sheet,sheetKey).platforms.keys()][platformIndex];
+  ohSelections[sheetKey]=[platform,statusIndex];
+  window['_aoSel_'+OH_KEY+'_'+sheetKey]?.clear();
+  renderLiveTrackers();
+}
+function ohTabs(sheetKey,view){
+  const key=JSON.stringify(sheetKey);
+  const platformIndex=[...view.platforms.keys()].indexOf(view.platform);
+  const button=(label,active,p,i)=>`<button type="button" class="btn sm ${active?'primary':''}" aria-pressed="${active}" onclick="ohSelectTab(${escHtml(key)},${p},${i})">${escHtml(label)}</button>`;
+  const bar=buttons=>`<div style="display:flex;gap:8px;flex-wrap:wrap;padding:7px 14px;border-bottom:1px solid var(--border)">${buttons.join('')}</div>`;
+  const statuses=view.statuses.map(([,label],i)=>button(label,i===view.index,platformIndex,i));
+  if(view.platform==='shopee')statuses.push(button('Previous fields',view.status===null,platformIndex,statuses.length));
+  return bar([...view.platforms.values()].map((label,i)=>button(label,i===platformIndex,i,0)))+bar(statuses);
+}
+function ohVisibleRow(row,view){
+  return ohPlatform(row)===view.platform&&['brand','cdm','tl'].every((field,index)=>{
+    const column=[0,2,3][index];
+    return String(row[column]||'').toLowerCase().includes((_aoFilter[field]||'').toLowerCase());
+  });
+}
+function ohColumn(status,date,cols){
+  return typeof status==='number'?cols[status]:status+'-'+date;
+}
+function ohWriteExtra(sheet,updates,ri,col,value,stamp){
+  const cells=(sheet.ohCounts||={});
+  const row=(cells[ri]||={});
+  if(value===null)delete row[col];
+  else row[col]={value,stamp};
+  updates['ohCounts/'+ri+'/'+col]=value===null?null:row[col];
+}
+function ohRefreshTotal(trackerKey,sheetKey,col){
+  const sheet=D.trackers[trackerKey]?.sheets?.[sheetKey];
+  if(!sheet)return;
+  const total=document.querySelector('td[data-totalri][data-ci="'+col+'"][data-tk="'+trackerKey+'"][data-sk="'+sheetKey+'"]');
+  if(!total)return;
+  const view=ohView(sheet,sheetKey);
+  total.textContent=(sheet.rows||[]).reduce((sum,row,ri)=>{
+    if(!row?.[0]||String(row[3]||'').toUpperCase()==='TOTAL'||!aoRowIsActive(sheet,ri)||!ohVisibleRow(row,view))return sum;
+    const value=typeof col==='string'?sheet.ohCounts?.[ri]?.[col]?.value:row[col];
+    return sum+(parseFloat(value)||0);
+  },0);
+}
+function ohRemapCounts(sheet,mapIndex){
+  return Object.fromEntries(Object.entries(sheet.ohCounts||{}).flatMap(([ri,counts])=>{
+    const index=mapIndex(Number(ri));
+    return index===undefined?[]:[[index,counts]];
+  }));
+}
 function ohTracker(){const t=D.trackers&&D.trackers[OH_KEY];return t&&t.ohLinked?t:null;}
 function aoColLabels(t){return t&&t.ohLinked?OH_LABELS:['Order','Product'];}
 
@@ -2330,18 +2427,18 @@ function ohDashboard(date){
     const cols=aoFindDateCols(sh.row0||[],date,sh.row1||[]);
     if(!cols.length)return; // weekend
     const rows=sh.rows||[];
-    let n=0,f=0,a=0,h=0;
+    let n=0,f=0;
     rows.forEach(function(row,ri){
       if(!row||row[0]==null||!String(row[0]).trim()||String(row[0]).toUpperCase()==='TOTAL')return;
       if(!aoRowIsActive(sh,ri))return;
       n++;
       const aF=filled(row[cols[0]]),hF=cols.length>1&&filled(row[cols[1]]);
-      if(aF)a++;if(hF)h++;if(aF||hF)f++;
+      if(aF||hF||Object.entries(sh.ohCounts?.[ri]||{}).some(([cell,entry])=>cell.endsWith('-'+date)&&filled(entry.value)))f++;
       [row[2],row[3]].forEach(function(nm){if(nm&&String(nm).trim())ownerNames.add(String(nm).trim().toLowerCase());});
     });
     if(!n)return;
     total+=n;done+=f;
-    regions.push({name:key,total:n,done:f,pct:Math.round(f/n*100),arrPct:Math.round(a/n*100),handPct:Math.round(h/n*100)});
+    regions.push({name:key,total:n,done:f,pct:Math.round(f/n*100)});
   });
   if(!total)return null;
   const pct=Math.round(done/total*100);
@@ -2362,9 +2459,7 @@ function buildOrderHealthDashboardRow(progress,date){
     const col=colOf(r.pct);
     return '<div style="display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:20px;background:'+col+'18;border:1px solid '+col+'44;margin:2px">'
       +'<span style="font-size:10px;font-weight:700;color:'+col+'">'+escHtml(r.name)+'</span>'
-      +'<span style="font-size:10px;color:'+colOf(r.arrPct)+'">Arr '+r.arrPct+'%</span>'
-      +'<span style="font-size:9px;color:var(--text4)">|</span>'
-      +'<span style="font-size:10px;color:'+colOf(r.handPct)+'">Hnd '+r.handPct+'%</span>'
+      +'<span style="font-size:10px;color:'+col+'">'+r.done+'/'+r.total+' tracked</span>'
     +'</div>';
   }).join('');
   const assigned=owners.slice(0,4).map(function(username){
@@ -2372,7 +2467,7 @@ function buildOrderHealthDashboardRow(progress,date){
     return '<span class="av" title="'+name+'" style="width:20px;height:20px;font-size:8px;margin-right:-2px">'+escHtml(ini(getMN(username)))+'</span>';
   }).join('')+(owners.length>4?' +'+(owners.length-4):'');
   return `<tr>
-    <td><div style="font-weight:600">Order Status Monitoring <span style="font-size:9px;background:var(--orange-light);color:var(--orange);padding:1px 6px;border-radius:20px;font-weight:700">📋 To Arrange Shipment · To Handover</span></div><span class="freq-chip fc-daily">daily</span>
+    <td><div style="font-weight:600">Order Status Monitoring <span style="font-size:9px;background:var(--orange-light);color:var(--orange);padding:1px 6px;border-radius:20px;font-weight:700">📋 Marketplace order statuses</span></div><span class="freq-chip fc-daily">daily</span>
       <button type="button" class="btn sm" onclick="ltSelectOrderHealth()" style="font-size:10px;padding:2px 8px">Open tracker</button>
       <div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:2px">${chips}</div></td>
     <td style="text-align:center">${taskDateChip({},date)}</td>
@@ -8501,7 +8596,7 @@ function buildTrackerContent(key){
       +(isDefaultWin?'':'<span style="font-size:10px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:2px 8px;border-radius:20px">📌 Older weeks shown — view only, for reference</span>')
     +'</div>';
   }
-  return tabsHtml+weekNavHtml+frBrowseNavHtml+frWeekBannerHtml+(t.category==='Finance'?(isExitedTab?buildExitedTable(key,_activeTrackerSheet,sh):buildFRTable(key,_activeTrackerSheet,sh)):(isAOExitedTab?buildAOExitedTable(key):buildAOTable(key,_activeTrackerSheet,sh)));
+  return tabsHtml+(t.ohLinked&&!isAOExitedTab&&sh?ohTabs(_activeTrackerSheet,ohView(sh,_activeTrackerSheet)):'')+weekNavHtml+frBrowseNavHtml+frWeekBannerHtml+(t.category==='Finance'?(isExitedTab?buildExitedTable(key,_activeTrackerSheet,sh):buildFRTable(key,_activeTrackerSheet,sh)):(isAOExitedTab?buildAOExitedTable(key):buildAOTable(key,_activeTrackerSheet,sh)));
 }
 
 function ltSetSheet(key,sheet){_activeTrackerSheet=sheet;renderLiveTrackers();}
@@ -8564,6 +8659,7 @@ function aoSelectAll(trackerKey,sheetKey,cb){
     if(sheet&&sheet.rows){
       sheet.rows.forEach(function(r,ri){
         if(!r||String(r[3]||'').toUpperCase()==='TOTAL')return;
+        if(t.ohLinked&&(!aoRowIsActive(sheet,ri)||!ohVisibleRow(r,ohView(sheet,sheetKey))))return;
         // Non-admins can only bulk-select brands assigned to them, so "select all" can never
         // sweep up someone else's rows.
         if(!CU.isAdmin&&!aoIsRowOwner(r))return;
@@ -8620,7 +8716,9 @@ async function aoDeleteSelectedRows(trackerKey,sheetKey){
   D.trackers[trackerKey].sheets[sheetKey].rows=newRows;
   D.trackers[trackerKey].sheets[sheetKey].timestamps=newTimestamps;
   D.trackers[trackerKey].sheets[sheetKey].aoMeta=newMeta;
-  await fbUpd(path,{rows:newRows,timestamps:newTimestamps,aoMeta:newMeta});
+  const update={rows:newRows,timestamps:newTimestamps,aoMeta:newMeta};
+  if(t.ohLinked)update.ohCounts=sheet.ohCounts=ohRemapCounts(sheet,ri=>oldToNew[ri]);
+  await fbUpd(path,update);
   const delCount=sel.size;
   sel.clear();
   toast('Deleted '+delCount+' brand'+(delCount>1?'s':'')+' from tracker.');
@@ -8639,6 +8737,12 @@ async function aoSetSelectedToZero(trackerKey,sheetKey){
   // Use the shared helper (same week-block-aware formula as everywhere else) instead of a
   // separate copy of this logic, so the two can never drift out of sync again.
   let editableCols=aoFindTodayCols(sheet);
+  if(t.ohLinked){
+    const {status}=ohView(sheet,sheetKey);
+    const date=ds(now());
+    const cols=aoFindDateCols(sheet.row0||[],date,sheet.row1||[]);
+    editableCols=status!==null&&cols.length?[ohColumn(status,date,cols)]:[];
+  }
   if(!editableCols.length){toast('No editable column found for today.');return;}
   // Ownership guard: same rule as single-cell edits (ltUpdateCell) — a non-admin may only
   // zero brands where they're the CDM or Team Lead. Previously this bulk action skipped that
@@ -8647,6 +8751,7 @@ async function aoSetSelectedToZero(trackerKey,sheetKey){
   const ownedIds=[],blockedIds=[];
   sel.forEach(function(ri){
     const row=rows[ri];if(!row)return;
+    if(t.ohLinked&&(!aoRowIsActive(sheet,ri)||!ohVisibleRow(row,ohView(sheet,sheetKey))))return;
     if(aoIsRowOwner(row))ownedIds.push(ri);else blockedIds.push(ri);
   });
   if(!ownedIds.length){toast('Blocked: none of the selected brands are assigned to you.');return;}
@@ -8657,6 +8762,7 @@ async function aoSetSelectedToZero(trackerKey,sheetKey){
   ownedIds.forEach(function(ri){
     const row=rows[ri];if(!row)return;
     editableCols.forEach(function(c){
+      if(typeof c==='string'){ohWriteExtra(sheet,updates,ri,c,0,ts);return;}
       if(!D.trackers[trackerKey].sheets[sheetKey].rows)D.trackers[trackerKey].sheets[sheetKey].rows=[];
       if(!D.trackers[trackerKey].sheets[sheetKey].rows[ri])D.trackers[trackerKey].sheets[sheetKey].rows[ri]=[];
       D.trackers[trackerKey].sheets[sheetKey].rows[ri][c]=0;
@@ -8705,14 +8811,22 @@ async function aoClearSelectedToday(trackerKey,sheetKey){
   const t=D.trackers[trackerKey];if(!t)return;
   const sheet=(t.sheets||{})[sheetKey];if(!sheet||!sheet.rows)return;
   const rows=sheet.rows;
-  const editableCols=aoFindTodayCols(sheet);
+  let editableCols=aoFindTodayCols(sheet);
+  if(t.ohLinked){
+    const {status}=ohView(sheet,sheetKey);
+    const date=ds(now());
+    const cols=aoFindDateCols(sheet.row0||[],date,sheet.row1||[]);
+    editableCols=status!==null&&cols.length?[ohColumn(status,date,cols)]:[];
+  }
   if(!editableCols.length){toast('No editable column found for today.');return;}
   const path='trackers/'+trackerKey+'/sheets/'+sheetKey;
   const updates={};
   if(!D.trackers[trackerKey].sheets[sheetKey].timestamps)D.trackers[trackerKey].sheets[sheetKey].timestamps={};
   sel.forEach(function(ri){
     const row=rows[ri];if(!row)return;
+    if(t.ohLinked&&(!aoRowIsActive(sheet,ri)||!ohVisibleRow(row,ohView(sheet,sheetKey))))return;
     editableCols.forEach(function(c){
+      if(typeof c==='string'){ohWriteExtra(sheet,updates,ri,c,null,'');return;}
       if(!D.trackers[trackerKey].sheets[sheetKey].rows)D.trackers[trackerKey].sheets[sheetKey].rows=[];
       if(!D.trackers[trackerKey].sheets[sheetKey].rows[ri])D.trackers[trackerKey].sheets[sheetKey].rows[ri]=[];
       D.trackers[trackerKey].sheets[sheetKey].rows[ri][c]='';
@@ -8780,7 +8894,9 @@ async function ltSaveNewRow(trackerKey,sheetKey){
   });
   D.trackers[trackerKey].sheets[sheetKey].rows=rows;
   D.trackers[trackerKey].sheets[sheetKey].timestamps=newTimestamps;
-  await fbUpd('trackers/'+trackerKey+'/sheets/'+sheetKey,{rows:rows,timestamps:newTimestamps});
+  const update={rows,timestamps:newTimestamps};
+  if(t.ohLinked)update.ohCounts=sheet.ohCounts=ohRemapCounts(sheet,ri=>ri>=insertAt?ri+1:ri);
+  await fbUpd('trackers/'+trackerKey+'/sheets/'+sheetKey,update);
   closeModal('modal-lt-addrow');
   toast('Brand "'+brand+'" added to tracker.');
   renderLiveTrackers();
@@ -8933,6 +9049,9 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   const _aoSubW=_aoTk.ohLinked?92:60;            // sub-column min width (Order Status labels are longer)
   if(!sheet)return'<div class="empty-state" style="padding:32px">Empty sheet.</div>';
   const{row0,row1,rows}=sheet;
+  const view=_aoTk.ohLinked?ohView(sheet,sheetKey):null;
+  const single=!!view&&view.status!==null;
+  const span=single?1:2;
   if(!row0||!row0.length)return'<div class="empty-state" style="padding:32px">No data. Upload your Excel file.</div>';
   const isAdmin=CU.isAdmin;
 
@@ -9029,9 +9148,10 @@ function buildAOTable(trackerKey,sheetKey,sheet){
     const liveSheet=(D.trackers[trackerKey]||{}).sheets&&D.trackers[trackerKey].sheets[sheetKey];
     const liveRows=liveSheet&&liveSheet.rows?liveSheet.rows:(rows||[]);
     let s=0;
-    liveRows.forEach(function(r){
+    liveRows.forEach(function(r,ri){
       if(!r||isTR(r))return;
-      const v=r[ci];
+      if(view&&(!aoRowIsActive(liveSheet||sheet,ri)||!ohVisibleRow(r,view)))return;
+      const v=typeof ci==='string'?(liveSheet||sheet).ohCounts?.[ri]?.[ci]?.value:r[ci];
       if(v===null||v===undefined||String(v).toUpperCase()==='OFF'||String(v).trim()==='')return;
       const n=parseFloat(v);if(!isNaN(n))s+=n;
     });
@@ -9058,14 +9178,14 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   // Done button is embedded inside each date header cell (above the date label)
   let hR1='<tr>';
   // Checkbox "select all" header cell (sticky at left:0)
-  hR1+='<th rowspan="2" style="position:sticky;left:0;z-index:5;background:#f0f4f8;padding:4px 6px;border:1px solid var(--border);text-align:center;vertical-align:middle;min-width:'+CB_W+'px;width:'+CB_W+'px" title="Select / deselect all">'
-    +(isRefWeek?'':'<input type="checkbox" id="ao-sel-all-'+trackerKey+'-'+sheetKey+'" style="cursor:pointer;width:14px;height:14px;accent-color:var(--blue)" onchange="aoSelectAll(\''+trackerKey+'\',\''+sheetKey+'\',this)" title="Select all brands">')
+  hR1+='<th rowspan="'+span+'" style="position:sticky;left:0;z-index:5;background:#f0f4f8;padding:4px 6px;border:1px solid var(--border);text-align:center;vertical-align:middle;min-width:'+CB_W+'px;width:'+CB_W+'px" title="Select / deselect all">'
+    +(isRefWeek||view?.status===null?'':'<input type="checkbox" id="ao-sel-all-'+trackerKey+'-'+sheetKey+'" style="cursor:pointer;width:14px;height:14px;accent-color:var(--blue)" onchange="aoSelectAll(\''+trackerKey+'\',\''+sheetKey+'\',this)" title="Select all brands">')
   +'</th>';
   fixedW.forEach(function(w,i){
     const sl=aoFixedLefts[i];
     const isLast=i===lastFixedIdx;
     const shadowStyle=isLast?'box-shadow:2px 0 4px rgba(0,0,0,0.08);':'';
-    hR1+='<th rowspan="2" style="position:sticky;left:'+sl+'px;z-index:4;'+shadowStyle+'background:#f0f4f8;padding:6px 8px;border:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);text-align:left;vertical-align:middle;min-width:'+w+'px;white-space:nowrap">'+fixedL[i]+'</th>';
+    hR1+='<th rowspan="'+span+'" style="position:sticky;left:'+sl+'px;z-index:4;'+shadowStyle+'background:#f0f4f8;padding:6px 8px;border:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);text-align:left;vertical-align:middle;min-width:'+w+'px;white-space:nowrap">'+fixedL[i]+'</th>';
   });
   dateCols.forEach(function(dc){
     const bg=dc.isToday?'#dbeafe':dc.isPast?'#f8fafc':'#f1f5f9';
@@ -9074,7 +9194,7 @@ function buildAOTable(trackerKey,sheetKey,sheet){
     const dayName=dc.colDateStr?['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(dc.colDateStr+'T12:00:00').getDay()]:'';
     // Mark Done button removed from member view — status driven by tracker input only
     let doneBtnHtml='';
-    hR1+='<th colspan="2" style="text-align:center;padding:5px 6px;background:'+bg+';border:1px solid var(--border);border-left:2px solid var(--blue-mid);font-size:10px;font-weight:700;color:'+fg+';white-space:nowrap;min-width:'+(_aoSubW*2+10)+'px">'
+    hR1+='<th colspan="'+span+'" style="text-align:center;padding:5px 6px;background:'+bg+';border:1px solid var(--border);border-left:2px solid var(--blue-mid);font-size:10px;font-weight:700;color:'+fg+';white-space:nowrap;min-width:'+(_aoSubW*span+10)+'px">'
       +'<div>'+dc.h0+'</div>'
       +'<div style="font-size:9px;font-weight:600;opacity:.7">'+dayName+todayMark+'</div>'
       +doneBtnHtml
@@ -9125,8 +9245,9 @@ function buildAOTable(trackerKey,sheetKey,sheet){
     if(!isT){const _aost=aoRowStatus(_metaSheet,ri);if(_aost==='Exited'||_aost==='Inactive')return'';}
     // Apply column filters (skip total row and rows without data)
     if(!isT){
+      if(view&&!ohVisibleRow(row,view))return'';
       if(_aoFilter.brand&&!String(row[0]||'').toLowerCase().includes(_aoFilter.brand.toLowerCase()))return'';
-      if(_aoFilter.platform&&!String(row[1]||'').toLowerCase().includes(_aoFilter.platform.toLowerCase()))return'';
+      if(!view&&_aoFilter.platform&&!String(row[1]||'').toLowerCase().includes(_aoFilter.platform.toLowerCase()))return'';
       if(_aoFilter.cdm&&!String(row[2]||'').toLowerCase().includes(_aoFilter.cdm.toLowerCase()))return'';
       if(_aoFilter.tl&&!String(row[3]||'').toLowerCase().includes(_aoFilter.tl.toLowerCase()))return'';
     }
@@ -9138,14 +9259,14 @@ function buildAOTable(trackerKey,sheetKey,sheet){
       if(_cdmKey!==_prevCdmGroup){
         _prevCdmGroup=_cdmKey;
         const _label=_cdmName||'— Unassigned —';
-        const _colspanTotal=1+fixedW.length+dateCols.length*2;
+        const _colspanTotal=1+fixedW.length+dateCols.length*span;
         groupHeaderHtml='<tr><td colspan="'+_colspanTotal+'" style="position:sticky;left:0;background:#eef2f7;border:1px solid var(--border);padding:4px 12px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text3)">👤 CDM: '+escHtml(_label)+'</td></tr>';
       }
     }
     const isSel=aoSelRows.has(ri);
     let cells='';
     // Checkbox cell (sticky at left:0) — skip for total rows
-    if(!isT&&!isRefWeek){
+    if(!isT&&!isRefWeek&&view?.status!==null){
       cells+='<td style="position:sticky;left:0;z-index:2;padding:3px 6px;border:1px solid var(--border);background:'+(isSel?'#dbeafe':'var(--surface)')+';text-align:center;vertical-align:middle;cursor:pointer;min-width:'+CB_W+'px;width:'+CB_W+'px" onclick="aoToggleRowSel(\''+trackerKey+'\',\''+sheetKey+'\','+ri+')" title="Select this brand">'
         +'<input type="checkbox" '+(isSel?'checked':'')+' style="cursor:pointer;width:14px;height:14px;accent-color:var(--blue)" onclick="event.stopPropagation();aoToggleRowSel(\''+trackerKey+'\',\''+sheetKey+'\','+ri+')">'
       +'</td>';
@@ -9204,8 +9325,9 @@ function buildAOTable(trackerKey,sheetKey,sheet){
     });
     // Date cols
     dateCols.forEach(function(dc){
-      [dc.ci,dc.ci+1].forEach(function(c){
-        const isLeft=c===dc.ci;
+      const columns=single?[ohColumn(view.status,dc.colDateStr,[dc.ci,dc.ci+1])]:[dc.ci,dc.ci+1];
+      columns.forEach(function(c,index){
+        const isLeft=index===0;
         const bl=isLeft?'border-left:2px solid var(--blue-mid);':'';
         if(isT){
           const sum=colSum(c); // always use live colSum regardless of virtual/real col
@@ -9213,7 +9335,9 @@ function buildAOTable(trackerKey,sheetKey,sheet){
         } else {
           const localSheetData=(D.trackers[trackerKey]||{}).sheets?D.trackers[trackerKey].sheets[sheetKey]:null;
           const localRow=localSheetData&&localSheetData.rows?localSheetData.rows[ri]:null;
-          const v=localRow!=null?localRow[c]??row[c]:(dc.virtual?null:row[c]);
+          const extra=typeof c==='string';
+          const entry=extra?(localSheetData||sheet).ohCounts?.[ri]?.[c]:null;
+          const v=extra?entry?.value:localRow!=null?localRow[c]??row[c]:(dc.virtual?null:row[c]);
           const vS=(v===null||v===undefined)?'':String(v);
           const isOFF=vS.toUpperCase()==='OFF';
           // 0 is a valid filled value — only null/undefined/'' means truly empty
@@ -9225,11 +9349,11 @@ function buildAOTable(trackerKey,sheetKey,sheet){
           const isPastLockedForUser=(dc.isPast&&!dc.isToday&&!isAdmin)||isRefWeek;
           const owner=aoIsRowOwner(row);
           const isNotOwnerLocked=!owner&&!isPastLockedForUser&&!dc.isFuture;
-          const locked=dc.isFuture||isPastLockedForUser||isNotOwnerLocked;
+          const locked=dc.isFuture||isPastLockedForUser||isNotOwnerLocked||view?.status===null;
           const cellBg=isOFF?'#f1f5f9':filled?'var(--green-light)':dc.isToday?'#fffde7':'transparent';
           const cellCol=isOFF?'var(--text4)':filled?'var(--green)':'var(--text)';
           const localTs=localSheetData&&localSheetData.timestamps?localSheetData.timestamps[ri+'_'+c]:'';
-          const ts=localTs||((sheet.timestamps||{})[ri+'_'+c])||'';
+          const ts=extra?(entry?.stamp||''):localTs||((sheet.timestamps||{})[ri+'_'+c])||'';
           if(locked){
             if(isPastLockedForUser){
               // Past entry (non-admin), or ANY entry while browsing a previous week via
@@ -9239,9 +9363,9 @@ function buildAOTable(trackerKey,sheetKey,sheet){
                 +'<div style="width:54px;padding:3px 4px;font-size:11px;text-align:center;color:'+cellCol+';margin:0 auto">'+escHtml(vS)+'</div>'
                 +(ts?'<div class="ao-ts" style="font-size:9px;color:var(--text4);line-height:1.2">'+escHtml(ts)+'</div>':'')
               +'</td>';
-            } else if(isNotOwnerLocked){
+            } else if(isNotOwnerLocked||view?.status===null){
               // Not this user's CDM/Team Lead row: view-only — show the value but no input
-              cells+='<td style="padding:3px 4px;border:1px solid var(--border);'+bl+'text-align:center;background:'+cellBg+'" title="View only — assigned to '+escHtml(row[2]||row[3]||'another member')+'">'
+              cells+='<td style="padding:3px 4px;border:1px solid var(--border);'+bl+'text-align:center;background:'+cellBg+'" title="'+(view?.status===null?'Previous fields (read only)':'View only — assigned to '+escHtml(row[2]||row[3]||'another member'))+'">'
                 +'<div style="width:54px;padding:3px 4px;font-size:11px;text-align:center;color:'+cellCol+';margin:0 auto">'+(vS?escHtml(vS):'—')+'</div>'
                 +(ts?'<div class="ao-ts" style="font-size:9px;color:var(--text4);line-height:1.2">'+escHtml(ts)+'</div>':'')
               +'</td>';
@@ -9255,14 +9379,14 @@ function buildAOTable(trackerKey,sheetKey,sheet){
             // Today and past: editable so figures can always be recorded/corrected
             const pastStyle=dc.isPast&&!dc.isToday?'opacity:.85;':'';
             cells+='<td style="padding:2px 3px;border:1px solid var(--border);'+bl+'text-align:center;vertical-align:middle;background:'+cellBg+';'+pastStyle+'">'
-              +'<input type="text" value="'+vS+'" placeholder=""'
+              +'<input type="text" value="'+escHtml(vS)+'" placeholder=""'
               +' data-ri="'+ri+'" data-ci="'+c+'" data-tk="'+trackerKey+'" data-sk="'+sheetKey+'"'
               +' style="width:54px;padding:3px 4px;border:1px solid transparent;border-radius:3px;font-size:11px;text-align:center;background:transparent;color:'+cellCol+'"'
-              +' oninput="ltCellInput(this,\''+trackerKey+'\',\''+sheetKey+'\','+ri+','+c+')"'
-              +' onchange="ltUpdateCell(\''+trackerKey+'\',\''+sheetKey+'\','+ri+','+c+',this.value)"'
+              +' oninput="ltCellInput(this,\''+trackerKey+'\',\''+sheetKey+'\','+ri+','+JSON.stringify(c).replaceAll('"','&quot;')+')"'
+              +' onchange="ltUpdateCell(\''+trackerKey+'\',\''+sheetKey+'\','+ri+','+JSON.stringify(c).replaceAll('"','&quot;')+',this.value)"'
               +' onfocus="this.style.outline=\'2px solid var(--blue)\'"'
               +' onblur="this.style.outline=\'none\'"/>'
-              +(ts?'<div class="ao-ts" style="font-size:9px;color:var(--text4);line-height:1.2">'+ts+'</div>':'')
+              +(ts?'<div class="ao-ts" style="font-size:9px;color:var(--text4);line-height:1.2">'+escHtml(ts)+'</div>':'')
             +'</td>';
           }
         }
@@ -9275,14 +9399,14 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   const filterBar='<div style="display:flex;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);background:#f0f6ff;flex-wrap:wrap;align-items:center">'
     +'<span style="font-size:11px;font-weight:700;color:var(--blue);white-space:nowrap">🔍 Filter:</span>'
     +'<input placeholder="Brand" value="'+escHtml(_aoFilter.brand||'')+'" oninput="aoSetFilter(\'brand\',this.value)" style="padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:11px;width:110px;font-family:inherit" />'
-    +'<input placeholder="Platform" value="'+escHtml(_aoFilter.platform||'')+'" oninput="aoSetFilter(\'platform\',this.value)" style="padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:11px;width:100px;font-family:inherit" />'
+    +(view?'':'<input placeholder="Platform" value="'+escHtml(_aoFilter.platform||'')+'" oninput="aoSetFilter(\'platform\',this.value)" style="padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:11px;width:100px;font-family:inherit" />')
     +'<input placeholder="CDM" value="'+escHtml(_aoFilter.cdm||'')+'" oninput="aoSetFilter(\'cdm\',this.value)" style="padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:11px;width:100px;font-family:inherit" />'
     +'<input placeholder="Team Lead" value="'+escHtml(_aoFilter.tl||'')+'" oninput="aoSetFilter(\'tl\',this.value)" style="padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:11px;width:100px;font-family:inherit" />'
     +(hasFilters?'<button onclick="_aoFilter={brand:\'\',platform:\'\',cdm:\'\',tl:\'\'};renderLiveTrackers()" style="padding:4px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:11px;background:#fff;cursor:pointer;color:var(--red)">✕ Clear</button>':'')
   +'</div>';
 
   // ── Instruction banner ── (swapped for a reference-view notice while browsing a past week)
-  const instrBanner=isRefWeek
+  const instrBanner=view?.status===null?'':isRefWeek
     ?'<div style="display:flex;align-items:center;gap:10px;padding:8px 14px;background:#fffbeb;border-bottom:1px solid var(--yellow-mid);font-size:11px;color:#92400e;flex-wrap:wrap">'
       +'<span style="font-size:14px">📌</span>'
       +'<span>You\'re viewing a <b>past week for reference</b> — all cells are read-only here, including for admins. Click <b>Today ⟳</b> above to return to the live, editable current week.</span>'
@@ -9296,7 +9420,7 @@ function buildAOTable(trackerKey,sheetKey,sheet){
 
   // ── Action bar (hidden while viewing a past week for reference — nothing here is editable) ──
   const selCount=aoSelRows.size;
-  const actionBar=isRefWeek?'':'<div id="ao-action-bar-'+trackerKey+'-'+sheetKey+'" style="display:flex;align-items:center;gap:10px;padding:7px 14px;background:'+(selCount?'#fff7ed':'#fafafa')+';border-bottom:1px solid '+(selCount?'var(--yellow-mid)':'var(--border)')+';transition:background .2s">'
+  const actionBar=isRefWeek||view?.status===null?'':'<div id="ao-action-bar-'+trackerKey+'-'+sheetKey+'" style="display:flex;align-items:center;gap:10px;padding:7px 14px;background:'+(selCount?'#fff7ed':'#fafafa')+';border-bottom:1px solid '+(selCount?'var(--yellow-mid)':'var(--border)')+';transition:background .2s">'
     +(CU.isAdmin?'<button onclick="ltOpenAddRow(\''+trackerKey+'\',\''+sheetKey+'\')" style="padding:5px 12px;border:1px solid var(--green-mid);border-radius:var(--radius);font-size:11px;font-weight:700;background:var(--green-light);color:var(--green);cursor:pointer">+ Add Brand</button>':'')
     +'<span style="font-size:12px;font-weight:600;color:'+(selCount?'var(--orange)':'var(--text4)')+'">'
       +(selCount?selCount+' brand'+(selCount>1?'s':'')+' selected':'No brands selected')
@@ -9326,7 +9450,7 @@ function buildAOTable(trackerKey,sheetKey,sheet){
     +legend
     +'<div id="ao-table-scroll" style="overflow:auto;flex:1;min-height:0">'
       +'<table style="border-collapse:collapse;font-size:12px;min-width:100%">'
-        +'<thead style="position:sticky;top:0;z-index:3">'+hR1+hR2+hDoneRow+'</thead>'
+        +'<thead style="position:sticky;top:0;z-index:3">'+hR1+(single?'':hR2)+hDoneRow+'</thead>'
         +'<tbody>'+bodyRows+'</tbody>'
       +'</table>'
     +'</div>'
@@ -9416,8 +9540,10 @@ async function ltUpdateCell(trackerKey,sheetKey,ri,ci,val){
   // Update total row cell if exists
   if(totalRowIdx>=0){
     const totalInp=document.querySelector('td[data-totalri="'+totalRowIdx+'"][data-ci="'+ci+'"][data-tk="'+trackerKey+'"][data-sk="'+sheetKey+'"]');
-    if(totalInp)totalInp.textContent=colSum||0;
+    if(totalInp&&!_tkr?.ohLinked)totalInp.textContent=colSum||0;
   }
+
+  if(_tkr?.ohLinked)ohRefreshTotal(trackerKey,sheetKey,ci);
 
   // 4. Write to Firebase in one update call
   const updates={};
@@ -9717,6 +9843,20 @@ function ltExport(key){
     (sh.rows||[]).forEach(r=>data.push(r||[]));
     XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(data),name);
   });
+  if(t.ohLinked){
+    const counts=[['Region','Brand','Platform','Date','Order Status','Count','Updated']];
+    Object.entries(t.sheets||{}).forEach(([region,sh])=>{
+      (sh.rows||[]).forEach((row,ri)=>{
+        if(!row?.[0]||String(row[3]||'').toUpperCase()==='TOTAL')return;
+        for(const [key,entry] of Object.entries(sh.ohCounts?.[ri]||{})){
+          const split=key.indexOf('-');
+          const status=Object.values(OH_STATUSES).flat().find(([id])=>id===key.slice(0,split));
+          if(status)counts.push([region,row[0],row[1],key.slice(split+1),status[1],entry.value,entry.stamp]);
+        }
+      });
+    });
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(counts),'Additional Status Counts');
+  }
   XLSX.writeFile(wb,`${liveTrackerName(t)}_${ds(now())}.xlsx`);toast('Exported!');
 }
 
