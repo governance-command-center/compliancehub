@@ -2156,10 +2156,8 @@ function ohView(sheet,sheetKey){
   const [savedPlatform,savedStatus]=ohSelections[sheetKey]||[];
   const platform=keys.includes(savedPlatform)?savedPlatform:keys[0];
   const statuses=Object.hasOwn(OH_STATUSES,platform)?OH_STATUSES[platform]:OH_LEGACY;
-  const hasPreviousFields=Object.hasOwn(OH_STATUSES,platform)&&statuses.every(([id])=>typeof id==='string');
-  const legacy=savedStatus===statuses.length&&hasPreviousFields;
-  const index=(statuses[savedStatus]||legacy)?savedStatus:0;
-  return {platform,platforms,statuses,index,hasPreviousFields,status:legacy?null:statuses[index][0]};
+  const index=statuses[savedStatus]?savedStatus:0;
+  return {platform,platforms,statuses,index,status:statuses[index][0]};
 }
 function ohSelectTab(sheetKey,platformIndex,statusIndex){
   const sheet=ohTracker()?.sheets?.[sheetKey];
@@ -2175,7 +2173,6 @@ function ohTabs(sheetKey,view){
   const button=(label,active,p,i)=>`<button type="button" class="btn sm ${active?'primary':''}" aria-pressed="${active}" onclick="ohSelectTab(${escHtml(key)},${p},${i})">${escHtml(label)}</button>`;
   const bar=buttons=>`<div style="display:flex;gap:8px;flex-wrap:wrap;padding:7px 14px;border-bottom:1px solid var(--border)">${buttons.join('')}</div>`;
   const statuses=view.statuses.map(([,label],i)=>button(label,i===view.index,platformIndex,i));
-  if(view.hasPreviousFields)statuses.push(button('Previous fields',view.status===null,platformIndex,statuses.length));
   return bar([...view.platforms.values()].map((label,i)=>button(label,i===platformIndex,i,0)))+bar(statuses);
 }
 function ohVisibleRow(row,view){
@@ -2416,8 +2413,12 @@ function ohDashboard(date){
       if(!row||row[0]==null||!String(row[0]).trim()||String(row[0]).toUpperCase()==='TOTAL')return;
       if(!aoRowIsActive(sh,ri)||!ohTracksPlatform(ohPlatform(row)))return;
       n++;
-      const aF=filled(row[cols[0]]),hF=cols.length>1&&filled(row[cols[1]]);
-      if(aF||hF||Object.entries(sh.ohCounts?.[ri]||{}).some(([cell,entry])=>cell.endsWith('-'+date)&&filled(entry.value)))f++;
+      const platform=ohPlatform(row);
+      const statuses=Object.hasOwn(OH_STATUSES,platform)?OH_STATUSES[platform]:OH_LEGACY;
+      if(statuses.some(([id])=>{
+        const column=ohColumn(id,date,cols);
+        return filled(typeof id==='number'?row[column]:sh.ohCounts?.[ri]?.[column]?.value);
+      }))f++;
       [row[2],row[3]].forEach(function(nm){if(nm&&String(nm).trim())ownerNames.add(String(nm).trim().toLowerCase());});
     });
     if(!n)return;
