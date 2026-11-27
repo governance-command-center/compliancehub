@@ -2138,8 +2138,8 @@ const OH_STATUSES={
   zalora:[['zaloraPending','Pending'],['zaloraReadyToShip','Ready to Ship']],
   shopify:[['shopifyUnfulfilled','Unfulfilled']]
 };
-// Use the split fields from rollout day so historical counts keep their original meaning.
-const OH_SPLIT_START='2026-11-27';
+// Use one set of split fields across the rollout week, retaining earlier weeks' layouts.
+const OH_SPLIT_START='2026-11-23';
 const OH_SPLIT_LABELS={
   lazada:['About to breach SLA','SLA breached'],
   tiktok:['To ship by 23:59 today','Auto cancelling within 24 hours or less']
