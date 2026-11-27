@@ -2138,7 +2138,25 @@ const OH_STATUSES={
   zalora:[['zaloraPending','Pending'],['zaloraReadyToShip','Ready to Ship']],
   shopify:[['shopifyUnfulfilled','Unfulfilled']]
 };
+// Use the split fields from rollout day so historical counts keep their original meaning.
+const OH_SPLIT_START='2026-11-27';
+const OH_SPLIT_LABELS={
+  lazada:['About to breach SLA','SLA breached'],
+  tiktok:['To ship by 23:59 today','Auto cancelling within 24 hours or less']
+};
 const OH_LEGACY=[[0,OH_LABELS[0]],[1,OH_LABELS[1]]];
+function ohStatuses(platform,date){
+  const statuses=Object.hasOwn(OH_STATUSES,platform)?OH_STATUSES[platform]:OH_LEGACY;
+  const labels=Object.hasOwn(OH_SPLIT_LABELS,platform)?OH_SPLIT_LABELS[platform]:null;
+  if(!labels||date<OH_SPLIT_START)return statuses;
+  return statuses.flatMap(([id,group],index)=>labels.map((label,bucket)=>
+    [platform+'Sla'+index+bucket,label,group]
+  ));
+}
+function ohStatusLabel(status){
+  const [,label,group]=status;
+  return group?group+' — '+label:label;
+}
 const ohSelections={};
 function ohPlatform(row){
   const platform=String(row?.[1]||'').trim().toLowerCase();
@@ -2414,12 +2432,12 @@ function ohDashboard(date){
       if(!row||row[0]==null||!String(row[0]).trim()||String(row[0]).toUpperCase()==='TOTAL')return;
       if(!aoRowIsActive(sh,ri)||!ohTracksPlatform(ohPlatform(row)))return;
       const platform=ohPlatform(row);
-      const statuses=Object.hasOwn(OH_STATUSES,platform)?OH_STATUSES[platform]:OH_LEGACY;
+      const statuses=ohStatuses(platform,date);
       if(!platforms.has(platform)){
         platforms.set(platform,{
           name:platform==='tiktok'?'TikTok':String(row[1]||'').trim()||'Unassigned',
           done:0,total:0,
-          statuses:statuses.map(([,label])=>({label,done:0,total:0}))
+          statuses:statuses.map(status=>({label:ohStatusLabel(status),done:0,total:0}))
         });
       }
       const platformProgress=platforms.get(platform);
@@ -8746,8 +8764,9 @@ async function aoSetSelectedToZero(trackerKey,sheetKey){
   // separate copy of this logic, so the two can never drift out of sync again.
   let editableCols=aoFindTodayCols(sheet);
   if(t.ohLinked){
-    const {statuses}=ohView(sheet,sheetKey);
+    const {platform}=ohView(sheet,sheetKey);
     const date=ds(now());
+    const statuses=ohStatuses(platform,date);
     const cols=aoFindDateCols(sheet.row0||[],date,sheet.row1||[]);
     editableCols=cols.length?statuses.map(function(x){return ohColumn(x[0],date,cols);}):[];
   }
@@ -8821,8 +8840,9 @@ async function aoClearSelectedToday(trackerKey,sheetKey){
   const rows=sheet.rows;
   let editableCols=aoFindTodayCols(sheet);
   if(t.ohLinked){
-    const {statuses}=ohView(sheet,sheetKey);
+    const {platform}=ohView(sheet,sheetKey);
     const date=ds(now());
+    const statuses=ohStatuses(platform,date);
     const cols=aoFindDateCols(sheet.row0||[],date,sheet.row1||[]);
     editableCols=cols.length?statuses.map(function(x){return ohColumn(x[0],date,cols);}):[];
   }
@@ -9058,9 +9078,6 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   if(!sheet)return'<div class="empty-state" style="padding:32px">Empty sheet.</div>';
   const{row0,row1,rows}=sheet;
   const view=_aoTk.ohLinked?ohView(sheet,sheetKey):null;
-  // Order Status: one sub-column per status of the selected platform (e.g. Lazada = To Pack / To Arrange Shipment / To Handover).
-  const single=false;
-  const span=view?view.statuses.length:2;   // sub-columns per date
   if(!row0||!row0.length)return'<div class="empty-state" style="padding:32px">No data. Upload your Excel file.</div>';
   const isAdmin=CU.isAdmin;
 
@@ -9149,6 +9166,13 @@ function buildAOTable(trackerKey,sheetKey,sheet){
 
 
 
+  dateCols.forEach(dc=>{
+    dc.statuses=view?ohStatuses(view.platform,dc.colDateStr):[[0,dc.h1a],[1,dc.h1b]];
+  });
+  const splitHeaders=dateCols.some(dc=>dc.statuses.some(([, ,group])=>group));
+  const headerRows=splitHeaders?3:2;
+  const columnCount=dateCols.reduce((sum,dc)=>sum+dc.statuses.length,0);
+
   const isTR=r=>r&&String(r[3]||'').toUpperCase()==='TOTAL';
 
   // colSum reads from live local D.trackers data (written by ltUpdateCell) so totals
@@ -9187,16 +9211,17 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   // Done button is embedded inside each date header cell (above the date label)
   let hR1='<tr>';
   // Checkbox "select all" header cell (sticky at left:0)
-  hR1+='<th rowspan="2" style="position:sticky;left:0;z-index:5;background:#f0f4f8;padding:4px 6px;border:1px solid var(--border);text-align:center;vertical-align:middle;min-width:'+CB_W+'px;width:'+CB_W+'px" title="Select / deselect all">'
+  hR1+='<th rowspan="'+headerRows+'" style="position:sticky;left:0;z-index:5;background:#f0f4f8;padding:4px 6px;border:1px solid var(--border);text-align:center;vertical-align:middle;min-width:'+CB_W+'px;width:'+CB_W+'px" title="Select / deselect all">'
     +(isRefWeek||view?.status===null?'':'<input type="checkbox" id="ao-sel-all-'+trackerKey+'-'+sheetKey+'" style="cursor:pointer;width:14px;height:14px;accent-color:var(--blue)" onchange="aoSelectAll(\''+trackerKey+'\',\''+sheetKey+'\',this)" title="Select all brands">')
   +'</th>';
   fixedW.forEach(function(w,i){
     const sl=aoFixedLefts[i];
     const isLast=i===lastFixedIdx;
     const shadowStyle=isLast?'box-shadow:2px 0 4px rgba(0,0,0,0.08);':'';
-    hR1+='<th rowspan="2" style="position:sticky;left:'+sl+'px;z-index:4;'+shadowStyle+'background:#f0f4f8;padding:6px 8px;border:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);text-align:left;vertical-align:middle;min-width:'+w+'px;white-space:nowrap">'+fixedL[i]+'</th>';
+    hR1+='<th rowspan="'+headerRows+'" style="position:sticky;left:'+sl+'px;z-index:4;'+shadowStyle+'background:#f0f4f8;padding:6px 8px;border:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);text-align:left;vertical-align:middle;min-width:'+w+'px;white-space:nowrap">'+fixedL[i]+'</th>';
   });
   dateCols.forEach(function(dc){
+    const span=dc.statuses.length;
     const bg=dc.isToday?'#dbeafe':dc.isPast?'#f8fafc':'#f1f5f9';
     const fg=dc.isToday?'var(--blue)':dc.isPast?'var(--text3)':'var(--text4)';
     const todayMark=dc.isToday?' ★':'';
@@ -9211,19 +9236,25 @@ function buildAOTable(trackerKey,sheetKey,sheet){
   });
   hR1+='</tr>';
 
-  // ── Header row 2: Order / Product sub-headers ──
   let hR2='<tr>';
+  let hR3=splitHeaders?'<tr>':'';
   dateCols.forEach(function(dc){
     const bg=dc.isToday?'#eff6ff':dc.isPast?'#f8fafc':'#f5f5f5';
-    const _subLabels=view?view.statuses.map(function(x){return x[1];}):[dc.h1a,dc.h1b];
-    _subLabels.forEach(function(lbl,i){
-      hR2+='<th style="padding:4px 5px;background:'+bg+';border:1px solid var(--border);'+(i===0?'border-left:2px solid var(--blue-mid);':'')+'font-size:10px;font-weight:600;color:var(--text3);text-align:center;line-height:1.15;min-width:'+_aoSubW+'px">'+escHtml(lbl)+'</th>';
+    const header=(label,first,attributes='')=>
+      '<th '+attributes+' style="padding:4px 5px;background:'+bg+';border:1px solid var(--border);'
+      +(first?'border-left:2px solid var(--blue-mid);':'')
+      +'font-size:10px;font-weight:600;color:var(--text3);text-align:center;line-height:1.15;min-width:'+_aoSubW+'px">'+escHtml(label)+'</th>';
+    dc.statuses.forEach(function([,label,group],i){
+      if(group){
+        if(dc.statuses[i-1]?.[2]!==group)hR2+=header(group,i===0,'scope="colgroup" colspan="2"');
+        hR3+=header(label,i===0,'scope="col"');
+      }else{
+        hR2+=header(label,i===0,splitHeaders?'scope="col" rowspan="2"':'scope="col"');
+      }
     });
   });
   hR2+='</tr>';
-
-  // (no separate Done row — button is embedded in date header above)
-  const hDoneRow='';
+  if(splitHeaders)hR3+='</tr>';
 
   // ── Data rows ──
   // Build an ordered index list. We keep each row's TRUE array index (ri) for edits/selection,
@@ -9270,7 +9301,7 @@ function buildAOTable(trackerKey,sheetKey,sheet){
       if(_cdmKey!==_prevCdmGroup){
         _prevCdmGroup=_cdmKey;
         const _label=_cdmName||'— Unassigned —';
-        const _colspanTotal=1+fixedW.length+dateCols.length*span;
+        const _colspanTotal=1+fixedW.length+columnCount;
         groupHeaderHtml='<tr><td colspan="'+_colspanTotal+'" style="position:sticky;left:0;background:#eef2f7;border:1px solid var(--border);padding:4px 12px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text3)">👤 CDM: '+escHtml(_label)+'</td></tr>';
       }
     }
@@ -9336,7 +9367,7 @@ function buildAOTable(trackerKey,sheetKey,sheet){
     });
     // Date cols
     dateCols.forEach(function(dc){
-      const columns=view?view.statuses.map(function(x){return ohColumn(x[0],dc.colDateStr,[dc.ci,dc.ci+1]);}):[dc.ci,dc.ci+1];
+      const columns=dc.statuses.map(([id])=>ohColumn(id,dc.colDateStr,[dc.ci,dc.ci+1]));
       columns.forEach(function(c,index){
         const isLeft=index===0;
         const bl=isLeft?'border-left:2px solid var(--blue-mid);':'';
@@ -9461,7 +9492,7 @@ function buildAOTable(trackerKey,sheetKey,sheet){
     +legend
     +'<div id="ao-table-scroll" style="overflow:auto;flex:1;min-height:0">'
       +'<table style="border-collapse:collapse;font-size:12px;min-width:100%">'
-        +'<thead style="position:sticky;top:0;z-index:3">'+hR1+(single?'':hR2)+hDoneRow+'</thead>'
+        +'<thead style="position:sticky;top:0;z-index:3">'+hR1+hR2+hR3+'</thead>'
         +'<tbody>'+bodyRows+'</tbody>'
       +'</table>'
     +'</div>'
@@ -9885,8 +9916,11 @@ function ltExport(key){
         if(!row?.[0]||String(row[3]||'').toUpperCase()==='TOTAL')return;
         for(const [key,entry] of Object.entries(sh.ohCounts?.[ri]||{})){
           const split=key.indexOf('-');
-          const status=Object.values(OH_STATUSES).flat().find(([id])=>id===key.slice(0,split));
-          if(status)counts.push([region,row[0],row[1],key.slice(split+1),status[1],entry.value,entry.stamp]);
+          const date=key.slice(split+1);
+          const platform=ohPlatform(row);
+          const status=ohStatuses(platform,date).find(([id])=>id===key.slice(0,split))
+            ||Object.values(OH_STATUSES).flat().find(([id])=>id===key.slice(0,split));
+          if(status)counts.push([region,row[0],row[1],date,ohStatusLabel(status),entry.value,entry.stamp]);
         }
       });
     });
