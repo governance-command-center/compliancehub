@@ -2436,24 +2436,18 @@ function ohDashboard(date){
       if(!platforms.has(platform)){
         platforms.set(platform,{
           name:platform==='tiktok'?'TikTok':String(row[1]||'').trim()||'Unassigned',
-          done:0,total:0,
-          statuses:statuses.map(status=>({label:ohStatusLabel(status),done:0,total:0}))
+          done:0,total:0
         });
       }
       const platformProgress=platforms.get(platform);
-      let completedInputs=0;
-      statuses.forEach(([id],index)=>{
+      const complete=statuses.every(([id])=>{
         const column=ohColumn(id,date,cols);
         const value=typeof id==='number'?row[column]:sh.ohCounts?.[ri]?.[column]?.value;
-        platformProgress.statuses[index].total++;
-        if(filled(value)){
-          completedInputs++;
-          platformProgress.statuses[index].done++;
-        }
+        return filled(value);
       });
       n++;
       platformProgress.total++;
-      if(completedInputs===statuses.length){
+      if(complete){
         f++;
         platformProgress.done++;
       }
@@ -2479,10 +2473,9 @@ function buildOrderHealthDashboardRow(progress,date){
   const colOf=function(p){return p>=100?'var(--green)':p>0?'var(--yellow)':'var(--red)';};
   const chips=regions.map(function(r){
     const col=colOf(r.pct);
-    const breakdown=r.platforms.map(platform=>
-      '<div style="font-size:10px;margin-top:3px"><strong>'+escHtml(platform.name)+'</strong> '+platform.done+'/'+platform.total+' brands complete · '
-      +platform.statuses.map(cell=>escHtml(cell.label)+' '+cell.done+'/'+cell.total).join(' · ')+'</div>'
-    ).join('');
+    const breakdown='<div style="display:flex;flex-wrap:wrap;gap:2px 8px;font-size:10px;margin:2px 0 5px">'+r.platforms.map(platform=>
+      '<span style="white-space:nowrap"><strong>'+escHtml(platform.name)+'</strong> '+platform.done+'/'+platform.total+'</span>'
+    ).join('')+'</div>';
     return '<div style="flex-basis:100%"><div style="display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:20px;background:'+col+'18;border:1px solid '+col+'44;margin:2px">'
       +'<span style="font-size:10px;font-weight:700;color:'+col+'">'+escHtml(r.name)+'</span>'
       +'<span style="font-size:10px;color:'+col+'">'+r.done+'/'+r.total+' brands complete</span>'
